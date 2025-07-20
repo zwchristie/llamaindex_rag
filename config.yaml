@@ -1,0 +1,84 @@
+# Text-to-SQL RAG Configuration
+# This file contains default configuration values that can be overridden by environment variables
+
+app:
+  title: "Text-to-SQL RAG API"
+  description: "Agentic text-to-SQL RAG solution with LlamaIndex and Qdrant"
+  version: "0.1.0"
+  debug: false
+  max_upload_size: 10485760  # 10MB in bytes
+  allowed_file_types:
+    - "txt"
+    - "md"
+    - "json"
+    - "sql"
+  chunk_size: 1024
+  chunk_overlap: 200
+  similarity_top_k: 5
+
+database:
+  url: "sqlite:///./text_to_sql_rag.db"
+  echo: false
+
+qdrant:
+  host: "localhost"
+  port: 6333
+  collection_name: "documents"
+  vector_size: 1536
+
+aws:
+  region: "us-east-1"
+  embedding_model: "amazon.titan-embed-text-v1"
+  llm_model: "anthropic.claude-3-sonnet-20240229-v1:0"
+
+redis:
+  host: "localhost"
+  port: 6379
+  db: 0
+
+security:
+  algorithm: "HS256"
+  access_token_expire_minutes: 30
+
+# Document type configurations
+document_types:
+  report:
+    name: "Report Document"
+    description: "SQL query examples with descriptions and expected outputs"
+    required_fields:
+      - "title"
+      - "description"
+      - "sql_query"
+      - "expected_output_description"
+    optional_fields:
+      - "complexity_level"
+      - "use_cases"
+      - "related_tables"
+    
+  schema:
+    name: "Schema Document"
+    description: "Database schema information including tables, columns, and relationships"
+    required_fields:
+      - "table_name"
+      - "columns"
+    optional_fields:
+      - "relationships"
+      - "indexes"
+      - "constraints"
+      - "description"
+
+# RAG pipeline configuration
+rag:
+  embedding:
+    batch_size: 100
+    timeout: 30
+  
+  retrieval:
+    min_similarity_score: 0.7
+    max_results: 10
+    include_metadata: true
+  
+  generation:
+    max_tokens: 2048
+    temperature: 0.1
+    top_p: 0.9
