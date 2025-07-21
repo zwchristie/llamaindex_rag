@@ -1,0 +1,187 @@
+{
+  "catalog": "example_application",
+  "schema": "main_schema",
+  "models": [
+    {
+      "table_name": "users",
+      "columns": [
+        {
+          "name": "user_id",
+          "type": "NUMBER(10)",
+          "key": "PRIMARY KEY",
+          "example_values": ["1", "2", "3", "4", "5"],
+          "nullable": false
+        },
+        {
+          "name": "email",
+          "type": "VARCHAR2(255)",
+          "key": "UNIQUE",
+          "example_values": ["john@example.com", "jane@company.org", "bob@test.net"],
+          "nullable": false
+        },
+        {
+          "name": "first_name",
+          "type": "VARCHAR2(100)",
+          "key": null,
+          "example_values": ["John", "Jane", "Bob", "Alice"],
+          "nullable": false
+        },
+        {
+          "name": "last_name",
+          "type": "VARCHAR2(100)",
+          "key": null,
+          "example_values": ["Doe", "Smith", "Johnson", "Williams"],
+          "nullable": false
+        },
+        {
+          "name": "created_at",
+          "type": "TIMESTAMP",
+          "key": null,
+          "example_values": ["2023-01-15 10:30:00", "2023-02-20 14:45:00", "2023-03-10 09:15:00"],
+          "nullable": false
+        },
+        {
+          "name": "status",
+          "type": "VARCHAR2(20)",
+          "key": null,
+          "example_values": ["active", "inactive", "pending"],
+          "nullable": true
+        }
+      ]
+    },
+    {
+      "table_name": "orders",
+      "columns": [
+        {
+          "name": "order_id",
+          "type": "NUMBER(10)",
+          "key": "PRIMARY KEY",
+          "example_values": ["1001", "1002", "1003", "1004"],
+          "nullable": false
+        },
+        {
+          "name": "user_id",
+          "type": "NUMBER(10)",
+          "key": "FOREIGN KEY",
+          "example_values": ["1", "2", "3", "1"],
+          "nullable": false
+        },
+        {
+          "name": "order_date",
+          "type": "DATE",
+          "key": null,
+          "example_values": ["2023-01-15", "2023-02-20", "2023-03-10"],
+          "nullable": false
+        },
+        {
+          "name": "total_amount",
+          "type": "NUMBER(10,2)",
+          "key": null,
+          "example_values": ["99.99", "149.50", "75.25", "200.00"],
+          "nullable": false
+        },
+        {
+          "name": "status",
+          "type": "VARCHAR2(20)",
+          "key": null,
+          "example_values": ["pending", "completed", "shipped", "cancelled"],
+          "nullable": false
+        }
+      ]
+    },
+    {
+      "table_name": "order_items",
+      "columns": [
+        {
+          "name": "item_id",
+          "type": "NUMBER(10)",
+          "key": "PRIMARY KEY",
+          "example_values": ["1", "2", "3", "4", "5"],
+          "nullable": false
+        },
+        {
+          "name": "order_id",
+          "type": "NUMBER(10)",
+          "key": "FOREIGN KEY",
+          "example_values": ["1001", "1001", "1002", "1003"],
+          "nullable": false
+        },
+        {
+          "name": "product_name",
+          "type": "VARCHAR2(200)",
+          "key": null,
+          "example_values": ["Laptop", "Mouse", "Keyboard", "Monitor"],
+          "nullable": false
+        },
+        {
+          "name": "quantity",
+          "type": "NUMBER(5)",
+          "key": null,
+          "example_values": ["1", "2", "1", "1"],
+          "nullable": false
+        },
+        {
+          "name": "unit_price",
+          "type": "NUMBER(10,2)",
+          "key": null,
+          "example_values": ["999.99", "25.50", "75.00", "299.99"],
+          "nullable": false
+        }
+      ]
+    }
+  ],
+  "views": [
+    {
+      "view_name": "user_order_summary",
+      "query": "SELECT u.user_id, u.email, u.first_name, u.last_name, COUNT(o.order_id) as total_orders, SUM(o.total_amount) as total_spent FROM users u LEFT JOIN orders o ON u.user_id = o.user_id GROUP BY u.user_id, u.email, u.first_name, u.last_name",
+      "columns": [
+        {
+          "name": "user_id",
+          "type": "NUMBER(10)",
+          "nullable": false
+        },
+        {
+          "name": "email",
+          "type": "VARCHAR2(255)",
+          "nullable": false
+        },
+        {
+          "name": "first_name",
+          "type": "VARCHAR2(100)",
+          "nullable": false
+        },
+        {
+          "name": "last_name",
+          "type": "VARCHAR2(100)",
+          "nullable": false
+        },
+        {
+          "name": "total_orders",
+          "type": "NUMBER",
+          "nullable": true
+        },
+        {
+          "name": "total_spent",
+          "type": "NUMBER",
+          "nullable": true
+        }
+      ]
+    }
+  ],
+  "relationships": [
+    {
+      "relationship_name": "user_orders",
+      "tables": ["users", "orders"],
+      "example_sql": "SELECT u.*, o.* FROM users u JOIN orders o ON u.user_id = o.user_id",
+      "type": "one-to-many",
+      "description": "Each user can have multiple orders"
+    },
+    {
+      "relationship_name": "order_items_relationship",
+      "tables": ["orders", "order_items"],
+      "example_sql": "SELECT o.*, oi.* FROM orders o JOIN order_items oi ON o.order_id = oi.order_id",
+      "type": "one-to-many",
+      "description": "Each order can have multiple order items"
+    }
+  ]
+}

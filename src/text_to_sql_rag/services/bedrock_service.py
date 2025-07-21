@@ -3,7 +3,7 @@
 import boto3
 import json
 from typing import List, Dict, Any, Optional
-from botocore.exceptions import ClientError, NoCredentialsError
+from botocore.exceptions import ClientError
 import structlog
 
 from ..config.settings import settings

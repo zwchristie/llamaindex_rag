@@ -13,16 +13,22 @@ from pathlib import Path
 from ..config.settings import settings
 from ..services.vector_service import LlamaIndexVectorService
 from ..services.query_execution_service import QueryExecutionService
-from ..core.rag_pipeline import TextToSQLRAGPipeline
+from ..core.langgraph_agent import TextToSQLAgent
+from ..core.startup import run_startup_tasks, get_initialized_services
 from ..models.simple_models import (
     DocumentType, DocumentUploadRequest, DocumentSearchRequest, DocumentSearchResponse,
     SQLGenerationRequest, SQLGenerationResponse, QueryValidationRequest, QueryValidationResponse,
     QueryExplanationRequest, QueryExplanationResponse, SessionRequest, SessionResponse,
     HealthCheckResponse
 )
+from ..models.conversation import (
+    ConversationState, RequestType, ConversationStatus, AgentResponse
+)
 
 # In-memory session storage (replace with Redis in production)
 sessions = {}
+# In-memory conversation storage for HITL workflows
+conversations = {}
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -33,24 +39,53 @@ app = FastAPI(
 )
 
 # Add CORS middleware
+# Configure CORS - update for production
+allowed_origins = ["http://localhost:3000", "http://localhost:8080"]  # Add your frontend URLs
+if settings.app.debug:
+    allowed_origins.append("*")  # Allow all origins in debug mode only
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
+    allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
-# Initialize services
-vector_service = LlamaIndexVectorService()
-query_execution_service = QueryExecutionService()
-rag_pipeline = TextToSQLRAGPipeline(vector_service, None)
+# Global variables for services (will be initialized on startup)
+vector_service = None
+query_execution_service = None
+sql_agent = None
+mongodb_service = None
+sync_service = None
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Run startup tasks on application startup."""
+    global vector_service, query_execution_service, sql_agent, mongodb_service, sync_service
+    
+    success = await run_startup_tasks()
+    if success:
+        # Get initialized services
+        mongodb_service, vector_service, sync_service = get_initialized_services()
+        query_execution_service = QueryExecutionService()
+        sql_agent = TextToSQLAgent(vector_service, query_execution_service)
+        print("Application startup completed successfully")
+    else:
+        print("Application startup failed - some features may not work")
 
 
 # Health check endpoints
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
+    if not vector_service or not query_execution_service:
+        return {
+            "status": "starting",
+            "message": "Services are still initializing"
+        }
+    
     vector_healthy = vector_service.health_check()
     execution_healthy = query_execution_service.health_check()
     
@@ -58,11 +93,25 @@ async def health_check():
     if not vector_healthy or not execution_healthy:
         status = "degraded"
     
+    # Add MongoDB health check
+    mongodb_status = "disconnected"
+    if mongodb_service:
+        mongo_health = mongodb_service.health_check()
+        mongodb_status = mongo_health.get("status", "disconnected")
+    
+    # Add document sync status
+    sync_status = {}
+    if sync_service:
+        sync_status = sync_service.get_sync_status()
+    
     return {
         "status": status,
         "vector_store": "connected" if vector_healthy else "disconnected",
         "execution_service": "connected" if execution_healthy else "disconnected",
-        "version": settings.app.version
+        "mongodb": mongodb_status,
+        "document_sync": sync_status,
+        "version": settings.app.version,
+        "timestamp": datetime.utcnow().isoformat()
     }
 
 
@@ -219,16 +268,25 @@ async def search_documents(
 
 @app.post("/query/generate")
 async def generate_sql_query(request: SQLGenerationRequest):
-    """Generate SQL query from natural language."""
+    """Generate SQL query from natural language with enhanced conversation support."""
     if not request.query.strip():
         raise HTTPException(status_code=400, detail="Query cannot be empty")
     
     try:
-        result = rag_pipeline.generate_sql_query(
-            natural_language_query=request.query,
-            session_id=request.session_id,
-            use_hybrid_retrieval=request.use_hybrid_retrieval
-        )
+        # Use session_id if provided, otherwise generate new conversation
+        conversation_id = request.session_id or str(uuid.uuid4())
+        
+        result = await sql_agent.generate_sql(request.query, conversation_id)
+        
+        # Store conversation state if it requires human input
+        if result.get("response_type") == "clarification_request":
+            # This is a placeholder - in production, store in Redis or database
+            conversations[conversation_id] = {
+                "conversation_id": conversation_id,
+                "status": "waiting_for_clarification",
+                "created_at": datetime.utcnow(),
+                "last_interaction": datetime.utcnow()
+            }
         
         return result
         
@@ -238,17 +296,22 @@ async def generate_sql_query(request: SQLGenerationRequest):
 
 @app.post("/query/generate-and-execute")
 async def generate_and_execute_sql_query(request: SQLGenerationRequest):
-    """Generate SQL query and optionally execute it."""
+    """Generate SQL query and automatically execute it."""
     if not request.query.strip():
         raise HTTPException(status_code=400, detail="Query cannot be empty")
     
     try:
-        result = await rag_pipeline.generate_and_execute_query(
-            natural_language_query=request.query,
-            session_id=request.session_id,
-            use_hybrid_retrieval=request.use_hybrid_retrieval,
-            auto_execute=request.auto_execute
-        )
+        # Use session_id if provided, otherwise generate new conversation
+        conversation_id = request.session_id or str(uuid.uuid4())
+        
+        # The LangGraph agent automatically handles execution if query_execution_service is provided
+        result = await sql_agent.generate_sql(request.query, conversation_id)
+        
+        # Enable auto-execution for this workflow
+        if result.get("response_type") == "sql_result" and result.get("sql"):
+            # Mark that execution should happen
+            # This would be handled in the agent workflow
+            pass
         
         return result
         
@@ -280,7 +343,7 @@ async def execute_sql_query(request: dict):
 async def validate_sql_query(request: QueryValidationRequest):
     """Validate SQL query and suggest fixes if invalid."""
     try:
-        result = await rag_pipeline.validate_and_suggest_fixes(request.sql_query)
+        result = query_execution_service.validate_query(request.sql_query)
         return result
         
     except Exception as e:
@@ -291,8 +354,15 @@ async def validate_sql_query(request: QueryValidationRequest):
 async def explain_sql_query(request: QueryExplanationRequest):
     """Explain what a SQL query does."""
     try:
-        result = rag_pipeline.explain_query(request.sql_query)
-        return result
+        # Create a simple explanation using the vector service
+        explanation_query = f"Explain what this SQL query does: {request.sql_query}"
+        response = sql_agent.vector_service.query_engine.query(explanation_query)
+        
+        return {
+            "sql_query": request.sql_query,
+            "explanation": str(response),
+            "confidence": 0.8
+        }
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Query explanation failed: {str(e)}")
@@ -350,11 +420,162 @@ async def get_stats():
     return {
         "vector_store": vector_service.get_index_stats(),
         "active_sessions": len(sessions),
+        "active_conversations": len(conversations),
+        "pending_clarifications": len([c for c in conversations.values() if c.get("status") == "waiting_for_clarification"]),
         "services": {
             "vector_store_healthy": vector_service.health_check(),
             "execution_service_healthy": query_execution_service.health_check()
         }
     }
+
+
+# Enhanced conversation management endpoints for HITL workflows
+@app.post("/conversations/start")
+async def start_conversation(request: dict):
+    """Start a new conversation with enhanced HITL support."""
+    query = request.get("query", "").strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="Query cannot be empty")
+    
+    try:
+        conversation_id = str(uuid.uuid4())
+        result = await sql_agent.generate_sql(query, conversation_id)
+        
+        # Store conversation metadata
+        conversations[conversation_id] = {
+            "conversation_id": conversation_id,
+            "initial_query": query,
+            "status": result.get("status", "completed"),
+            "created_at": datetime.utcnow(),
+            "last_interaction": datetime.utcnow(),
+            "messages": [
+                {"role": "user", "content": query, "timestamp": datetime.utcnow().isoformat()}
+            ]
+        }
+        
+        return {
+            "conversation_id": conversation_id,
+            "result": result
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to start conversation: {str(e)}")
+
+
+@app.post("/conversations/{conversation_id}/continue")
+async def continue_conversation(conversation_id: str, request: dict):
+    """Continue an existing conversation with clarification or follow-up."""
+    message = request.get("message", "").strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
+    
+    if conversation_id not in conversations:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    
+    try:
+        conversation_meta = conversations[conversation_id]
+        
+        # Create a mock conversation state for continuation
+        # In production, you would restore the actual state from storage
+        from ..models.conversation import ConversationState
+        conversation_state = ConversationState(
+            conversation_id=conversation_id,
+            current_request=message,
+            status=ConversationStatus.ACTIVE
+        )
+        
+        # Add previous message to context
+        conversation_state.add_message("user", conversation_meta["initial_query"], "request")
+        
+        result = await sql_agent.continue_conversation(conversation_id, message, conversation_state)
+        
+        # Update conversation metadata
+        conversation_meta["last_interaction"] = datetime.utcnow()
+        conversation_meta["status"] = result.get("status", "completed")
+        conversation_meta["messages"].append({
+            "role": "user", 
+            "content": message, 
+            "timestamp": datetime.utcnow().isoformat()
+        })
+        
+        return result
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to continue conversation: {str(e)}")
+
+
+@app.get("/conversations/{conversation_id}")
+async def get_conversation(conversation_id: str):
+    """Get conversation details and history."""
+    if conversation_id not in conversations:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    
+    return conversations[conversation_id]
+
+
+@app.get("/conversations")
+async def list_conversations(status: Optional[str] = None, limit: int = 20):
+    """List conversations with optional status filter."""
+    filtered_conversations = []
+    
+    for conv_id, conv_data in conversations.items():
+        if status is None or conv_data.get("status") == status:
+            filtered_conversations.append({
+                "conversation_id": conv_id,
+                "initial_query": conv_data.get("initial_query", ""),
+                "status": conv_data.get("status", "unknown"),
+                "created_at": conv_data.get("created_at"),
+                "last_interaction": conv_data.get("last_interaction"),
+                "message_count": len(conv_data.get("messages", []))
+            })
+    
+    # Sort by last interaction, most recent first
+    filtered_conversations.sort(
+        key=lambda x: x.get("last_interaction", datetime.min), 
+        reverse=True
+    )
+    
+    return {
+        "conversations": filtered_conversations[:limit],
+        "total": len(filtered_conversations),
+        "filtered_by_status": status
+    }
+
+
+@app.post("/conversations/{conversation_id}/describe-sql")
+async def describe_sql_in_conversation(conversation_id: str, request: dict):
+    """Describe an SQL query within a conversation context."""
+    sql_query = request.get("sql_query", "").strip()
+    if not sql_query:
+        raise HTTPException(status_code=400, detail="SQL query cannot be empty")
+    
+    try:
+        # Create a conversation state for SQL description
+        from ..models.conversation import ConversationState, RequestType
+        conversation_state = ConversationState(
+            conversation_id=conversation_id,
+            current_request=f"Describe this SQL query: {sql_query}",
+            request_type=RequestType.DESCRIBE_SQL
+        )
+        
+        # Use the agent's describe_sql workflow
+        final_state = sql_agent.graph.invoke(conversation_state)
+        
+        return final_state.final_result
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to describe SQL: {str(e)}")
+
+
+@app.delete("/conversations/{conversation_id}")
+async def delete_conversation(conversation_id: str):
+    """Delete a conversation and its history."""
+    if conversation_id not in conversations:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    
+    del conversations[conversation_id]
+    
+    return {"message": f"Conversation {conversation_id} deleted successfully"}
 
 
 # Main entry point

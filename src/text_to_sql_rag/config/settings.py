@@ -1,7 +1,8 @@
 """Application configuration management."""
 
 from typing import Optional, List
-from pydantic import BaseSettings, Field
+from pydantic_settings import BaseSettings
+from pydantic import Field
 import os
 
 
@@ -59,7 +60,7 @@ class RedisSettings(BaseSettings):
 class SecuritySettings(BaseSettings):
     """Security configuration."""
     
-    secret_key: str = Field(default="your-secret-key-change-this", env="SECRET_KEY")
+    secret_key: str = Field(env="SECRET_KEY")  # No default - must be set via environment
     algorithm: str = Field(default="HS256", env="ALGORITHM")
     access_token_expire_minutes: int = Field(default=30, env="ACCESS_TOKEN_EXPIRE_MINUTES")
     
@@ -93,8 +94,21 @@ class AppSettings(BaseSettings):
     # External API settings
     execution_api_url: str = Field(default="http://localhost:8001", env="EXECUTION_API_URL")
     
+    # Meta documents path
+    meta_documents_path: str = Field(default="meta_documents", env="META_DOCUMENTS_PATH")
+    
     class Config:
         env_prefix = "APP_"
+
+
+class MongoDBSettings(BaseSettings):
+    """MongoDB configuration."""
+    
+    url: str = Field(default="mongodb://localhost:27017", env="MONGODB_URL")
+    database: str = Field(default="text_to_sql_rag", env="MONGODB_DATABASE")
+    
+    class Config:
+        env_prefix = "MONGODB_"
 
 
 class Settings(BaseSettings):
@@ -106,6 +120,7 @@ class Settings(BaseSettings):
     aws: AWSSettings = AWSSettings()
     redis: RedisSettings = RedisSettings()
     security: SecuritySettings = SecuritySettings()
+    mongodb: MongoDBSettings = MongoDBSettings()
     
     class Config:
         case_sensitive = False

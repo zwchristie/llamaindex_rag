@@ -1,0 +1,53 @@
+Sales Summary Report
+
+Description:
+This report provides a comprehensive overview of sales performance, including order trends, revenue metrics, and product performance analysis. It helps track business growth and identify sales patterns.
+
+Data Returned:
+- Total revenue by date period (daily, monthly, yearly)
+- Number of orders and average order value
+- Order status distribution
+- Sales trends and growth rates
+- Top-performing periods
+- Order completion rates
+
+SQL Query:
+SELECT 
+    DATE_TRUNC('month', o.order_date) as sales_month,
+    COUNT(o.order_id) as total_orders,
+    SUM(o.total_amount) as total_revenue,
+    AVG(o.total_amount) as avg_order_value,
+    COUNT(CASE WHEN o.status = 'completed' THEN 1 END) as completed_orders,
+    COUNT(CASE WHEN o.status = 'cancelled' THEN 1 END) as cancelled_orders,
+    COUNT(CASE WHEN o.status = 'pending' THEN 1 END) as pending_orders,
+    COUNT(DISTINCT o.user_id) as unique_customers,
+    ROUND(
+        (COUNT(CASE WHEN o.status = 'completed' THEN 1 END) * 100.0 / COUNT(o.order_id)), 2
+    ) as completion_rate_percent
+FROM orders o
+WHERE o.order_date >= ADD_MONTHS(SYSDATE, -12)  -- Last 12 months
+GROUP BY DATE_TRUNC('month', o.order_date)
+ORDER BY sales_month DESC;
+
+Additional Analysis Query:
+-- Product performance within orders
+SELECT 
+    oi.product_name,
+    COUNT(oi.item_id) as times_ordered,
+    SUM(oi.quantity) as total_quantity_sold,
+    SUM(oi.quantity * oi.unit_price) as total_product_revenue,
+    AVG(oi.unit_price) as avg_unit_price
+FROM order_items oi
+JOIN orders o ON oi.order_id = o.order_id
+WHERE o.status = 'completed'
+    AND o.order_date >= ADD_MONTHS(SYSDATE, -3)  -- Last 3 months
+GROUP BY oi.product_name
+ORDER BY total_product_revenue DESC;
+
+Use Cases:
+- Track monthly and yearly sales performance
+- Identify seasonal trends and patterns
+- Monitor order completion and cancellation rates
+- Analyze customer acquisition and retention
+- Plan inventory and resource allocation
+- Set sales targets and KPIs

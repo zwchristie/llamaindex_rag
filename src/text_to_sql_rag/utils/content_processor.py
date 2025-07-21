@@ -5,7 +5,7 @@ import json
 from typing import Dict, Any, List, Optional, Tuple
 from pathlib import Path
 
-from ..models.document import DocumentType
+from ..models.simple_models import DocumentType
 
 
 class ContentProcessor:
@@ -269,3 +269,110 @@ class ContentProcessor:
         from collections import Counter
         word_counts = Counter(keywords)
         return [word for word, count in word_counts.most_common(20)]
+    
+    def convert_json_to_dolphin_format(self, json_content: str, document_type: DocumentType) -> str:
+        """Convert JSON content to Dolphin format for better vectorization."""
+        try:
+            data = json.loads(json_content)
+            return self._format_json_as_dolphin(data, document_type)
+        except json.JSONDecodeError:
+            # If not valid JSON, return original content
+            return json_content
+    
+    def _format_json_as_dolphin(self, data: Any, document_type: DocumentType, level: int = 0) -> str:
+        """Format JSON data as readable Dolphin-style text."""
+        indent = "  " * level
+        lines = []
+        
+        if isinstance(data, dict):
+            for key, value in data.items():
+                if isinstance(value, (dict, list)):
+                    lines.append(f"{indent}{key}:")
+                    lines.append(self._format_json_as_dolphin(value, document_type, level + 1))
+                else:
+                    lines.append(f"{indent}{key}: {value}")
+        
+        elif isinstance(data, list):
+            for i, item in enumerate(data):
+                if isinstance(item, (dict, list)):
+                    lines.append(f"{indent}Item {i + 1}:")
+                    lines.append(self._format_json_as_dolphin(item, document_type, level + 1))
+                else:
+                    lines.append(f"{indent}- {item}")
+        
+        else:
+            return f"{indent}{data}"
+        
+        result = "\n".join(lines)
+        
+        # Add context-specific formatting based on document type
+        if document_type == DocumentType.SCHEMA:
+            result = self._enhance_schema_dolphin_format(result)
+        elif document_type == DocumentType.REPORT:
+            result = self._enhance_report_dolphin_format(result)
+        
+        return result
+    
+    def _enhance_schema_dolphin_format(self, content: str) -> str:
+        """Enhance Dolphin format for schema documents."""
+        lines = content.split('\n')
+        enhanced_lines = []
+        
+        for line in lines:
+            # Enhance table information
+            if 'table' in line.lower() and ':' in line:
+                enhanced_lines.append(f"DATABASE TABLE: {line}")
+            # Enhance column information
+            elif 'column' in line.lower() and ':' in line:
+                enhanced_lines.append(f"TABLE COLUMN: {line}")
+            # Enhance data type information
+            elif any(dtype in line.lower() for dtype in ['varchar', 'int', 'decimal', 'date', 'boolean']):
+                enhanced_lines.append(f"DATA TYPE: {line}")
+            # Enhance relationship information
+            elif any(rel in line.lower() for rel in ['foreign', 'primary', 'key', 'reference']):
+                enhanced_lines.append(f"RELATIONSHIP: {line}")
+            else:
+                enhanced_lines.append(line)
+        
+        # Add semantic headers
+        result = "=== DATABASE SCHEMA INFORMATION ===\n"
+        result += "\n".join(enhanced_lines)
+        result += "\n=== END SCHEMA INFORMATION ==="
+        
+        return result
+    
+    def _enhance_report_dolphin_format(self, content: str) -> str:
+        """Enhance Dolphin format for report documents."""
+        lines = content.split('\n')
+        enhanced_lines = []
+        
+        for line in lines:
+            # Enhance SQL query information
+            if 'sql' in line.lower() and ':' in line:
+                enhanced_lines.append(f"SQL QUERY: {line}")
+            # Enhance description information
+            elif 'description' in line.lower() and ':' in line:
+                enhanced_lines.append(f"QUERY DESCRIPTION: {line}")
+            # Enhance result information
+            elif 'result' in line.lower() and ':' in line:
+                enhanced_lines.append(f"EXPECTED RESULT: {line}")
+            # Enhance table references
+            elif any(table_ref in line.lower() for table_ref in ['table', 'from', 'join']):
+                enhanced_lines.append(f"TABLE REFERENCE: {line}")
+            else:
+                enhanced_lines.append(line)
+        
+        # Add semantic headers
+        result = "=== SQL QUERY REPORT ===\n"
+        result += "\n".join(enhanced_lines)
+        result += "\n=== END QUERY REPORT ==="
+        
+        return result
+    
+    def is_json_content(self, content: str) -> bool:
+        """Check if content is valid JSON."""
+        try:
+            json.loads(content.strip())
+            return True
+        except json.JSONDecodeError:
+            return False

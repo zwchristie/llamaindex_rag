@@ -21,6 +21,8 @@ from qdrant_client import QdrantClient
 from qdrant_client.http import models
 
 from ..config.settings import settings
+from ..utils.content_processor import ContentProcessor
+from .bedrock_service import BedrockEmbeddingService, BedrockLLMService
 
 logger = structlog.get_logger(__name__)
 
@@ -32,6 +34,11 @@ class LlamaIndexVectorService:
         self.client = self._create_qdrant_client()
         self.collection_name = settings.qdrant.collection_name
         self.vector_size = settings.qdrant.vector_size
+        
+        # Initialize content processor and bedrock services
+        self.content_processor = ContentProcessor()
+        self.bedrock_embedding = BedrockEmbeddingService()
+        self.bedrock_llm = BedrockLLMService()
         
         # Initialize LlamaIndex components
         self._setup_llamaindex()
@@ -45,6 +52,21 @@ class LlamaIndexVectorService:
         
         # Setup retrievers for hybrid search
         self.retrievers = self._setup_retrievers()
+        
+        # Create query engine property for LangGraph agent (lazy initialization)
+        self._query_engine = None
+    
+    @property 
+    def query_engine(self):
+        """Lazy initialization of query engine for LangGraph agent."""
+        if self._query_engine is None:
+            from llama_index.core.query_engine import RetrieverQueryEngine
+            retriever = self.retrievers.get("hybrid", self.retrievers["vector"])
+            self._query_engine = RetrieverQueryEngine.from_args(
+                retriever=retriever,
+                response_mode="compact"
+            )
+        return self._query_engine
     
     def _create_qdrant_client(self) -> QdrantClient:
         """Create Qdrant client with proper configuration."""
@@ -68,9 +90,9 @@ class LlamaIndexVectorService:
             raise
     
     def _setup_llamaindex(self) -> None:
-        """Setup LlamaIndex global settings."""
+        """Setup LlamaIndex global settings using bedrock services."""
         try:
-            # Configure embedding model
+            # Configure embedding model using bedrock service
             embed_model = BedrockEmbedding(
                 model_name=settings.aws.embedding_model,
                 region_name=settings.aws.region,
@@ -79,7 +101,7 @@ class LlamaIndexVectorService:
                 aws_session_token=settings.aws.session_token
             )
             
-            # Configure LLM
+            # Configure LLM using bedrock service
             llm = Bedrock(
                 model=settings.aws.llm_model,
                 region_name=settings.aws.region,
@@ -177,17 +199,33 @@ class LlamaIndexVectorService:
         metadata: Dict[str, Any],
         document_type: str
     ) -> bool:
-        """Add document to the index."""
+        """Add document to the index with JSON to Dolphin format conversion."""
         try:
+            # Convert JSON documents to Dolphin format for better vectorization
+            processed_content = content
+            if self.content_processor.is_json_content(content):
+                from ..models.simple_models import DocumentType as DocType
+                doc_type_enum = DocType.SCHEMA if document_type.lower() == "schema" else DocType.REPORT
+                processed_content = self.content_processor.convert_json_to_dolphin_format(
+                    content, doc_type_enum
+                )
+                logger.info(
+                    "Converted JSON document to Dolphin format",
+                    document_id=document_id,
+                    original_length=len(content),
+                    processed_length=len(processed_content)
+                )
+            
             # Create LlamaIndex document with metadata
             doc_metadata = {
                 "document_id": str(document_id),
                 "document_type": document_type,
+                "is_json_converted": self.content_processor.is_json_content(content),
                 **metadata
             }
             
             document = LlamaDocument(
-                text=content,
+                text=processed_content,
                 metadata=doc_metadata,
                 id_=f"doc_{document_id}"
             )

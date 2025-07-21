@@ -5,16 +5,10 @@ from typing import Dict, Any, Optional, List
 from enum import Enum
 from pydantic import BaseModel, Field
 from sqlalchemy import Column, Integer, String, DateTime, Text, JSON, Boolean, Index
-from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.sql import func
 
-Base = declarative_base()
-
-
-class DocumentType(str, Enum):
-    """Supported document types."""
-    REPORT = "report"
-    SCHEMA = "schema"
+from .simple_models import DocumentType
+from .database import Base
 
 
 class DocumentStatus(str, Enum):

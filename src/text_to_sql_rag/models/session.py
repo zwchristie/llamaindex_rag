@@ -5,10 +5,10 @@ from typing import Dict, Any, Optional, List
 from enum import Enum
 from pydantic import BaseModel, Field
 from sqlalchemy import Column, Integer, String, DateTime, Text, JSON, Boolean
-from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.sql import func
 
-Base = declarative_base()
+from .database import Base
+from .simple_models import HumanInterventionRequest
 
 
 class SessionStatus(str, Enum):
@@ -156,15 +156,6 @@ class SessionWithInteractions(BaseModel):
     """Session with its interactions."""
     session: SessionResponse
     interactions: List[InteractionResponse]
-
-
-class HumanInterventionRequest(BaseModel):
-    """Request for human intervention."""
-    session_id: str
-    message: str
-    suggested_actions: List[str] = Field(default_factory=list)
-    context: Dict[str, Any] = Field(default_factory=dict)
-    timeout_minutes: int = Field(default=30, ge=1, le=120)
 
 
 class HumanInterventionResponse(BaseModel):

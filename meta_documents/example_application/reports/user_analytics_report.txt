@@ -1,0 +1,43 @@
+User Analytics Report
+
+Description:
+This report provides comprehensive analytics about user behavior and activity within the application. It includes user registration trends, activity levels, order patterns, and engagement metrics.
+
+Data Returned:
+- User registration date and counts by month
+- Total number of active vs inactive users
+- Average order value per user
+- Number of orders per user
+- User engagement metrics
+- Most active users by order count
+- Revenue contribution by user segment
+
+SQL Query:
+SELECT 
+    u.user_id,
+    u.email,
+    u.first_name,
+    u.last_name,
+    u.created_at as registration_date,
+    u.status as user_status,
+    COUNT(o.order_id) as total_orders,
+    COALESCE(SUM(o.total_amount), 0) as total_spent,
+    COALESCE(AVG(o.total_amount), 0) as avg_order_value,
+    MAX(o.order_date) as last_order_date,
+    CASE 
+        WHEN COUNT(o.order_id) = 0 THEN 'No Orders'
+        WHEN COUNT(o.order_id) BETWEEN 1 AND 3 THEN 'Low Activity'
+        WHEN COUNT(o.order_id) BETWEEN 4 AND 10 THEN 'Medium Activity'
+        ELSE 'High Activity'
+    END as activity_level
+FROM users u
+LEFT JOIN orders o ON u.user_id = o.user_id
+GROUP BY u.user_id, u.email, u.first_name, u.last_name, u.created_at, u.status
+ORDER BY total_spent DESC, total_orders DESC;
+
+Use Cases:
+- Identify high-value customers for targeted marketing
+- Analyze user engagement patterns
+- Track user lifecycle and retention
+- Segment users for personalized experiences
+- Monitor user activity trends over time
