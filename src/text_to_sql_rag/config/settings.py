@@ -4,6 +4,10 @@ from typing import Optional, List
 from pydantic_settings import BaseSettings
 from pydantic import Field
 import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 class DatabaseSettings(BaseSettings):
@@ -33,9 +37,11 @@ class AWSSettings(BaseSettings):
     """AWS Bedrock configuration."""
     
     region: str = Field(default="us-east-1", env="AWS_REGION")
+    profile_name: Optional[str] = Field(default=None, env="AWS_PROFILE")
     access_key_id: Optional[str] = Field(default=None, env="AWS_ACCESS_KEY_ID")
     secret_access_key: Optional[str] = Field(default=None, env="AWS_SECRET_ACCESS_KEY")
     session_token: Optional[str] = Field(default=None, env="AWS_SESSION_TOKEN")
+    use_profile: bool = Field(default=False, env="AWS_USE_PROFILE")
     
     # Model configurations
     embedding_model: str = Field(default="amazon.titan-embed-text-v1", env="AWS_EMBEDDING_MODEL")
@@ -61,11 +67,33 @@ class SecuritySettings(BaseSettings):
     """Security configuration."""
     
     secret_key: str = Field(env="SECRET_KEY")  # No default - must be set via environment
-    algorithm: str = Field(default="HS256", env="ALGORITHM")
-    access_token_expire_minutes: int = Field(default=30, env="ACCESS_TOKEN_EXPIRE_MINUTES")
+    algorithm: str = Field(default="HS256", env="SECURITY_ALGORITHM")
+    access_token_expire_minutes: int = Field(default=30, env="SECURITY_ACCESS_TOKEN_EXPIRE_MINUTES")
     
     class Config:
-        env_prefix = "SECURITY_"
+        env_prefix = ""  # Don't use prefix since we're being explicit
+
+
+class CustomLLMSettings(BaseSettings):
+    """Custom internal LLM API configuration."""
+    
+    base_url: str = Field(env="CUSTOM_LLM_BASE_URL")
+    deployment_id: str = Field(env="CUSTOM_LLM_DEPLOYMENT_ID")
+    model_name: Optional[str] = Field(default=None, env="CUSTOM_LLM_MODEL_NAME")
+    timeout: int = Field(default=30, env="CUSTOM_LLM_TIMEOUT")
+    max_retries: int = Field(default=3, env="CUSTOM_LLM_MAX_RETRIES")
+    
+    class Config:
+        env_prefix = "CUSTOM_LLM_"
+
+
+class LLMProviderSettings(BaseSettings):
+    """LLM Provider configuration."""
+    
+    provider: str = Field(default="bedrock", env="LLM_PROVIDER")  # "bedrock" or "custom"
+    
+    class Config:
+        env_prefix = "LLM_"
 
 
 class AppSettings(BaseSettings):
@@ -90,6 +118,7 @@ class AppSettings(BaseSettings):
     chunk_size: int = Field(default=1024, env="CHUNK_SIZE")
     chunk_overlap: int = Field(default=200, env="CHUNK_OVERLAP")
     similarity_top_k: int = Field(default=5, env="SIMILARITY_TOP_K")
+    confidence_threshold: float = Field(default=0.7, env="CONFIDENCE_THRESHOLD")
     
     # External API settings
     execution_api_url: str = Field(default="http://localhost:8001", env="EXECUTION_API_URL")
@@ -111,19 +140,42 @@ class MongoDBSettings(BaseSettings):
         env_prefix = "MONGODB_"
 
 
-class Settings(BaseSettings):
+class Settings:
     """Global application settings."""
     
-    app: AppSettings = AppSettings()
-    database: DatabaseSettings = DatabaseSettings()
-    qdrant: QdrantSettings = QdrantSettings()
-    aws: AWSSettings = AWSSettings()
-    redis: RedisSettings = RedisSettings()
-    security: SecuritySettings = SecuritySettings()
-    mongodb: MongoDBSettings = MongoDBSettings()
+    def __init__(self):
+        self.app = AppSettings()
+        self.database = DatabaseSettings()
+        self.qdrant = QdrantSettings()
+        self.aws = AWSSettings()
+        self.redis = RedisSettings()
+        self.security = SecuritySettings()
+        self.mongodb = MongoDBSettings()
+        self.llm_provider = LLMProviderSettings()
+        
+        # Only load custom LLM settings if needed
+        if self._should_load_custom_llm():
+            try:
+                self.custom_llm = CustomLLMSettings()
+            except Exception:
+                self.custom_llm = None
+        else:
+            self.custom_llm = None
     
-    class Config:
-        case_sensitive = False
+    def _should_load_custom_llm(self) -> bool:
+        """Check if custom LLM settings should be loaded."""
+        return (
+            os.getenv("LLM_PROVIDER", "bedrock") == "custom" or 
+            os.getenv("CUSTOM_LLM_BASE_URL") is not None
+        )
+    
+    def is_using_custom_llm(self) -> bool:
+        """Check if using custom LLM provider."""
+        return self.llm_provider.provider == "custom" and self.custom_llm is not None
+    
+    def is_using_bedrock(self) -> bool:
+        """Check if using AWS Bedrock provider."""
+        return self.llm_provider.provider == "bedrock"
 
 
 # Global settings instance

@@ -24,6 +24,7 @@ from ..models.conversation import (
 )
 from ..services.vector_service import LlamaIndexVectorService
 from ..services.query_execution_service import QueryExecutionService
+from ..services.llm_provider_factory import llm_factory
 
 logger = logging.getLogger(__name__)
 
@@ -271,8 +272,8 @@ Only request clarification if confidence is below 0.7 or if there are genuine am
 """
             
             # Get confidence assessment from LLM
-            response = self.vector_service.query_engine.query(assessment_prompt)
-            assessment_result = self._parse_confidence_assessment(str(response))
+            response_text = llm_factory.generate_text(assessment_prompt)
+            assessment_result = self._parse_confidence_assessment(response_text)
             
             state.confidence_score = assessment_result["confidence"]
             
@@ -409,10 +410,10 @@ Requirements:
 """
             
             # Generate SQL using the vector service's query engine
-            response = self.vector_service.query_engine.query(prompt)
+            response_text = llm_factory.generate_text(prompt)
             
             # Parse response
-            sql_result = self._parse_sql_response(str(response))
+            sql_result = self._parse_sql_response(response_text)
             
             state.current_sql = sql_result["sql"]
             
@@ -467,12 +468,12 @@ Provide a comprehensive explanation including:
 Format your response clearly and make it understandable for both technical and non-technical users.
 """
                 
-                response = self.vector_service.query_engine.query(description_prompt)
+                response_text = llm_factory.generate_text(description_prompt)
                 
                 state.final_result = {
                     "response_type": "sql_description",
                     "sql": sql_to_describe,
-                    "description": str(response),
+                    "description": response_text,
                     "conversation_id": state.conversation_id
                 }
             else:

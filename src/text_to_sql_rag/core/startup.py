@@ -9,6 +9,7 @@ import structlog
 from ..services.mongodb_service import MongoDBService
 from ..services.vector_service import LlamaIndexVectorService
 from ..services.document_sync_service import DocumentSyncService
+from ..services.llm_provider_factory import llm_factory
 from ..config.settings import settings
 
 logger = structlog.get_logger(__name__)
@@ -45,6 +46,15 @@ class ApplicationStartup:
                 return False
             else:
                 logger.info("Vector store service initialized successfully")
+            
+            # Check LLM provider health
+            logger.info(f"Checking LLM provider health ({settings.llm_provider.provider})")
+            llm_healthy = llm_factory.health_check()
+            if not llm_healthy:
+                logger.warning(f"LLM provider ({settings.llm_provider.provider}) health check failed")
+            else:
+                provider_info = llm_factory.get_provider_info()
+                logger.info(f"LLM Provider: {provider_info['provider']} - Health: OK", provider_info=provider_info)
             
             # Initialize document sync service
             meta_docs_path = settings.app.meta_documents_path

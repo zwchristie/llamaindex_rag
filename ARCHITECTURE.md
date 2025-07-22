@@ -17,6 +17,8 @@ src/text_to_sql_rag/
 │   ├── mongodb_service.py        # MongoDB document storage operations
 │   ├── document_sync_service.py  # Document synchronization orchestration
 │   ├── bedrock_service.py        # AWS Bedrock LLM/embedding integration
+│   ├── custom_llm_service.py     # Custom internal LLM API integration
+│   ├── llm_provider_factory.py   # LLM provider switching and management
 │   └── query_execution_service.py # External database query execution
 ├── models/                       # Data Models and Schemas
 │   ├── database.py               # Shared SQLAlchemy base
@@ -135,6 +137,8 @@ src/text_to_sql_rag/
 **Purpose**: Provides LLM and embedding services via AWS Bedrock
 **Responsibilities**:
 - Multi-model support (Claude, Titan, Llama)
+- Profile-based authentication for local development
+- Credential-based authentication for production
 - Embedding generation for multiple text inputs
 - Text generation with configurable parameters
 - Error handling and fallback mechanisms
@@ -142,6 +146,36 @@ src/text_to_sql_rag/
 **Supported Models**:
 - Embeddings: Amazon Titan, Cohere Embed
 - LLMs: Anthropic Claude, Amazon Titan, Meta Llama
+
+#### `custom_llm_service.py` - Custom LLM Integration
+**Purpose**: Integrates with internal LLM API services
+**Responsibilities**:
+- HTTP client for custom LLM endpoints (invoke, invoke/followup, conversation)
+- Conversation ID management for multi-turn interactions
+- Deployment ID and model name configuration
+- Error handling with retry logic
+- Response parsing and formatting
+
+**Key Features**:
+- Support for invoke, invoke/followup, and conversation endpoints
+- Automatic conversation ID generation
+- Configurable timeout and retry settings
+- JSON response parsing with "message" key extraction
+
+#### `llm_provider_factory.py` - LLM Provider Management
+**Purpose**: Manages switching between different LLM providers
+**Responsibilities**:
+- Provider initialization and switching (Bedrock ↔ Custom)
+- Unified interface for all LLM provider types
+- Health monitoring across providers
+- Provider information and status reporting
+- Runtime provider switching without restart
+
+**Key Methods**:
+- `switch_provider()` - Runtime provider switching
+- `get_provider_info()` - Current provider details
+- `health_check()` - Provider availability status
+- `generate_text()` - Unified text generation interface
 
 #### `query_execution_service.py` - Database Execution
 **Purpose**: Interfaces with external database execution services
@@ -208,15 +242,20 @@ src/text_to_sql_rag/
 **Purpose**: Centralized configuration using Pydantic Settings
 **Configuration Groups**:
 - `AppSettings` - General application config
-- `AWSSettings` - Bedrock service configuration
+- `AWSSettings` - Bedrock service configuration (with profile support)
 - `QdrantSettings` - Vector database config
 - `MongoDBSettings` - Document storage config
 - `SecuritySettings` - Security and authentication
+- `LLMProviderSettings` - LLM provider selection (bedrock/custom)
+- `CustomLLMSettings` - Custom LLM API configuration
 
 **Features**:
 - Environment variable integration
 - Type validation and defaults
 - Nested configuration objects
+- Dynamic custom LLM loading
+- AWS profile vs credential configuration
+- Provider-specific settings isolation
 
 ---
 
@@ -269,13 +308,26 @@ Low Confidence Assessment
 → Continue conversation workflow
 ```
 
+### 4. LLM Provider Switching Flow
+```
+Provider Switch Request
+→ LLMProviderFactory.switch_provider()
+→ Current provider health check
+→ New provider initialization
+→ Provider configuration validation
+→ Runtime provider swap
+→ Health status update
+```
+
 ## 🔗 Key Relationships and Dependencies
 
 ### Service Dependencies
-- **LangGraphAgent** depends on VectorService, QueryExecutionService
-- **VectorService** depends on BedrockService for embeddings
+- **LangGraphAgent** depends on LLMProviderFactory, VectorService, QueryExecutionService
+- **VectorService** depends on BedrockService for embeddings (always AWS for embeddings)
+- **LLMProviderFactory** manages BedrockService and CustomLLMService
 - **DocumentSyncService** orchestrates MongoDBService and VectorService
 - **API endpoints** depend on all services for different operations
+- **Provider switching** affects LangGraphAgent workflow routing
 
 ### Model Relationships
 - **ConversationState** contains SQLArtifact history and ClarificationRequest
@@ -365,9 +417,12 @@ def classify_request(query):
 ## 🚀 Extensibility Points
 
 ### 1. Adding New LLM Providers
-- Extend `BedrockService` or create new service
-- Implement consistent interface
-- Add configuration in `AWSSettings`
+- Create new service class implementing LLM interface (e.g., `OpenAIService`)
+- Add provider configuration class to `settings.py`
+- Update `LLMProviderFactory.switch_provider()` to handle new provider
+- Add provider health check and information methods
+- Update environment configuration examples
+- Add provider-specific endpoints if needed
 
 ### 2. Supporting New Document Types
 - Add to `DocumentType` enum

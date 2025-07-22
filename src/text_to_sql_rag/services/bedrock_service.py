@@ -21,12 +21,27 @@ class BedrockEmbeddingService:
     def _create_bedrock_client(self):
         """Create AWS Bedrock client with proper configuration."""
         try:
-            session = boto3.Session(
-                aws_access_key_id=settings.aws.access_key_id,
-                aws_secret_access_key=settings.aws.secret_access_key,
-                aws_session_token=settings.aws.session_token,
-                region_name=settings.aws.region
-            )
+            if settings.aws.use_profile and settings.aws.profile_name:
+                # Use AWS profile (for local development)
+                logger.info("Using AWS profile for Bedrock client", profile=settings.aws.profile_name)
+                session = boto3.Session(
+                    profile_name=settings.aws.profile_name,
+                    region_name=settings.aws.region
+                )
+            elif settings.aws.access_key_id and settings.aws.secret_access_key:
+                # Use explicit credentials (for production)
+                logger.info("Using explicit AWS credentials for Bedrock client")
+                session = boto3.Session(
+                    aws_access_key_id=settings.aws.access_key_id,
+                    aws_secret_access_key=settings.aws.secret_access_key,
+                    aws_session_token=settings.aws.session_token,
+                    region_name=settings.aws.region
+                )
+            else:
+                # Use default credential chain (IAM roles, etc.)
+                logger.info("Using default AWS credential chain for Bedrock client")
+                session = boto3.Session(region_name=settings.aws.region)
+            
             return session.client('bedrock-runtime')
         except Exception as e:
             logger.error("Failed to create Bedrock client", error=str(e))
@@ -115,12 +130,27 @@ class BedrockLLMService:
     def _create_bedrock_client(self):
         """Create AWS Bedrock client with proper configuration."""
         try:
-            session = boto3.Session(
-                aws_access_key_id=settings.aws.access_key_id,
-                aws_secret_access_key=settings.aws.secret_access_key,
-                aws_session_token=settings.aws.session_token,
-                region_name=settings.aws.region
-            )
+            if settings.aws.use_profile and settings.aws.profile_name:
+                # Use AWS profile (for local development)
+                logger.info("Using AWS profile for Bedrock client", profile=settings.aws.profile_name)
+                session = boto3.Session(
+                    profile_name=settings.aws.profile_name,
+                    region_name=settings.aws.region
+                )
+            elif settings.aws.access_key_id and settings.aws.secret_access_key:
+                # Use explicit credentials (for production)
+                logger.info("Using explicit AWS credentials for Bedrock client")
+                session = boto3.Session(
+                    aws_access_key_id=settings.aws.access_key_id,
+                    aws_secret_access_key=settings.aws.secret_access_key,
+                    aws_session_token=settings.aws.session_token,
+                    region_name=settings.aws.region
+                )
+            else:
+                # Use default credential chain (IAM roles, etc.)
+                logger.info("Using default AWS credential chain for Bedrock client")
+                session = boto3.Session(region_name=settings.aws.region)
+            
             return session.client('bedrock-runtime')
         except Exception as e:
             logger.error("Failed to create Bedrock client", error=str(e))

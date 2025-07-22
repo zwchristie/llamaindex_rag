@@ -15,7 +15,8 @@ A comprehensive text-to-SQL system using LlamaIndex for Retrieval-Augmented Gene
 ### Technical Features
 - **LangGraph Agent**: Sophisticated workflow orchestration with retry logic
 - **Vector Search**: Hybrid retrieval using Qdrant vector store
-- **AWS Bedrock Integration**: Support for Claude, Titan, and Llama models
+- **Multiple LLM Providers**: Seamless switching between AWS Bedrock and custom LLM APIs
+- **Local Development Support**: AWS profile-based authentication for local development
 - **Document Processing**: JSON to Dolphin format conversion for better vectorization
 - **Error Recovery**: Intelligent retry mechanisms with context injection
 - **RESTful API**: Comprehensive API endpoints with FastAPI
@@ -56,34 +57,57 @@ pip install -e .
 ```
 
 ### 3. Environment Configuration
-Create a `.env` file with required environment variables:
+
+The system supports multiple deployment configurations. Choose the appropriate configuration for your environment:
+
+#### Local Development with AWS Profile (Recommended)
+Copy `.env.local.example` to `.env` for local development:
 
 ```env
-# AWS Bedrock Configuration
+# Application Configuration
+APP_DEBUG=true
+SECRET_KEY=your-local-secret-key-here
+LLM_PROVIDER=bedrock
+
+# AWS Bedrock Configuration (Local Profile)
 AWS_REGION=us-east-1
-AWS_ACCESS_KEY_ID=your_access_key
-AWS_SECRET_ACCESS_KEY=your_secret_key
-AWS_SESSION_TOKEN=your_session_token  # Optional
+AWS_USE_PROFILE=true
+AWS_PROFILE=your-profile-name  # e.g., "adfs" for corporate profiles
 AWS_LLM_MODEL=anthropic.claude-3-sonnet-20240229-v1:0
 AWS_EMBEDDING_MODEL=amazon.titan-embed-text-v1
 
-# Qdrant Configuration
+# Local Services
 QDRANT_HOST=localhost
-QDRANT_PORT=6333
-QDRANT_COLLECTION_NAME=documents
-QDRANT_VECTOR_SIZE=1536
-
-# MongoDB Configuration
 MONGODB_URL=mongodb://localhost:27017
-MONGODB_DATABASE=text_to_sql_rag
+```
 
-# Security Configuration
-SECRET_KEY=your-very-secure-secret-key-here
+#### Custom LLM Provider Configuration
+Copy `.env.custom-llm.example` to `.env` for custom LLM API:
 
-# Application Configuration
-APP_DEBUG=false
-APP_TITLE="Text-to-SQL RAG System"
-APP_VERSION="1.0.0"
+```env
+# LLM Provider Configuration
+LLM_PROVIDER=custom
+
+# Custom LLM Configuration
+CUSTOM_LLM_BASE_URL=https://your-internal-llm-api.com
+CUSTOM_LLM_DEPLOYMENT_ID=your-deployment-id
+CUSTOM_LLM_MODEL_NAME=your-preferred-model
+CUSTOM_LLM_TIMEOUT=30
+
+# Still use AWS for embeddings
+AWS_USE_PROFILE=true
+AWS_PROFILE=your-profile-name
+```
+
+#### Production Configuration
+Copy `.env.production.example` to `.env` for production deployment:
+
+```env
+# Production settings with explicit credentials
+LLM_PROVIDER=bedrock
+AWS_USE_PROFILE=false
+AWS_ACCESS_KEY_ID=your_production_access_key
+AWS_SECRET_ACCESS_KEY=your_production_secret_key
 ```
 
 ### 4. Start Infrastructure Services
@@ -93,7 +117,21 @@ docker run -d --name mongodb -p 27017:27017 mongo:latest
 docker run -d --name qdrant -p 6333:6333 qdrant/qdrant:latest
 ```
 
-### 5. Initialize Application
+### 5. Test Your Configuration
+```bash
+# Test your local setup before starting the application
+python test_local_setup.py
+
+# This will validate:
+# - Environment variables are loaded correctly
+# - Settings configuration is valid
+# - LLM provider is accessible
+# - Vector store connection works
+# - MongoDB connection (if running)
+# - Application startup process
+```
+
+### 6. Initialize Application
 ```bash
 # Run startup tasks to initialize services and sync documents
 python -m src.text_to_sql_rag.core.startup
@@ -142,6 +180,25 @@ curl -X POST "http://localhost:8000/documents/upload" \
 curl -X POST "http://localhost:8000/search/documents" \
   -H "Content-Type: application/json" \
   -d '{"query": "user table", "limit": 5}'
+```
+
+#### LLM Provider Management
+```bash
+# Get current provider information
+curl -X GET "http://localhost:8000/llm-provider/info"
+
+# Switch to custom LLM provider
+curl -X POST "http://localhost:8000/llm-provider/switch" \
+  -H "Content-Type: application/json" \
+  -d '{"provider": "custom"}'
+
+# Switch back to Bedrock
+curl -X POST "http://localhost:8000/llm-provider/switch" \
+  -H "Content-Type: application/json" \
+  -d '{"provider": "bedrock"}'
+
+# Test current provider
+curl -X GET "http://localhost:8000/llm-provider/test"
 ```
 
 ### Document Structure
@@ -237,7 +294,18 @@ Use Cases:
 5. **Bedrock Service** (`services/bedrock_service.py`)
    - AWS Bedrock integration for LLMs and embeddings
    - Supports multiple model families (Claude, Titan, Llama)
+   - Profile-based and credential-based authentication
    - Error handling and fallback mechanisms
+
+6. **Custom LLM Service** (`services/custom_llm_service.py`)
+   - Integration with internal LLM APIs
+   - Support for custom deployment endpoints
+   - Conversation management and follow-up handling
+
+7. **LLM Provider Factory** (`services/llm_provider_factory.py`)
+   - Seamless switching between LLM providers
+   - Unified interface for all provider types
+   - Health monitoring and provider information
 
 ### Workflow Process
 

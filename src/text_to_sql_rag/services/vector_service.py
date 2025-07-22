@@ -92,29 +92,57 @@ class LlamaIndexVectorService:
     def _setup_llamaindex(self) -> None:
         """Setup LlamaIndex global settings using bedrock services."""
         try:
-            # Configure embedding model using bedrock service
-            embed_model = BedrockEmbedding(
-                model_name=settings.aws.embedding_model,
-                region_name=settings.aws.region,
-                aws_access_key_id=settings.aws.access_key_id,
-                aws_secret_access_key=settings.aws.secret_access_key,
-                aws_session_token=settings.aws.session_token
-            )
+            # Configure embedding model - always use Bedrock for embeddings
+            if settings.aws.use_profile and settings.aws.profile_name:
+                # Use AWS profile for embeddings
+                embed_model = BedrockEmbedding(
+                    model_name=settings.aws.embedding_model,
+                    region_name=settings.aws.region,
+                    profile_name=settings.aws.profile_name
+                )
+            else:
+                # Use explicit credentials or default chain
+                embed_model = BedrockEmbedding(
+                    model_name=settings.aws.embedding_model,
+                    region_name=settings.aws.region,
+                    aws_access_key_id=settings.aws.access_key_id,
+                    aws_secret_access_key=settings.aws.secret_access_key,
+                    aws_session_token=settings.aws.session_token
+                )
             
-            # Configure LLM using bedrock service
-            llm = Bedrock(
-                model=settings.aws.llm_model,
-                region_name=settings.aws.region,
-                aws_access_key_id=settings.aws.access_key_id,
-                aws_secret_access_key=settings.aws.secret_access_key,
-                aws_session_token=settings.aws.session_token,
-                temperature=0.1,
-                max_tokens=2048
-            )
+            # Configure LLM - only use Bedrock for LlamaIndex if using Bedrock provider
+            llm = None
+            if settings.is_using_bedrock():
+                if settings.aws.use_profile and settings.aws.profile_name:
+                    # Use AWS profile for LLM
+                    llm = Bedrock(
+                        model=settings.aws.llm_model,
+                        region_name=settings.aws.region,
+                        profile_name=settings.aws.profile_name,
+                        temperature=0.1,
+                        max_tokens=2048
+                    )
+                else:
+                    # Use explicit credentials or default chain
+                    llm = Bedrock(
+                        model=settings.aws.llm_model,
+                        region_name=settings.aws.region,
+                        aws_access_key_id=settings.aws.access_key_id,
+                        aws_secret_access_key=settings.aws.secret_access_key,
+                        aws_session_token=settings.aws.session_token,
+                        temperature=0.1,
+                        max_tokens=2048
+                    )
+            else:
+                # For custom LLM provider, use a simple OpenAI-like wrapper or None
+                # LlamaIndex will fall back to default behavior
+                logger.info("Using custom LLM provider, LlamaIndex LLM set to None")
+                llm = None
             
             # Set global settings
             Settings.embed_model = embed_model
-            Settings.llm = llm
+            if llm is not None:
+                Settings.llm = llm
             Settings.chunk_size = settings.app.chunk_size
             Settings.chunk_overlap = settings.app.chunk_overlap
             

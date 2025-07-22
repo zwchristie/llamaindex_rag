@@ -24,6 +24,7 @@ from ..models.simple_models import (
 from ..models.conversation import (
     ConversationState, RequestType, ConversationStatus, AgentResponse
 )
+from ..services.llm_provider_factory import llm_factory
 
 # In-memory session storage (replace with Redis in production)
 sessions = {}
@@ -422,9 +423,11 @@ async def get_stats():
         "active_sessions": len(sessions),
         "active_conversations": len(conversations),
         "pending_clarifications": len([c for c in conversations.values() if c.get("status") == "waiting_for_clarification"]),
+        "llm_provider": llm_factory.get_provider_info(),
         "services": {
             "vector_store_healthy": vector_service.health_check(),
-            "execution_service_healthy": query_execution_service.health_check()
+            "execution_service_healthy": query_execution_service.health_check(),
+            "llm_provider_healthy": llm_factory.health_check()
         }
     }
 
@@ -576,6 +579,71 @@ async def delete_conversation(conversation_id: str):
     del conversations[conversation_id]
     
     return {"message": f"Conversation {conversation_id} deleted successfully"}
+
+
+# LLM Provider management endpoints
+@app.get("/llm-provider/info")
+async def get_llm_provider_info():
+    """Get information about the current LLM provider."""
+    try:
+        provider_info = llm_factory.get_provider_info()
+        health_status = llm_factory.health_check()
+        
+        return {
+            "provider_info": provider_info,
+            "health_status": health_status,
+            "available_providers": ["bedrock", "custom"]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get provider info: {str(e)}")
+
+
+@app.post("/llm-provider/switch")
+async def switch_llm_provider(request: dict):
+    """Switch to a different LLM provider."""
+    provider_name = request.get("provider", "").lower()
+    
+    if provider_name not in ["bedrock", "custom"]:
+        raise HTTPException(status_code=400, detail="Provider must be either 'bedrock' or 'custom'")
+    
+    try:
+        success = llm_factory.switch_provider(provider_name)
+        if success:
+            new_info = llm_factory.get_provider_info()
+            return {
+                "success": True,
+                "message": f"Successfully switched to {provider_name} provider",
+                "provider_info": new_info
+            }
+        else:
+            raise HTTPException(status_code=500, detail=f"Failed to switch to {provider_name} provider")
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error switching provider: {str(e)}")
+
+
+@app.get("/llm-provider/test")
+async def test_llm_provider():
+    """Test the current LLM provider with a simple query."""
+    try:
+        test_prompt = "Generate a simple SQL query to select all columns from a table named 'users'. Respond with just the SQL query."
+        
+        response = llm_factory.generate_text(test_prompt)
+        
+        return {
+            "success": True,
+            "provider": llm_factory.get_provider_info()["provider"],
+            "test_prompt": test_prompt,
+            "response": response,
+            "response_length": len(response)
+        }
+    
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "provider": llm_factory.get_provider_info()["provider"]
+        }
 
 
 # Main entry point
