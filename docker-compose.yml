@@ -1,0 +1,159 @@
+version: '3.8'
+
+services:
+  # OpenSearch cluster
+  opensearch:
+    image: opensearchproject/opensearch:2.12.0
+    container_name: opensearch
+    environment:
+      - cluster.name=opensearch-cluster
+      - node.name=opensearch
+      - discovery.type=single-node
+      - bootstrap.memory_lock=true
+      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
+      - "DISABLE_INSTALL_DEMO_CONFIG=true"
+      - "DISABLE_SECURITY_PLUGIN=true"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - opensearch-data:/usr/share/opensearch/data
+    ports:
+      - "9200:9200"
+      - "9600:9600"
+    networks:
+      - opensearch-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # OpenSearch Dashboards
+  opensearch-dashboards:
+    image: opensearchproject/opensearch-dashboards:2.12.0
+    container_name: opensearch-dashboards
+    ports:
+      - "5601:5601"
+    expose:
+      - "5601"
+    environment:
+      - 'OPENSEARCH_HOSTS=["http://opensearch:9200"]'
+      - "DISABLE_SECURITY_DASHBOARDS_PLUGIN=true"
+    depends_on:
+      opensearch:
+        condition: service_healthy
+    networks:
+      - opensearch-net
+
+  # MongoDB
+  mongodb:
+    image: mongo:7.0
+    container_name: mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: password
+    volumes:
+      - mongodb-data:/data/db
+    networks:
+      - app-net
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Redis (for session management)
+  redis:
+    image: redis:7.2-alpine
+    container_name: redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - app-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Main application
+  text-to-sql-rag:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: text-to-sql-rag-app
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      # OpenSearch Configuration
+      - OPENSEARCH_HOST=opensearch
+      - OPENSEARCH_PORT=9200
+      - OPENSEARCH_USE_SSL=false
+      - OPENSEARCH_VERIFY_CERTS=false
+      - OPENSEARCH_INDEX_NAME=documents
+      - OPENSEARCH_VECTOR_FIELD=vector
+      - OPENSEARCH_VECTOR_SIZE=1536
+      
+      # MongoDB Configuration
+      - MONGODB_URL=mongodb://admin:password@mongodb:27017
+      - MONGODB_DATABASE=text_to_sql_rag
+      
+      # Redis Configuration
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      
+      # Application Configuration
+      - APP_DEBUG=false
+      - APP_TITLE=Text-to-SQL RAG API
+      - APP_DESCRIPTION=Agentic text-to-SQL RAG solution with LlamaIndex and OpenSearch
+      - APP_VERSION=1.0.0
+      - SECRET_KEY=your-production-secret-key-here
+      
+      # External API
+      - EXECUTION_API_URL=http://host.docker.internal:8001
+      
+      # AWS Configuration (set these via environment or secrets)
+      # - AWS_REGION=us-east-1
+      # - AWS_ACCESS_KEY_ID=
+      # - AWS_SECRET_ACCESS_KEY=
+      # - AWS_LLM_MODEL=anthropic.claude-3-sonnet-20240229-v1:0
+      # - AWS_EMBEDDING_MODEL=amazon.titan-embed-text-v1
+    depends_on:
+      opensearch:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - opensearch-net
+      - app-net
+    volumes:
+      - ./meta_documents:/app/meta_documents
+      - ./data:/app/data
+
+volumes:
+  opensearch-data:
+    driver: local
+  mongodb-data:
+    driver: local
+  redis-data:
+    driver: local
+
+networks:
+  opensearch-net:
+    driver: bridge
+  app-net:
+    driver: bridge

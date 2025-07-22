@@ -62,7 +62,7 @@ class BedrockEmbeddingService:
             except Exception as e:
                 logger.error("Failed to get embedding", text_length=len(text), error=str(e))
                 # Return zero vector as fallback
-                embeddings.append([0.0] * settings.qdrant.vector_size)
+                embeddings.append([0.0] * settings.opensearch.vector_size)
         
         return embeddings
     

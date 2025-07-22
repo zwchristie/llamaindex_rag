@@ -20,17 +20,21 @@ class DatabaseSettings(BaseSettings):
         env_prefix = "DATABASE_"
 
 
-class QdrantSettings(BaseSettings):
-    """Qdrant vector store configuration."""
+class OpenSearchSettings(BaseSettings):
+    """OpenSearch vector store configuration."""
     
-    host: str = Field(default="localhost", env="QDRANT_HOST")
-    port: int = Field(default=6333, env="QDRANT_PORT")
-    api_key: Optional[str] = Field(default=None, env="QDRANT_API_KEY")
-    collection_name: str = Field(default="documents", env="QDRANT_COLLECTION_NAME")
-    vector_size: int = Field(default=1536, env="QDRANT_VECTOR_SIZE")
+    host: str = Field(default="localhost", env="OPENSEARCH_HOST")
+    port: int = Field(default=9200, env="OPENSEARCH_PORT")
+    username: Optional[str] = Field(default=None, env="OPENSEARCH_USERNAME")
+    password: Optional[str] = Field(default=None, env="OPENSEARCH_PASSWORD")
+    use_ssl: bool = Field(default=False, env="OPENSEARCH_USE_SSL")
+    verify_certs: bool = Field(default=False, env="OPENSEARCH_VERIFY_CERTS")
+    index_name: str = Field(default="documents", env="OPENSEARCH_INDEX_NAME")
+    vector_field: str = Field(default="vector", env="OPENSEARCH_VECTOR_FIELD")
+    vector_size: int = Field(default=1536, env="OPENSEARCH_VECTOR_SIZE")
     
     class Config:
-        env_prefix = "QDRANT_"
+        env_prefix = "OPENSEARCH_"
 
 
 class AWSSettings(BaseSettings):
@@ -101,7 +105,7 @@ class AppSettings(BaseSettings):
     
     title: str = Field(default="Text-to-SQL RAG API", env="APP_TITLE")
     description: str = Field(
-        default="Agentic text-to-SQL RAG solution with LlamaIndex and Qdrant",
+        default="Agentic text-to-SQL RAG solution with LlamaIndex and OpenSearch",
         env="APP_DESCRIPTION"
     )
     version: str = Field(default="0.1.0", env="APP_VERSION")
@@ -146,7 +150,7 @@ class Settings:
     def __init__(self):
         self.app = AppSettings()
         self.database = DatabaseSettings()
-        self.qdrant = QdrantSettings()
+        self.opensearch = OpenSearchSettings()
         self.aws = AWSSettings()
         self.redis = RedisSettings()
         self.security = SecuritySettings()

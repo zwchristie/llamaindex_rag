@@ -122,10 +122,15 @@ async def detailed_health_check():
     return {
         "status": "healthy",
         "services": {
-            "vector_store": vector_service.get_index_stats(),
+            "vector_store": vector_service.get_index_stats() if vector_service else {"status": "not_initialized"},
             "execution_service": {
-                "available": query_execution_service.health_check(),
+                "available": query_execution_service.health_check() if query_execution_service else False,
                 "endpoint": settings.app.execution_api_url
+            },
+            "opensearch": {
+                "host": settings.opensearch.host,
+                "port": settings.opensearch.port,
+                "index_name": settings.opensearch.index_name
             },
             "settings": {
                 "chunk_size": settings.app.chunk_size,

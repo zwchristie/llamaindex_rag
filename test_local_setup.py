@@ -29,7 +29,7 @@ def test_environment():
     # Check critical environment variables
     critical_vars = [
         "AWS_REGION",
-        "QDRANT_HOST", 
+        "OPENSEARCH_HOST", 
         "MONGODB_URL",
         "LLM_PROVIDER"
     ]
@@ -119,7 +119,7 @@ def test_vector_service():
         if health:
             print("[OK] Vector service health check: PASSED")
         else:
-            print("[WARN] Vector service health check: FAILED (Qdrant might not be running)")
+            print("[WARN] Vector service health check: FAILED (OpenSearch might not be running)")
         
         return True
         
@@ -212,7 +212,7 @@ def main():
         print("Some tests failed. Check the output above for details.")
         print("\nCommon fixes:")
         print("  - Make sure .env file is configured with your settings")
-        print("  - Start Qdrant: docker run -p 6333:6333 qdrant/qdrant:latest")
+        print("  - Start OpenSearch: docker run -p 9200:9200 opensearchproject/opensearch:latest")
         print("  - Start MongoDB: docker run -p 27017:27017 mongo:latest")
         print("  - Set up AWS credentials with ADFS profile if using Bedrock")
         print("  - Configure custom LLM settings if using custom provider")

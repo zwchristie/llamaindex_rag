@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "text-to-sql-rag"
 version = "0.1.0"
-description = "Agentic text-to-SQL RAG solution with LlamaIndex and Qdrant"
+description = "Agentic text-to-SQL RAG solution with LlamaIndex and OpenSearch"
 authors = ["User <user@example.com>"]
 readme = "README.md"
 packages = [{include = "text_to_sql_rag", from = "src"}]
@@ -11,11 +11,11 @@ python = ">=3.9,<3.13"
 fastapi = "^0.110.0"
 uvicorn = {extras = ["standard"], version = "^0.27.0"}
 llama-index = "^0.10.0"
-llama-index-vector-stores-qdrant = "^0.2.0"
+llama-index-vector-stores-opensearch = "^0.2.0"
 llama-index-embeddings-bedrock = "^0.1.0"
 llama-index-llms-bedrock = "^0.1.0"
 langgraph = "^0.0.69"
-qdrant-client = "^1.7.0"
+opensearch-py = "^2.4.0"
 boto3 = "^1.34.0"
 pydantic = "^2.5.0"
 pydantic-settings = "^2.1.0"
