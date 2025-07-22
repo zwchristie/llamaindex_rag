@@ -1,6 +1,6 @@
 # LlamaIndex RAG Text-to-SQL System
 
-A comprehensive text-to-SQL system using LlamaIndex for Retrieval-Augmented Generation (RAG), LangGraph for agent workflows, and AWS Bedrock for LLM/embedding services. The system features human-in-the-loop capabilities, confidence assessment, and adaptive workflow routing.
+A comprehensive text-to-SQL system using LlamaIndex for Retrieval-Augmented Generation (RAG), OpenSearch for vector storage, LangGraph for agent workflows, and AWS Bedrock for LLM/embedding services. The system features human-in-the-loop capabilities, confidence assessment, and adaptive workflow routing.
 
 ## 🚀 Features
 
@@ -14,7 +14,7 @@ A comprehensive text-to-SQL system using LlamaIndex for Retrieval-Augmented Gene
 
 ### Technical Features
 - **LangGraph Agent**: Sophisticated workflow orchestration with retry logic
-- **Vector Search**: Hybrid retrieval using Qdrant vector store
+- **Vector Search**: Hybrid retrieval using OpenSearch vector store
 - **AWS Bedrock Integration**: Support for Claude, Titan, and Llama models
 - **Document Processing**: JSON to Dolphin format conversion for better vectorization
 - **Error Recovery**: Intelligent retry mechanisms with context injection
@@ -32,7 +32,7 @@ See `pyproject.toml` for complete dependency list. Key dependencies:
 - `fastapi` - Web framework
 - `llama-index` - RAG framework
 - `langgraph` - Agent workflow orchestration
-- `qdrant-client` - Vector database client
+- `opensearch-py` - OpenSearch client
 - `pymongo` - MongoDB driver
 - `boto3` - AWS SDK
 - `pydantic` - Data validation
@@ -67,11 +67,16 @@ AWS_SESSION_TOKEN=your_session_token  # Optional
 AWS_LLM_MODEL=anthropic.claude-3-sonnet-20240229-v1:0
 AWS_EMBEDDING_MODEL=amazon.titan-embed-text-v1
 
-# Qdrant Configuration
-QDRANT_HOST=localhost
-QDRANT_PORT=6333
-QDRANT_COLLECTION_NAME=documents
-QDRANT_VECTOR_SIZE=1536
+# OpenSearch Configuration
+OPENSEARCH_HOST=localhost
+OPENSEARCH_PORT=9200
+OPENSEARCH_USERNAME=admin
+OPENSEARCH_PASSWORD=admin
+OPENSEARCH_USE_SSL=false
+OPENSEARCH_VERIFY_CERTS=false
+OPENSEARCH_INDEX_NAME=documents
+OPENSEARCH_VECTOR_FIELD=vector
+OPENSEARCH_VECTOR_SIZE=1536
 
 # MongoDB Configuration
 MONGODB_URL=mongodb://localhost:27017
@@ -88,9 +93,13 @@ APP_VERSION="1.0.0"
 
 ### 4. Start Infrastructure Services
 ```bash
-# Start MongoDB and Qdrant using Docker
+# Start MongoDB and OpenSearch using Docker
 docker run -d --name mongodb -p 27017:27017 mongo:latest
-docker run -d --name qdrant -p 6333:6333 qdrant/qdrant:latest
+docker run -d --name opensearch \
+  -p 9200:9200 -p 9600:9600 \
+  -e "discovery.type=single-node" \
+  -e "OPENSEARCH_INITIAL_ADMIN_PASSWORD=admin" \
+  opensearchproject/opensearch:latest
 ```
 
 ### 5. Initialize Application
@@ -221,7 +230,7 @@ Use Cases:
 
 2. **Vector Service** (`services/vector_service.py`)
    - Manages document indexing and retrieval
-   - Integrates LlamaIndex with Qdrant
+   - Integrates LlamaIndex with OpenSearch
    - Handles hybrid search and document preprocessing
 
 3. **MongoDB Service** (`services/mongodb_service.py`)
@@ -269,7 +278,7 @@ The application uses Pydantic settings with environment variable support:
 
 - `AppSettings`: General application configuration
 - `AWSSettings`: Bedrock service configuration
-- `QdrantSettings`: Vector database configuration
+- `OpenSearchSettings`: Vector database configuration
 - `MongoDBSettings`: Document storage configuration
 - `SecuritySettings`: Authentication and security
 
@@ -369,8 +378,8 @@ logger.info("SQL generation started", query_length=len(query), confidence=0.85)
    - Ensure Bedrock service is enabled
 
 3. **Vector Store Connection**
-   - Verify Qdrant is running and accessible
-   - Check collection configuration
+   - Verify OpenSearch is running and accessible
+   - Check index configuration
    - Validate vector dimensions match embedding model
 
 4. **MongoDB Connection**

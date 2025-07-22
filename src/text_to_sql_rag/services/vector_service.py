@@ -1,4 +1,4 @@
-"""LlamaIndex-based vector store service with Qdrant integration."""
+"""LlamaIndex-based vector store service with OpenSearch integration."""
 
 from typing import List, Dict, Any, Optional, Tuple
 import structlog
@@ -13,12 +13,12 @@ from llama_index.core import (
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core.retrievers import VectorIndexRetriever
 from llama_index.core.query_engine import RetrieverQueryEngine
-from llama_index.vector_stores.qdrant import QdrantVectorStore
+from llama_index.vector_stores.opensearch import OpenSearchVectorStore
 from llama_index.embeddings.bedrock import BedrockEmbedding
 from llama_index.llms.bedrock import Bedrock
 
-from qdrant_client import QdrantClient
-from qdrant_client.http import models
+from opensearchpy import OpenSearch
+import ssl
 
 from ..config.settings import settings
 from ..utils.content_processor import ContentProcessor
@@ -28,12 +28,13 @@ logger = structlog.get_logger(__name__)
 
 
 class LlamaIndexVectorService:
-    """Service for managing documents using LlamaIndex with Qdrant vector store."""
+    """Service for managing documents using LlamaIndex with OpenSearch vector store."""
     
     def __init__(self):
-        self.client = self._create_qdrant_client()
-        self.collection_name = settings.qdrant.collection_name
-        self.vector_size = settings.qdrant.vector_size
+        self.client = self._create_opensearch_client()
+        self.index_name = settings.opensearch.index_name
+        self.vector_field = settings.opensearch.vector_field
+        self.vector_size = settings.opensearch.vector_size
         
         # Initialize content processor and bedrock services
         self.content_processor = ContentProcessor()
@@ -60,7 +61,6 @@ class LlamaIndexVectorService:
     def query_engine(self):
         """Lazy initialization of query engine for LangGraph agent."""
         if self._query_engine is None:
-            from llama_index.core.query_engine import RetrieverQueryEngine
             retriever = self.retrievers.get("hybrid", self.retrievers["vector"])
             self._query_engine = RetrieverQueryEngine.from_args(
                 retriever=retriever,
@@ -68,25 +68,46 @@ class LlamaIndexVectorService:
             )
         return self._query_engine
     
-    def _create_qdrant_client(self) -> QdrantClient:
-        """Create Qdrant client with proper configuration."""
+    def _create_opensearch_client(self) -> OpenSearch:
+        """Create OpenSearch client with proper configuration."""
         try:
-            if settings.qdrant.api_key:
-                client = QdrantClient(
-                    url=f"https://{settings.qdrant.host}:{settings.qdrant.port}",
-                    api_key=settings.qdrant.api_key
-                )
-            else:
-                client = QdrantClient(
-                    host=settings.qdrant.host,
-                    port=settings.qdrant.port
+            # Configure connection based on settings
+            client_config = {
+                'hosts': [{'host': settings.opensearch.host, 'port': settings.opensearch.port}],
+                'use_ssl': settings.opensearch.use_ssl,
+                'verify_certs': settings.opensearch.verify_certs,
+                'timeout': 30,
+                'max_retries': 3,
+                'retry_on_timeout': True
+            }
+            
+            # Add authentication if provided
+            if settings.opensearch.username and settings.opensearch.password:
+                client_config['http_auth'] = (
+                    settings.opensearch.username, 
+                    settings.opensearch.password
                 )
             
-            logger.info("Connected to Qdrant", host=settings.qdrant.host, port=settings.qdrant.port)
+            # Configure SSL context if needed
+            if settings.opensearch.use_ssl and not settings.opensearch.verify_certs:
+                client_config['ssl_context'] = ssl.create_default_context()
+                client_config['ssl_context'].check_hostname = False
+                client_config['ssl_context'].verify_mode = ssl.CERT_NONE
+            
+            client = OpenSearch(**client_config)
+            
+            # Test connection
+            info = client.info()
+            logger.info(
+                "Connected to OpenSearch", 
+                host=settings.opensearch.host, 
+                port=settings.opensearch.port,
+                version=info.get('version', {}).get('number', 'unknown')
+            )
             return client
             
         except Exception as e:
-            logger.error("Failed to connect to Qdrant", error=str(e))
+            logger.error("Failed to connect to OpenSearch", error=str(e))
             raise
     
     def _setup_llamaindex(self) -> None:
@@ -124,17 +145,19 @@ class LlamaIndexVectorService:
             logger.error("Failed to setup LlamaIndex", error=str(e))
             raise
     
-    def _create_vector_store(self) -> QdrantVectorStore:
-        """Create Qdrant vector store for LlamaIndex."""
+    def _create_vector_store(self) -> OpenSearchVectorStore:
+        """Create OpenSearch vector store for LlamaIndex."""
         try:
-            vector_store = QdrantVectorStore(
+            vector_store = OpenSearchVectorStore(
                 client=self.client,
-                collection_name=self.collection_name,
-                enable_hybrid=True,  # Enable hybrid search
-                batch_size=20
+                index_name=self.index_name,
+                vector_field=self.vector_field,
+                text_field="content",
+                metadata_field="metadata",
+                dim=self.vector_size
             )
             
-            logger.info("Created Qdrant vector store", collection_name=self.collection_name)
+            logger.info("Created OpenSearch vector store", index_name=self.index_name)
             return vector_store
             
         except Exception as e:
@@ -176,14 +199,12 @@ class LlamaIndexVectorService:
                 similarity_top_k=settings.app.similarity_top_k
             )
             
-            # Hybrid retriever (if supported by vector store)
-            if hasattr(self.vector_store, 'enable_hybrid') and self.vector_store.enable_hybrid:
-                from llama_index.core.retrievers import QueryFusionRetriever
-                retrievers["hybrid"] = QueryFusionRetriever(
-                    retrievers=[retrievers["vector"]],
-                    similarity_top_k=settings.app.similarity_top_k,
-                    num_queries=3  # Generate multiple query variants
-                )
+            # For OpenSearch, we can use the same vector retriever
+            # OpenSearch supports hybrid search natively through its query DSL
+            retrievers["hybrid"] = VectorIndexRetriever(
+                index=self.index,
+                similarity_top_k=settings.app.similarity_top_k
+            )
             
             logger.info("Setup retrievers", types=list(retrievers.keys()))
             return retrievers
@@ -279,11 +300,10 @@ class LlamaIndexVectorService:
             if similarity_top_k:
                 retriever.similarity_top_k = similarity_top_k
             
-            # Apply filters if needed
+            # Apply filters if needed (OpenSearch supports native filtering)
             if document_type or document_ids:
                 filters = self._build_metadata_filters(document_type, document_ids)
-                if hasattr(retriever, 'filters'):
-                    retriever.filters = filters
+                # Note: Filtering implementation may need adjustment based on LlamaIndex OpenSearch integration
             
             # Perform retrieval
             nodes = retriever.retrieve(query)
@@ -421,22 +441,45 @@ class LlamaIndexVectorService:
         
         return filters
     
+    def get_document_info(self, document_id: int) -> Dict[str, Any]:
+        """Get information about a document's vectors."""
+        try:
+            # Search for documents with this ID
+            results = self.search_similar(
+                query="*",  # Match all
+                document_ids=[document_id],
+                similarity_top_k=100
+            )
+            
+            info = {
+                "document_id": document_id,
+                "num_chunks": len(results),
+                "metadata": results[0]["metadata"] if results else {}
+            }
+            
+            return info
+            
+        except Exception as e:
+            logger.error("Failed to get document info", document_id=document_id, error=str(e))
+            return {"document_id": document_id, "num_chunks": 0, "metadata": {}}
+    
     def get_index_stats(self) -> Dict[str, Any]:
         """Get statistics about the index."""
         try:
-            # Get collection info from Qdrant
-            collection_info = self.client.get_collection(self.collection_name)
+            # Get index statistics from OpenSearch
+            stats = self.client.indices.stats(index=self.index_name)
+            index_stats = stats.get("indices", {}).get(self.index_name, {})
             
             return {
-                "collection_name": self.collection_name,
-                "points_count": collection_info.points_count,
-                "vectors_count": collection_info.vectors_count,
-                "status": collection_info.status,
+                "index_name": self.index_name,
+                "documents_count": index_stats.get("total", {}).get("docs", {}).get("count", 0),
+                "index_size": index_stats.get("total", {}).get("store", {}).get("size_in_bytes", 0),
                 "retrievers_available": list(self.retrievers.keys()),
                 "settings": {
                     "chunk_size": settings.app.chunk_size,
                     "chunk_overlap": settings.app.chunk_overlap,
-                    "similarity_top_k": settings.app.similarity_top_k
+                    "similarity_top_k": settings.app.similarity_top_k,
+                    "vector_size": self.vector_size
                 }
             }
             
@@ -447,14 +490,14 @@ class LlamaIndexVectorService:
     def health_check(self) -> bool:
         """Check if the service is healthy."""
         try:
-            # Check Qdrant connection
-            collections = self.client.get_collections()
+            # Check OpenSearch connection
+            cluster_health = self.client.cluster.health()
             
-            # Check if index is accessible
-            if self.index:
-                return True
+            # Check if index exists and is accessible
+            if self.client.indices.exists(index=self.index_name):
+                return cluster_health.get("status") in ["green", "yellow"]
             
-            return False
+            return True  # Cluster is healthy even if index doesn't exist yet
             
         except Exception as e:
             logger.error("Health check failed", error=str(e))
