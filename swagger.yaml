@@ -1,0 +1,1648 @@
+openapi: 3.0.3
+info:
+  title: Text-to-SQL RAG API
+  version: 1.0.0
+  description: |
+    # Text-to-SQL RAG API
+
+    An intelligent API for converting natural language to SQL with Retrieval-Augmented Generation (RAG), 
+    conversation management, and human-in-the-loop capabilities.
+
+    ## Key Features
+    - 🧠 **Intelligent SQL Generation** from natural language queries
+    - 💬 **Conversation Management** with context preservation
+    - 🤝 **Human-in-the-Loop** clarification workflows
+    - 📚 **Document Management** for schema and report indexing
+    - 🔄 **LLM Provider Switching** (AWS Bedrock ↔ Custom APIs)
+    - ⚡ **Real-time Health Monitoring**
+
+    ## Integration Guide for React Applications
+
+    ### Quick Start
+    ```javascript
+    // 1. Install dependencies
+    npm install axios
+
+    // 2. Create API client
+    const apiClient = axios.create({
+      baseURL: 'http://localhost:8000',
+      timeout: 30000,
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
+
+    // 3. Start conversation
+    const response = await apiClient.post('/conversations/start', {
+      query: 'Show me all users who registered last month'
+    });
+    ```
+
+    ### Error Handling
+    All endpoints return consistent error formats. Implement global error handling:
+    ```javascript
+    apiClient.interceptors.response.use(
+      response => response,
+      error => {
+        if (error.response?.status === 422) {
+          // Handle clarification requests
+        } else if (error.response?.status >= 500) {
+          // Handle server errors with retry logic
+        }
+        return Promise.reject(error);
+      }
+    );
+    ```
+
+  contact:
+    name: Text-to-SQL RAG Team
+    url: https://github.com/your-org/text-to-sql-rag
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:8000
+    description: Development server
+  - url: https://api.your-domain.com
+    description: Production server
+
+tags:
+  - name: Conversations
+    description: |
+      **Primary integration point for chat applications**
+      
+      These endpoints manage conversational flows with intelligent routing:
+      - Start new conversations with automatic context detection
+      - Handle clarification requests seamlessly
+      - Maintain conversation history and state
+      
+      **React Integration Pattern:**
+      ```javascript
+      const useConversation = () => {
+        const [messages, setMessages] = useState([]);
+        const [conversationId, setConversationId] = useState(null);
+        
+        const sendMessage = async (query) => {
+          if (!conversationId) {
+            const response = await startConversation(query);
+            setConversationId(response.data.conversation_id);
+            return response.data.result;
+          } else {
+            return await continueConversation(conversationId, query);
+          }
+        };
+        
+        return { sendMessage, messages, conversationId };
+      };
+      ```
+
+  - name: SQL Generation
+    description: |
+      **Direct SQL generation without conversation management**
+      
+      Use these endpoints for:
+      - Simple one-off queries
+      - Batch processing
+      - API-to-API integrations
+      
+      **Best for:** Analytics dashboards, reporting tools, data exploration
+
+  - name: Documents
+    description: |
+      **Enhance AI context with your schema and reports**
+      
+      Upload documents to improve SQL generation accuracy:
+      - Database schemas (JSON format)
+      - Example reports and queries (text/markdown)
+      - Documentation and data dictionaries
+
+  - name: System
+    description: |
+      **Health monitoring and system information**
+      
+      Essential for production deployments:
+      - Monitor API health and dependencies
+      - Get system statistics and metrics
+      - Implement health checks in your application
+
+  - name: LLM Provider
+    description: |
+      **Runtime LLM provider management**
+      
+      Switch between different AI providers:
+      - AWS Bedrock for enterprise deployment
+      - Custom LLM APIs for specialized models
+      - Real-time provider switching without restart
+
+paths:
+  /conversations/start:
+    post:
+      tags: [Conversations]
+      summary: Start a new conversation
+      description: |
+        **Primary endpoint for chat applications**
+        
+        Initiates an intelligent conversation flow that can:
+        - Generate SQL directly for clear requests
+        - Ask for clarification when needed
+        - Provide step-by-step guidance for complex queries
+        
+        **Response Types:**
+        - `sql_result`: Ready-to-use SQL with explanation
+        - `clarification_request`: Needs more information from user
+        - `error`: Something went wrong
+        
+        **React Integration Example:**
+        ```javascript
+        const handleUserQuery = async (userInput) => {
+          try {
+            const response = await fetch('/conversations/start', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ query: userInput })
+            });
+            
+            const data = await response.json();
+            
+            if (data.result.response_type === 'clarification_request') {
+              // Show clarification UI
+              setClarificationNeeded(data.result.clarification);
+            } else {
+              // Display SQL result
+              setSQLResult(data.result);
+            }
+            
+            setConversationId(data.conversation_id);
+          } catch (error) {
+            handleError(error);
+          }
+        };
+        ```
+      operationId: startConversation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query]
+              properties:
+                query:
+                  type: string
+                  description: Natural language query to convert to SQL
+                  example: "Show me all users who registered last month"
+                  minLength: 1
+                  maxLength: 1000
+                context:
+                  type: object
+                  description: Additional context to improve SQL generation
+                  properties:
+                    user_id:
+                      type: string
+                      description: User identifier for session tracking
+                      example: "user123"
+                    session_context:
+                      type: string
+                      description: Application context (dashboard, report, etc.)
+                      example: "analytics_dashboard"
+                    database_schema:
+                      type: string
+                      description: Target database schema name
+                      example: "ecommerce"
+                    preferred_style:
+                      type: string
+                      enum: [simple, detailed, optimized]
+                      description: SQL generation style preference
+                      default: simple
+            examples:
+              simple_query:
+                summary: Simple user count query
+                value:
+                  query: "How many users do we have?"
+                  context:
+                    user_id: "analyst_1"
+                    session_context: "dashboard"
+              complex_query:
+                summary: Complex analytical query
+                value:
+                  query: "Show me the revenue trend by product category for the last 6 months"
+                  context:
+                    user_id: "manager_1"
+                    session_context: "executive_report"
+                    database_schema: "analytics"
+              ambiguous_query:
+                summary: Query that will need clarification
+                value:
+                  query: "Show me the sales data"
+                  context:
+                    user_id: "user123"
+      responses:
+        '200':
+          description: Conversation started successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [conversation_id, result]
+                properties:
+                  conversation_id:
+                    type: string
+                    description: Unique conversation identifier for follow-up messages
+                    example: "conv_abc123def456"
+                  result:
+                    $ref: '#/components/schemas/ConversationResult'
+              examples:
+                sql_generated:
+                  summary: SQL successfully generated
+                  value:
+                    conversation_id: "conv_abc123def456"
+                    result:
+                      response_type: "sql_result"
+                      sql: "SELECT COUNT(*) FROM users WHERE created_at >= DATE_SUB(NOW(), INTERVAL 1 MONTH)"
+                      explanation: "This query counts all users who registered in the last month"
+                      confidence: 0.92
+                      execution_results:
+                        status: "success"
+                        rows_returned: 1
+                        data: [{"count": 1247}]
+                clarification_needed:
+                  summary: Clarification required
+                  value:
+                    conversation_id: "conv_abc123def456"
+                    result:
+                      response_type: "clarification_request"
+                      clarification:
+                        message: "I need more details about the sales data you want to see. What time period and which metrics are you interested in?"
+                        suggestions:
+                          - "Sales revenue for the last 30 days"
+                          - "Number of orders by product category"
+                          - "Top performing sales representatives"
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '422':
+          $ref: '#/components/responses/BusinessLogicError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /conversations/{conversation_id}/continue:
+    post:
+      tags: [Conversations]
+      summary: Continue an existing conversation
+      description: |
+        **Continue conversation with user clarification or follow-up**
+        
+        Use this endpoint to:
+        - Provide clarification for ambiguous requests
+        - Ask follow-up questions
+        - Refine or modify previously generated SQL
+        
+        **React Pattern:**
+        ```javascript
+        const handleClarification = async (clarificationText) => {
+          const response = await fetch(`/conversations/${conversationId}/continue`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message: clarificationText })
+          });
+          
+          const result = await response.json();
+          return result; // Same format as start conversation
+        };
+        ```
+      operationId: continueConversation
+      parameters:
+        - name: conversation_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Conversation ID from the start conversation response
+          example: "conv_abc123def456"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message]
+              properties:
+                message:
+                  type: string
+                  description: User's clarification, follow-up, or modification request
+                  example: "I want to see sales for the last 30 days only"
+                  minLength: 1
+                  maxLength: 1000
+                context:
+                  type: object
+                  description: Additional context for this clarification
+                  properties:
+                    clarification_type:
+                      type: string
+                      enum: [time_period, data_scope, format_preference, filter_criteria]
+                      description: Type of clarification being provided
+            examples:
+              time_clarification:
+                summary: Clarify time period
+                value:
+                  message: "Show me data for the last 30 days"
+                  context:
+                    clarification_type: "time_period"
+              scope_clarification:
+                summary: Clarify data scope
+                value:
+                  message: "I only want active users"
+                  context:
+                    clarification_type: "filter_criteria"
+      responses:
+        '200':
+          description: Conversation continued successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationResult'
+        '404':
+          description: Conversation not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                detail: "Conversation conv_abc123def456 not found"
+                error_code: "CONVERSATION_NOT_FOUND"
+
+  /conversations/{conversation_id}:
+    get:
+      tags: [Conversations]
+      summary: Get conversation details and history
+      description: |
+        **Retrieve complete conversation history**
+        
+        Useful for:
+        - Displaying conversation history in UI
+        - Context restoration after page refresh
+        - Debugging and analytics
+        
+        **React Usage:**
+        ```javascript
+        const useConversationHistory = (conversationId) => {
+          const [history, setHistory] = useState(null);
+          
+          useEffect(() => {
+            if (conversationId) {
+              fetch(`/conversations/${conversationId}`)
+                .then(res => res.json())
+                .then(setHistory);
+            }
+          }, [conversationId]);
+          
+          return history;
+        };
+        ```
+      operationId: getConversation
+      parameters:
+        - name: conversation_id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "conv_abc123def456"
+      responses:
+        '200':
+          description: Conversation details retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationDetails'
+
+    delete:
+      tags: [Conversations]
+      summary: Delete a conversation
+      description: |
+        **Permanently delete conversation and history**
+        
+        Use for:
+        - User privacy requests
+        - Cleanup of old conversations
+        - Storage management
+      operationId: deleteConversation
+      parameters:
+        - name: conversation_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Conversation deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Conversation conv_abc123def456 deleted successfully"
+
+  /conversations:
+    get:
+      tags: [Conversations]
+      summary: List user conversations
+      description: |
+        **Get paginated list of user conversations**
+        
+        **React Pattern for Conversation List:**
+        ```javascript
+        const ConversationList = () => {
+          const [conversations, setConversations] = useState([]);
+          const [filter, setFilter] = useState('all');
+          
+          useEffect(() => {
+            const params = filter !== 'all' ? `?status=${filter}` : '';
+            fetch(`/conversations${params}`)
+              .then(res => res.json())
+              .then(data => setConversations(data.conversations));
+          }, [filter]);
+          
+          return (
+            <div>
+              {conversations.map(conv => (
+                <ConversationItem key={conv.conversation_id} {...conv} />
+              ))}
+            </div>
+          );
+        };
+        ```
+      operationId: listConversations
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [completed, waiting_for_clarification, active]
+          description: Filter conversations by status
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          description: Maximum number of conversations to return
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+          description: Number of conversations to skip (pagination)
+      responses:
+        '200':
+          description: Conversations retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationsList'
+
+  /query/generate:
+    post:
+      tags: [SQL Generation]
+      summary: Generate SQL without conversation management
+      description: |
+        **Direct SQL generation for simple use cases**
+        
+        Best for:
+        - One-off queries
+        - API integrations
+        - Batch processing
+        
+        **React Usage:**
+        ```javascript
+        const generateSQL = async (query) => {
+          const response = await fetch('/query/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query })
+          });
+          
+          const result = await response.json();
+          return result.sql;
+        };
+        ```
+      operationId: generateSQL
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SQLGenerationRequest'
+            examples:
+              simple_query:
+                summary: Simple count query
+                value:
+                  query: "How many orders were placed yesterday?"
+              complex_query:
+                summary: Complex analytical query
+                value:
+                  query: "Show top 10 products by revenue this quarter"
+                  context:
+                    database_schema: "analytics"
+      responses:
+        '200':
+          description: SQL generated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SQLGenerationResponse'
+
+  /query/generate-and-execute:
+    post:
+      tags: [SQL Generation]
+      summary: Generate and execute SQL
+      description: |
+        **Generate SQL and automatically execute if confidence is high**
+        
+        **Auto-execution logic:**
+        - Confidence > 0.8: Execute automatically
+        - Confidence 0.6-0.8: Return SQL for user approval
+        - Confidence < 0.6: Request clarification
+        
+        **React Pattern:**
+        ```javascript
+        const handleQueryWithExecution = async (query) => {
+          const response = await fetch('/query/generate-and-execute', {
+            method: 'POST',
+            body: JSON.stringify({ 
+              query,
+              auto_execute: true,
+              execution_limit: 100 
+            })
+          });
+          
+          const result = await response.json();
+          
+          if (result.execution_results) {
+            // Display results immediately
+            setQueryResults(result.execution_results);
+          } else {
+            // Show SQL for approval
+            setSQLForApproval(result.sql);
+          }
+        };
+        ```
+      operationId: generateAndExecuteSQL
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/SQLGenerationRequest'
+                - type: object
+                  properties:
+                    auto_execute:
+                      type: boolean
+                      default: true
+                      description: Execute automatically if confidence is high
+                    execution_limit:
+                      type: integer
+                      minimum: 1
+                      maximum: 10000
+                      default: 100
+                      description: Maximum number of rows to return
+      responses:
+        '200':
+          description: SQL generated and optionally executed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SQLExecutionResponse'
+
+  /query/execute:
+    post:
+      tags: [SQL Generation]
+      summary: Execute SQL query directly
+      description: |
+        **Execute a pre-written SQL query**
+        
+        Use when you have SQL that needs execution:
+        - User-approved generated SQL
+        - Pre-written queries
+        - Modified SQL from templates
+      operationId: executeSQL
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sql_query]
+              properties:
+                sql_query:
+                  type: string
+                  description: SQL query to execute
+                  example: "SELECT COUNT(*) FROM users WHERE status = 'active'"
+                session_id:
+                  type: string
+                  description: Session identifier for tracking
+                metadata:
+                  type: object
+                  description: Additional execution metadata
+                  properties:
+                    source:
+                      type: string
+                      example: "user_generated"
+                    query_name:
+                      type: string
+                      example: "active_users_count"
+      responses:
+        '200':
+          description: Query executed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueryExecutionResult'
+
+  /query/validate:
+    post:
+      tags: [SQL Generation]
+      summary: Validate SQL syntax
+      description: |
+        **Validate SQL without execution**
+        
+        **React Form Validation:**
+        ```javascript
+        const SQLEditor = () => {
+          const [sql, setSQL] = useState('');
+          const [validation, setValidation] = useState(null);
+          
+          const validateSQL = async (sqlText) => {
+            const response = await fetch('/query/validate', {
+              method: 'POST',
+              body: JSON.stringify({ sql_query: sqlText })
+            });
+            
+            const result = await response.json();
+            setValidation(result);
+          };
+          
+          return (
+            <div>
+              <textarea 
+                value={sql} 
+                onChange={(e) => {
+                  setSQL(e.target.value);
+                  validateSQL(e.target.value);
+                }}
+              />
+              {validation && !validation.is_valid && (
+                <ErrorDisplay errors={validation.errors} />
+              )}
+            </div>
+          );
+        };
+        ```
+      operationId: validateSQL
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sql_query]
+              properties:
+                sql_query:
+                  type: string
+                  description: SQL query to validate
+                  example: "SELECT * FROM users WHERE"
+      responses:
+        '200':
+          description: Validation completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SQLValidationResult'
+
+  /query/explain:
+    post:
+      tags: [SQL Generation]
+      summary: Explain SQL query
+      description: |
+        **Get human-readable explanation of SQL**
+        
+        Perfect for:
+        - Educational tooltips
+        - Query documentation
+        - User understanding
+      operationId: explainSQL
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sql_query]
+              properties:
+                sql_query:
+                  type: string
+                  example: "SELECT u.name, COUNT(o.id) FROM users u LEFT JOIN orders o ON u.id = o.user_id GROUP BY u.id"
+      responses:
+        '200':
+          description: Explanation generated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SQLExplanationResult'
+
+  /documents/upload:
+    post:
+      tags: [Documents]
+      summary: Upload document for RAG context
+      description: |
+        **Upload schema or report documents to improve AI context**
+        
+        **React File Upload:**
+        ```javascript
+        const DocumentUploader = () => {
+          const handleUpload = async (file, metadata) => {
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('title', metadata.title);
+            formData.append('document_type', metadata.type);
+            
+            const response = await fetch('/documents/upload', {
+              method: 'POST',
+              body: formData
+            });
+            
+            return response.json();
+          };
+          
+          return (
+            <input 
+              type="file" 
+              accept=".json,.txt,.md,.sql"
+              onChange={(e) => handleUpload(e.target.files[0], metadata)}
+            />
+          );
+        };
+        ```
+      operationId: uploadDocument
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, title, document_type]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Document file (JSON, TXT, MD, SQL)
+                title:
+                  type: string
+                  description: Document title
+                  example: "User Database Schema"
+                document_type:
+                  type: string
+                  enum: [schema, report]
+                  description: Type of document being uploaded
+                description:
+                  type: string
+                  description: Optional document description
+      responses:
+        '200':
+          description: Document uploaded and indexed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentUploadResponse'
+
+  /search/documents:
+    post:
+      tags: [Documents]
+      summary: Search indexed documents
+      description: |
+        **Search through uploaded documents for context**
+        
+        Used internally by the AI, but can be useful for:
+        - Showing users what context is being used
+        - Document discovery
+        - Context debugging
+      operationId: searchDocuments
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DocumentSearchRequest'
+      responses:
+        '200':
+          description: Search completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentSearchResponse'
+
+  /health:
+    get:
+      tags: [System]
+      summary: Basic health check
+      description: |
+        **Essential endpoint for monitoring API availability**
+        
+        **React Health Monitor:**
+        ```javascript
+        const useAPIHealth = () => {
+          const [health, setHealth] = useState(null);
+          
+          useEffect(() => {
+            const checkHealth = async () => {
+              try {
+                const response = await fetch('/health');
+                const data = await response.json();
+                setHealth(data);
+              } catch (error) {
+                setHealth({ status: 'error', error: error.message });
+              }
+            };
+            
+            checkHealth();
+            const interval = setInterval(checkHealth, 30000); // Check every 30s
+            return () => clearInterval(interval);
+          }, []);
+          
+          return health;
+        };
+        ```
+      operationId: getHealth
+      responses:
+        '200':
+          description: Health status retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+
+  /health/detailed:
+    get:
+      tags: [System]
+      summary: Detailed health information
+      description: Comprehensive health status with service details
+      operationId: getDetailedHealth
+      responses:
+        '200':
+          description: Detailed health information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetailedHealthStatus'
+
+  /stats:
+    get:
+      tags: [System]
+      summary: System statistics
+      description: |
+        **Usage statistics and metrics**
+        
+        Useful for:
+        - Admin dashboards
+        - Usage analytics
+        - Performance monitoring
+      operationId: getStats
+      responses:
+        '200':
+          description: Statistics retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemStats'
+
+  /llm-provider/info:
+    get:
+      tags: [LLM Provider]
+      summary: Get current LLM provider information
+      description: |
+        **Information about active AI provider**
+        
+        **React Provider Status:**
+        ```javascript
+        const ProviderStatus = () => {
+          const [provider, setProvider] = useState(null);
+          
+          useEffect(() => {
+            fetch('/llm-provider/info')
+              .then(res => res.json())
+              .then(setProvider);
+          }, []);
+          
+          return (
+            <div className="provider-status">
+              <span>AI Provider: {provider?.provider_info.provider}</span>
+              <span className={provider?.health_status ? 'healthy' : 'unhealthy'}>
+                {provider?.health_status ? '✓' : '✗'}
+              </span>
+            </div>
+          );
+        };
+        ```
+      operationId: getLLMProviderInfo
+      responses:
+        '200':
+          description: Provider information retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LLMProviderInfo'
+
+  /llm-provider/switch:
+    post:
+      tags: [LLM Provider]
+      summary: Switch LLM provider
+      description: |
+        **Runtime provider switching**
+        
+        Switch between:
+        - `bedrock`: AWS Bedrock (Claude, Titan)
+        - `custom`: Internal LLM API
+      operationId: switchLLMProvider
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [provider]
+              properties:
+                provider:
+                  type: string
+                  enum: [bedrock, custom]
+                  description: Target LLM provider
+                  example: "bedrock"
+      responses:
+        '200':
+          description: Provider switched successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LLMProviderSwitchResponse'
+
+  /llm-provider/test:
+    get:
+      tags: [LLM Provider]
+      summary: Test current LLM provider
+      description: |
+        **Test provider connectivity and functionality**
+        
+        Sends a simple test query to verify the provider is working correctly.
+      operationId: testLLMProvider
+      responses:
+        '200':
+          description: Test completed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    description: Whether the test was successful
+                  provider:
+                    type: string
+                    description: Current provider name
+                  test_prompt:
+                    type: string
+                    description: Test prompt that was sent
+                  response:
+                    type: string
+                    description: Response from the provider
+                  response_length:
+                    type: integer
+                    description: Length of the response
+                  error:
+                    type: string
+                    description: Error message if test failed
+
+components:
+  schemas:
+    ConversationResult:
+      type: object
+      description: |
+        **Core response format for all conversation interactions**
+        
+        This is the primary response type you'll work with in your React components.
+      required: [response_type]
+      properties:
+        response_type:
+          type: string
+          enum: [sql_result, clarification_request, error]
+          description: |
+            Type of response:
+            - `sql_result`: Ready-to-use SQL with explanation
+            - `clarification_request`: AI needs more information
+            - `error`: Something went wrong
+        sql:
+          type: string
+          description: Generated SQL query (only for sql_result type)
+          example: "SELECT COUNT(*) FROM users WHERE created_at >= DATE_SUB(NOW(), INTERVAL 1 MONTH)"
+        explanation:
+          type: string
+          description: Human-readable explanation of the SQL
+          example: "This query counts all users who registered in the last month"
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: AI confidence score (0.0 to 1.0)
+          example: 0.92
+        execution_results:
+          $ref: '#/components/schemas/QueryExecutionResult'
+        clarification:
+          type: object
+          description: Clarification request details (only for clarification_request type)
+          properties:
+            message:
+              type: string
+              description: What clarification is needed
+              example: "I need more details about the time period you're interested in"
+            suggestions:
+              type: array
+              items:
+                type: string
+              description: Suggested clarifications
+              example: ["Last 30 days", "This quarter", "This year"]
+        status:
+          type: string
+          enum: [completed, waiting_for_clarification, active]
+          description: Conversation status
+        message:
+          type: string
+          description: Error message (only for error type)
+
+    ConversationDetails:
+      type: object
+      description: Complete conversation history with all messages
+      properties:
+        conversation_id:
+          type: string
+          example: "conv_abc123def456"
+        initial_query:
+          type: string
+          example: "Show me user registration data"
+        status:
+          type: string
+          enum: [completed, waiting_for_clarification, active]
+        created_at:
+          type: string
+          format: date-time
+        last_interaction:
+          type: string
+          format: date-time
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConversationMessage'
+
+    ConversationMessage:
+      type: object
+      properties:
+        role:
+          type: string
+          enum: [user, assistant]
+        content:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        metadata:
+          type: object
+          description: Additional message metadata
+
+    ConversationsList:
+      type: object
+      description: Paginated list of conversations
+      properties:
+        conversations:
+          type: array
+          items:
+            type: object
+            properties:
+              conversation_id:
+                type: string
+              initial_query:
+                type: string
+              status:
+                type: string
+              created_at:
+                type: string
+                format: date-time
+              last_interaction:
+                type: string
+                format: date-time
+              message_count:
+                type: integer
+        total:
+          type: integer
+          description: Total number of conversations
+        filtered_by_status:
+          type: string
+          description: Applied status filter
+
+    SQLGenerationRequest:
+      type: object
+      required: [query]
+      properties:
+        query:
+          type: string
+          description: Natural language query to convert to SQL
+          example: "Show me top selling products this month"
+          minLength: 1
+          maxLength: 1000
+        session_id:
+          type: string
+          description: Optional session identifier
+        context:
+          type: object
+          description: Additional context for SQL generation
+          properties:
+            database_schema:
+              type: string
+              example: "ecommerce"
+            user_preferences:
+              type: object
+
+    SQLGenerationResponse:
+      type: object
+      description: |
+        **SQL generation result with metadata**
+        
+        Use this to display generated SQL with confidence indicators:
+        ```javascript
+        const SQLDisplay = ({ result }) => (
+          <div className="sql-result">
+            <div className="confidence">
+              Confidence: {(result.confidence * 100).toFixed(1)}%
+            </div>
+            <div className="explanation">{result.explanation}</div>
+            <pre className="sql-code">{result.sql}</pre>
+          </div>
+        );
+        ```
+      properties:
+        sql:
+          type: string
+          description: Generated SQL query
+        explanation:
+          type: string
+          description: Human-readable explanation
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Confidence score
+        metadata:
+          type: object
+          properties:
+            tables_used:
+              type: array
+              items:
+                type: string
+              description: Database tables referenced in the query
+            functions_used:
+              type: array
+              items:
+                type: string
+              description: SQL functions used
+            complexity:
+              type: string
+              enum: [simple, intermediate, complex]
+              description: Query complexity level
+
+    SQLExecutionResponse:
+      allOf:
+        - $ref: '#/components/schemas/SQLGenerationResponse'
+        - type: object
+          properties:
+            execution_results:
+              $ref: '#/components/schemas/QueryExecutionResult'
+
+    QueryExecutionResult:
+      type: object
+      description: |
+        **SQL execution results for displaying data**
+        
+        **React Table Component:**
+        ```javascript
+        const ResultsTable = ({ results }) => (
+          <table>
+            <thead>
+              <tr>
+                {results.columns.map(col => <th key={col}>{col}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {results.data.map((row, idx) => (
+                <tr key={idx}>
+                  {results.columns.map(col => <td key={col}>{row[col]}</td>)}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        );
+        ```
+      properties:
+        status:
+          type: string
+          enum: [success, error, timeout]
+        execution_time_ms:
+          type: integer
+          description: Query execution time in milliseconds
+        rows_returned:
+          type: integer
+          description: Number of rows in the result
+        columns:
+          type: array
+          items:
+            type: string
+          description: Column names in the result
+        data:
+          type: array
+          items:
+            type: object
+          description: Result data as array of row objects
+        error_message:
+          type: string
+          description: Error message if execution failed
+        metadata:
+          type: object
+          description: Additional execution metadata
+
+    SQLValidationResult:
+      type: object
+      properties:
+        is_valid:
+          type: boolean
+          description: Whether the SQL is syntactically valid
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              type:
+                type: string
+                description: Error type
+              message:
+                type: string
+                description: Error description
+              line:
+                type: integer
+                description: Line number of error
+              column:
+                type: integer
+                description: Column number of error
+        suggestions:
+          type: array
+          items:
+            type: string
+          description: Suggestions for fixing errors
+
+    SQLExplanationResult:
+      type: object
+      properties:
+        explanation:
+          type: string
+          description: Human-readable explanation of the SQL
+        breakdown:
+          type: object
+          properties:
+            tables:
+              type: array
+              items:
+                type: string
+            joins:
+              type: array
+              items:
+                type: string
+            aggregations:
+              type: array
+              items:
+                type: string
+            grouping:
+              type: array
+              items:
+                type: string
+        complexity:
+          type: string
+          enum: [simple, intermediate, complex]
+
+    DocumentSearchRequest:
+      type: object
+      required: [query]
+      properties:
+        query:
+          type: string
+          description: Search query for documents
+        document_types:
+          type: array
+          items:
+            type: string
+            enum: [schema, report]
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 10
+        min_similarity:
+          type: number
+          minimum: 0
+          maximum: 1
+          default: 0.7
+
+    DocumentSearchResponse:
+      type: object
+      properties:
+        query:
+          type: string
+        results:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              score:
+                type: number
+              content:
+                type: string
+              metadata:
+                type: object
+        total_found:
+          type: integer
+
+    DocumentUploadResponse:
+      type: object
+      properties:
+        document_id:
+          type: integer
+        title:
+          type: string
+        document_type:
+          type: string
+        file_name:
+          type: string
+        status:
+          type: string
+        message:
+          type: string
+
+    HealthStatus:
+      type: object
+      description: |
+        **Basic health status for monitoring**
+        
+        **React Health Indicator:**
+        ```javascript
+        const HealthIndicator = ({ health }) => (
+          <div className={`health-status ${health.status}`}>
+            <span>API Status: {health.status}</span>
+            <span>Vector Store: {health.vector_store}</span>
+            <span>MongoDB: {health.mongodb}</span>
+          </div>
+        );
+        ```
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, starting]
+          description: Overall system health
+        vector_store:
+          type: string
+          description: Vector store connection status
+        execution_service:
+          type: string
+          description: SQL execution service status
+        mongodb:
+          type: string
+          description: MongoDB connection status
+        version:
+          type: string
+          description: API version
+        timestamp:
+          type: string
+          format: date-time
+
+    DetailedHealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+        services:
+          type: object
+          properties:
+            vector_store:
+              type: object
+            execution_service:
+              type: object
+            opensearch:
+              type: object
+
+    SystemStats:
+      type: object
+      properties:
+        vector_store:
+          type: object
+        active_sessions:
+          type: integer
+        active_conversations:
+          type: integer
+        pending_clarifications:
+          type: integer
+        llm_provider:
+          type: object
+
+    LLMProviderInfo:
+      type: object
+      properties:
+        provider_info:
+          type: object
+          properties:
+            provider:
+              type: string
+              enum: [bedrock, custom]
+            model:
+              type: string
+            region:
+              type: string
+        health_status:
+          type: boolean
+        available_providers:
+          type: array
+          items:
+            type: string
+
+    LLMProviderSwitchResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        provider_info:
+          type: object
+
+    ErrorResponse:
+      type: object
+      description: |
+        **Consistent error format across all endpoints**
+        
+        **React Error Handling:**
+        ```javascript
+        const handleAPIError = (error) => {
+          if (error.response?.data?.error_code === 'CLARIFICATION_NEEDED') {
+            // Handle clarification request
+            showClarificationDialog(error.response.data);
+          } else {
+            // Show generic error
+            showErrorMessage(error.response.data.detail);
+          }
+        };
+        ```
+      required: [detail]
+      properties:
+        detail:
+          type: string
+          description: Human-readable error message
+        error_code:
+          type: string
+          description: Machine-readable error code
+        validation_errors:
+          type: array
+          items:
+            type: object
+            properties:
+              field:
+                type: string
+              message:
+                type: string
+
+  responses:
+    ValidationError:
+      description: Request validation failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            detail: "Validation error"
+            error_code: "VALIDATION_ERROR"
+            validation_errors:
+              - field: "query"
+                message: "Query cannot be empty"
+
+    BusinessLogicError:
+      description: Business logic error (e.g., clarification needed)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            detail: "Clarification needed for ambiguous query"
+            error_code: "CLARIFICATION_NEEDED"
+
+    ServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            detail: "Internal server error"
+            error_code: "INTERNAL_ERROR"
+
+  securitySchemes:
+    SessionAuth:
+      type: apiKey
+      in: header
+      name: X-Session-ID
+      description: |
+        Optional session-based authentication for tracking user conversations
+        
+        **React Implementation:**
+        ```javascript
+        // Generate session ID on app start
+        const sessionId = `session_${Date.now()}_${Math.random()}`;
+        
+        // Include in all API calls
+        const apiClient = axios.create({
+          headers: {
+            'X-Session-ID': sessionId
+          }
+        });
+        ```
+
+security:
+  - SessionAuth: []
+
+x-react-patterns:
+  conversation-hook: |
+    ```javascript
+    // Custom hook for conversation management
+    const useTextToSQLConversation = () => {
+      const [conversationId, setConversationId] = useState(null);
+      const [messages, setMessages] = useState([]);
+      const [isLoading, setIsLoading] = useState(false);
+      
+      const sendMessage = async (query) => {
+        setIsLoading(true);
+        try {
+          let response;
+          if (!conversationId) {
+            response = await api.post('/conversations/start', { query });
+            setConversationId(response.data.conversation_id);
+          } else {
+            response = await api.post(`/conversations/${conversationId}/continue`, {
+              message: query
+            });
+          }
+          
+          setMessages(prev => [...prev, 
+            { role: 'user', content: query },
+            { role: 'assistant', content: response.data.result }
+          ]);
+          
+          return response.data.result;
+        } finally {
+          setIsLoading(false);
+        }
+      };
+      
+      return { sendMessage, messages, isLoading, conversationId };
+    };
+    ```
+
+  error-boundary: |
+    ```javascript
+    // Error boundary for API errors
+    const APIErrorBoundary = ({ children }) => {
+      const [error, setError] = useState(null);
+      
+      const handleError = (error) => {
+        if (error.response?.status === 422) {
+          // Handle clarification request
+          return <ClarificationDialog error={error.response.data} />;
+        } else if (error.response?.status >= 500) {
+          // Show retry option
+          return <RetryableError error={error} onRetry={() => setError(null)} />;
+        }
+        return <GenericError error={error} />;
+      };
+      
+      if (error) return handleError(error);
+      
+      return (
+        <ErrorContext.Provider value={{ setError }}>
+          {children}
+        </ErrorContext.Provider>
+      );
+    };
+    ```
