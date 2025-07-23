@@ -1,0 +1,764 @@
+openapi: 3.0.3
+info:
+  title: Text-to-SQL RAG API
+  description: |
+    Intelligent text-to-SQL conversion API with RAG capabilities, conversation management, 
+    and human-in-the-loop workflows. Built with LlamaIndex, OpenSearch, and AWS Bedrock.
+  version: 1.0.0
+  contact:
+    name: API Support
+    url: https://github.com/your-org/text-to-sql-rag
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:8000
+    description: Development server
+  - url: https://api.your-domain.com
+    description: Production server
+
+tags:
+  - name: Conversations
+    description: Conversation management and HITL workflows
+  - name: SQL Generation
+    description: Direct SQL generation and execution
+  - name: Documents
+    description: Document upload and search for RAG context
+  - name: System
+    description: Health checks and system information
+  - name: LLM Provider
+    description: LLM provider management and switching
+
+paths:
+  /conversations/start:
+    post:
+      tags: [Conversations]
+      summary: Start a new conversation
+      description: |
+        Initiates a new conversation for text-to-SQL generation with intelligent
+        routing and human-in-the-loop capabilities.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query]
+              properties:
+                query:
+                  type: string
+                  description: Natural language query to convert to SQL
+                  example: "Show me all users who registered last month"
+                context:
+                  type: object
+                  description: Additional context for the conversation
+                  properties:
+                    user_id:
+                      type: string
+                    session_context:
+                      type: string
+                    database_schema:
+                      type: string
+      responses:
+        '200':
+          description: Conversation started successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationStartResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /conversations/{conversation_id}/continue:
+    post:
+      tags: [Conversations]
+      summary: Continue an existing conversation
+      description: |
+        Continues a conversation with user clarification, follow-up questions,
+        or additional context.
+      parameters:
+        - name: conversation_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Unique conversation identifier
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message]
+              properties:
+                message:
+                  type: string
+                  description: User's clarification or follow-up message
+                  example: "I mean users from the past 30 days, not just January"
+                context:
+                  type: object
+                  description: Additional context for clarification
+      responses:
+        '200':
+          description: Conversation continued successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /conversations/{conversation_id}:
+    get:
+      tags: [Conversations]
+      summary: Get conversation details
+      description: Retrieves complete conversation history and current status
+      parameters:
+        - name: conversation_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Conversation details retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationDetails'
+    delete:
+      tags: [Conversations]
+      summary: Delete a conversation
+      description: Permanently deletes a conversation and its history
+      parameters:
+        - name: conversation_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Conversation deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Conversation conv_123456 deleted successfully"
+
+  /conversations:
+    get:
+      tags: [Conversations]
+      summary: List conversations
+      description: Retrieves a list of conversations with optional filtering
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [completed, waiting_for_clarification, active]
+          description: Filter by conversation status
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          description: Maximum number of conversations to return
+      responses:
+        '200':
+          description: Conversations retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationsList'
+
+  /query/generate:
+    post:
+      tags: [SQL Generation]
+      summary: Generate SQL from natural language
+      description: |
+        Converts natural language to SQL without conversation management.
+        Best for simple, one-off queries.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SQLGenerationRequest'
+      responses:
+        '200':
+          description: SQL generated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SQLGenerationResponse'
+
+  /query/generate-and-execute:
+    post:
+      tags: [SQL Generation]
+      summary: Generate and execute SQL
+      description: |
+        Generates SQL and automatically executes it if confidence threshold is met.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/SQLGenerationRequest'
+                - type: object
+                  properties:
+                    auto_execute:
+                      type: boolean
+                      default: true
+                    execution_limit:
+                      type: integer
+                      minimum: 1
+                      maximum: 10000
+                      default: 100
+      responses:
+        '200':
+          description: SQL generated and executed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SQLExecutionResponse'
+
+  /query/execute:
+    post:
+      tags: [SQL Generation]
+      summary: Execute SQL query
+      description: Executes a provided SQL query directly
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sql_query]
+              properties:
+                sql_query:
+                  type: string
+                  description: SQL query to execute
+                session_id:
+                  type: string
+                  description: Optional session identifier
+                metadata:
+                  type: object
+                  description: Additional execution metadata
+      responses:
+        '200':
+          description: Query executed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueryExecutionResult'
+
+  /documents/upload:
+    post:
+      tags: [Documents]
+      summary: Upload document for indexing
+      description: |
+        Uploads schema or report documents to enhance RAG context.
+        Supports JSON, TXT, MD, and SQL files.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, title, document_type]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Document file to upload
+                title:
+                  type: string
+                  description: Document title
+                document_type:
+                  type: string
+                  enum: [schema, report]
+                  description: Type of document
+                description:
+                  type: string
+                  description: Optional document description
+      responses:
+        '200':
+          description: Document uploaded and indexed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentUploadResponse'
+
+  /search/documents:
+    post:
+      tags: [Documents]
+      summary: Search indexed documents
+      description: Search through uploaded documents for relevant context
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DocumentSearchRequest'
+      responses:
+        '200':
+          description: Search completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentSearchResponse'
+
+  /health:
+    get:
+      tags: [System]
+      summary: Basic health check
+      description: Returns basic health status of the API and core services
+      responses:
+        '200':
+          description: Health status retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+
+  /health/detailed:
+    get:
+      tags: [System]
+      summary: Detailed health check
+      description: Returns comprehensive health information with service statistics
+      responses:
+        '200':
+          description: Detailed health status retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetailedHealthStatus'
+
+  /stats:
+    get:
+      tags: [System]
+      summary: Get system statistics
+      description: Returns usage statistics and metrics
+      responses:
+        '200':
+          description: Statistics retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemStats'
+
+  /llm-provider/info:
+    get:
+      tags: [LLM Provider]
+      summary: Get current LLM provider information
+      description: Returns information about the currently active LLM provider
+      responses:
+        '200':
+          description: Provider information retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LLMProviderInfo'
+
+  /llm-provider/switch:
+    post:
+      tags: [LLM Provider]
+      summary: Switch LLM provider
+      description: Switches between available LLM providers (bedrock/custom)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [provider]
+              properties:
+                provider:
+                  type: string
+                  enum: [bedrock, custom]
+                  description: Target LLM provider
+      responses:
+        '200':
+          description: Provider switched successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LLMProviderSwitchResponse'
+
+components:
+  schemas:
+    ConversationStartResponse:
+      type: object
+      properties:
+        conversation_id:
+          type: string
+          description: Unique conversation identifier
+        result:
+          $ref: '#/components/schemas/ConversationResponse'
+
+    ConversationResponse:
+      type: object
+      properties:
+        response_type:
+          type: string
+          enum: [sql_result, clarification_request, error]
+        sql:
+          type: string
+          description: Generated SQL query (if applicable)
+        explanation:
+          type: string
+          description: Human-readable explanation of the query
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Confidence score for the generated SQL
+        execution_results:
+          $ref: '#/components/schemas/QueryExecutionResult'
+        clarification:
+          type: object
+          properties:
+            message:
+              type: string
+            suggestions:
+              type: array
+              items:
+                type: string
+        status:
+          type: string
+          enum: [completed, waiting_for_clarification, active]
+
+    ConversationDetails:
+      type: object
+      properties:
+        conversation_id:
+          type: string
+        initial_query:
+          type: string
+        status:
+          type: string
+          enum: [completed, waiting_for_clarification, active]
+        created_at:
+          type: string
+          format: date-time
+        last_interaction:
+          type: string
+          format: date-time
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConversationMessage'
+
+    ConversationMessage:
+      type: object
+      properties:
+        role:
+          type: string
+          enum: [user, assistant]
+        content:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        metadata:
+          type: object
+
+    ConversationsList:
+      type: object
+      properties:
+        conversations:
+          type: array
+          items:
+            type: object
+            properties:
+              conversation_id:
+                type: string
+              initial_query:
+                type: string
+              status:
+                type: string
+              created_at:
+                type: string
+                format: date-time
+              last_interaction:
+                type: string
+                format: date-time
+              message_count:
+                type: integer
+        total:
+          type: integer
+        filtered_by_status:
+          type: string
+
+    SQLGenerationRequest:
+      type: object
+      required: [query]
+      properties:
+        query:
+          type: string
+          description: Natural language query
+        session_id:
+          type: string
+          description: Optional session identifier
+        context:
+          type: object
+          description: Additional context for SQL generation
+
+    SQLGenerationResponse:
+      type: object
+      properties:
+        sql:
+          type: string
+          description: Generated SQL query
+        explanation:
+          type: string
+          description: Human-readable explanation
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        metadata:
+          type: object
+          properties:
+            tables_used:
+              type: array
+              items:
+                type: string
+            functions_used:
+              type: array
+              items:
+                type: string
+            complexity:
+              type: string
+              enum: [simple, intermediate, complex]
+
+    SQLExecutionResponse:
+      allOf:
+        - $ref: '#/components/schemas/SQLGenerationResponse'
+        - type: object
+          properties:
+            execution_results:
+              $ref: '#/components/schemas/QueryExecutionResult'
+
+    QueryExecutionResult:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [success, error, timeout]
+        execution_time_ms:
+          type: integer
+        rows_returned:
+          type: integer
+        columns:
+          type: array
+          items:
+            type: string
+        data:
+          type: array
+          items:
+            type: object
+        error_message:
+          type: string
+        metadata:
+          type: object
+
+    DocumentSearchRequest:
+      type: object
+      required: [query]
+      properties:
+        query:
+          type: string
+          description: Search query
+        document_types:
+          type: array
+          items:
+            type: string
+            enum: [schema, report]
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 10
+        min_similarity:
+          type: number
+          minimum: 0
+          maximum: 1
+          default: 0.7
+
+    DocumentSearchResponse:
+      type: object
+      properties:
+        query:
+          type: string
+        results:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              score:
+                type: number
+              content:
+                type: string
+              metadata:
+                type: object
+        total_found:
+          type: integer
+
+    DocumentUploadResponse:
+      type: object
+      properties:
+        document_id:
+          type: integer
+        title:
+          type: string
+        document_type:
+          type: string
+        file_name:
+          type: string
+        status:
+          type: string
+        message:
+          type: string
+
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, starting]
+        vector_store:
+          type: string
+        execution_service:
+          type: string
+        mongodb:
+          type: string
+        version:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+
+    DetailedHealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+        services:
+          type: object
+          properties:
+            vector_store:
+              type: object
+            execution_service:
+              type: object
+            opensearch:
+              type: object
+
+    SystemStats:
+      type: object
+      properties:
+        vector_store:
+          type: object
+        active_sessions:
+          type: integer
+        active_conversations:
+          type: integer
+        pending_clarifications:
+          type: integer
+        llm_provider:
+          type: object
+
+    LLMProviderInfo:
+      type: object
+      properties:
+        provider_info:
+          type: object
+          properties:
+            provider:
+              type: string
+            model:
+              type: string
+            region:
+              type: string
+        health_status:
+          type: boolean
+        available_providers:
+          type: array
+          items:
+            type: string
+
+    LLMProviderSwitchResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        provider_info:
+          type: object
+
+    Error:
+      type: object
+      properties:
+        detail:
+          type: string
+          description: Error message
+        error_code:
+          type: string
+          description: Specific error code
+        validation_errors:
+          type: array
+          items:
+            type: object
+
+  responses:
+    BadRequest:
+      description: Bad request - validation error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    ValidationError:
+      description: Validation error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  securitySchemes:
+    SessionAuth:
+      type: apiKey
+      in: header
+      name: X-Session-ID
+      description: Session-based authentication
+
+security:
+  - SessionAuth: []
