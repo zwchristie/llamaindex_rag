@@ -44,6 +44,10 @@ class TextToSQLAgent:
         self.max_retries = max_retries
         self.confidence_threshold = confidence_threshold
         self.graph = self._build_graph()
+        
+        # Checkpoint storage for HITL state persistence
+        # In production, this should be Redis or a database
+        self._checkpoint_storage = {}
     
     def _build_graph(self) -> StateGraph:
         """Build the enhanced LangGraph workflow with HITL and confidence assessment."""
@@ -123,48 +127,107 @@ class TextToSQLAgent:
         return workflow.compile()
     
     def _classify_request_node(self, state: ConversationState) -> ConversationState:
-        """Classify the type of user request to determine workflow routing."""
+        """Classify the type of user request using LLM to determine workflow routing."""
         logger.info(f"Classifying request: {state.current_request}")
         
         state.workflow_step = WorkflowStep.CLASSIFY_REQUEST
         state.add_message("system", f"Processing request: {state.current_request}", "classification")
         
         try:
-            # Simple keyword-based classification for now
-            request_lower = state.current_request.lower()
-            
-            # Check for SQL execution requests
-            if any(keyword in request_lower for keyword in ["execute", "run", "execute this sql", "run this query"]):
-                state.request_type = RequestType.EXECUTE_SQL
-                
-            # Check for SQL description requests
-            elif any(keyword in request_lower for keyword in ["explain", "describe", "what does", "understand"]):
-                state.request_type = RequestType.DESCRIBE_SQL
-                
-            # Check for editing previous SQL
-            elif any(keyword in request_lower for keyword in ["edit", "modify", "change", "update", "fix"]):
-                if state.sql_history:
-                    state.request_type = RequestType.EDIT_PREVIOUS
-                else:
-                    state.request_type = RequestType.GENERATE_NEW
-                    
-            # Check for follow-up questions
-            elif any(keyword in request_lower for keyword in ["also", "additionally", "furthermore", "and"]):
-                state.request_type = RequestType.FOLLOW_UP
-                
-            # Check for clarification responses
-            elif state.status == ConversationStatus.WAITING_FOR_CLARIFICATION:
+            # Check for clarification responses first (no LLM needed)
+            if state.status == ConversationStatus.WAITING_FOR_CLARIFICATION:
                 state.request_type = RequestType.CLARIFICATION
-                
-            # Default to new SQL generation
-            else:
-                state.request_type = RequestType.GENERATE_NEW
+                logger.info(f"Classified request as: {state.request_type}")
+                return state
             
-            logger.info(f"Classified request as: {state.request_type}")
+            # Build context for LLM classification
+            context_parts = []
+            
+            # Add conversation history if available
+            if state.message_history:
+                context_parts.append("=== CONVERSATION CONTEXT ===")
+                recent_messages = state.message_history[-3:]  # Last 3 messages for context
+                for msg in recent_messages:
+                    context_parts.append(f"{msg.role}: {msg.content}")
+                context_parts.append("")
+            
+            # Add SQL history if available
+            if state.sql_history:
+                context_parts.append("=== PREVIOUS SQL QUERIES ===")
+                recent_sql = state.get_recent_sql()
+                if recent_sql:
+                    context_parts.append(f"Most recent SQL: {recent_sql.sql}")
+                    context_parts.append(f"Explanation: {recent_sql.explanation}")
+                context_parts.append("")
+            
+            # Build classification prompt
+            classification_prompt = f"""
+{chr(10).join(context_parts)}
+
+You are a SQL assistant analyzing user requests to determine the appropriate action. 
+
+Current user request: "{state.current_request}"
+
+Classify this request into ONE of the following categories:
+
+1. **GENERATE_NEW** - User wants a new SQL query generated from natural language
+   Examples: "Show me all users", "Find top selling products", "Get monthly sales data"
+
+2. **EXECUTE_SQL** - User wants to execute/run a specific SQL query they provided
+   Examples: "Execute this SQL", "Run this query", "Execute: SELECT * FROM users"
+
+3. **DESCRIBE_SQL** - User wants an explanation of what an SQL query does
+   Examples: "Explain this SQL", "What does this query do?", "Describe: SELECT * FROM users"
+
+4. **EDIT_PREVIOUS** - User wants to modify/fix the previously generated SQL
+   Examples: "Add a WHERE clause", "Change the ORDER BY", "Fix the previous query", "Make it sort by date"
+
+5. **FOLLOW_UP** - User is asking a follow-up question related to previous results
+   Examples: "Show me more details", "What about last month?", "Also include the names"
+
+**Classification Rules:**
+- If the request contains explicit SQL code and asks to run/execute it → EXECUTE_SQL
+- If the request contains explicit SQL code and asks to explain it → DESCRIBE_SQL  
+- If there's previous SQL history and the request asks to modify/change it → EDIT_PREVIOUS
+- If there's previous context and the request builds upon it → FOLLOW_UP
+- If the request is a new natural language question → GENERATE_NEW
+
+**Response Format:**
+Classification: [GENERATE_NEW|EXECUTE_SQL|DESCRIBE_SQL|EDIT_PREVIOUS|FOLLOW_UP]
+Reasoning: [Brief explanation of why this classification was chosen]
+"""
+            
+            # Get classification from LLM
+            response_text = llm_factory.generate_text(classification_prompt)
+            
+            # Parse the LLM response
+            classification_result = self._parse_classification_response(response_text)
+            
+            # Map classification to RequestType
+            classification_mapping = {
+                "GENERATE_NEW": RequestType.GENERATE_NEW,
+                "EXECUTE_SQL": RequestType.EXECUTE_SQL,
+                "DESCRIBE_SQL": RequestType.DESCRIBE_SQL,
+                "EDIT_PREVIOUS": RequestType.EDIT_PREVIOUS,
+                "FOLLOW_UP": RequestType.FOLLOW_UP
+            }
+            
+            state.request_type = classification_mapping.get(
+                classification_result["classification"], 
+                RequestType.GENERATE_NEW
+            )
+            
+            # Store classification reasoning for debugging
+            if classification_result["reasoning"]:
+                state.add_message("system", f"Classification reasoning: {classification_result['reasoning']}", "classification_reasoning")
+            
+            logger.info(f"LLM classified request as: {state.request_type} - {classification_result['reasoning']}")
             
         except Exception as e:
-            logger.error(f"Error classifying request: {e}")
-            state.request_type = RequestType.GENERATE_NEW
+            logger.error(f"Error in LLM classification: {e}")
+            # Fallback to simple keyword-based classification
+            state.request_type = self._fallback_classify_request(state.current_request, state)
+            logger.info(f"Fallback classified request as: {state.request_type}")
         
         return state
     
@@ -314,16 +377,28 @@ Only request clarification if confidence is below 0.7 or if there are genuine am
         clarification_msg = self._format_clarification_message(state.clarification_request)
         state.add_message("assistant", clarification_msg, "clarification_request")
         
-        # Create final result for clarification request
+        # Save workflow checkpoint for HITL resumption
+        checkpoint_data = state.save_workflow_checkpoint()
+        
+        # Store checkpoint in conversations for retrieval
+        if hasattr(self, '_checkpoint_storage'):
+            self._checkpoint_storage[state.request_id] = checkpoint_data
+        
+        # Create final result for clarification request with checkpoint info
         state.final_result = {
             "response_type": "clarification_request",
             "status": "waiting_for_clarification",
-            "clarification_request": state.clarification_request.dict() if state.clarification_request else None,
+            "clarification": {
+                "message": state.clarification_request.question if state.clarification_request else "Please provide more information.",
+                "suggestions": [] # Can be enhanced based on clarification_request
+            },
             "confidence_score": state.confidence_score,
-            "conversation_id": state.conversation_id
+            "conversation_id": state.conversation_id,
+            "request_id": state.request_id,
+            "checkpoint_saved": True
         }
         
-        logger.info("Clarification request prepared")
+        logger.info(f"Clarification request prepared with checkpoint for request {state.request_id}")
         return state
     
     def _generate_sql_node(self, state: ConversationState) -> ConversationState:
@@ -689,6 +764,60 @@ Format your response clearly and make it understandable for both technical and n
         
         return result
     
+    def _parse_classification_response(self, response_text: str) -> Dict[str, str]:
+        """Parse the LLM classification response."""
+        import re
+        
+        result = {
+            "classification": "GENERATE_NEW",
+            "reasoning": ""
+        }
+        
+        try:
+            # Extract classification
+            classification_pattern = re.compile(r'Classification:\s*([A-Z_]+)', re.IGNORECASE)
+            classification_match = classification_pattern.search(response_text)
+            if classification_match:
+                result["classification"] = classification_match.group(1).upper()
+            
+            # Extract reasoning
+            reasoning_pattern = re.compile(r'Reasoning:\s*(.*?)(?=\n\n|\Z)', re.IGNORECASE | re.DOTALL)
+            reasoning_match = reasoning_pattern.search(response_text)
+            if reasoning_match:
+                result["reasoning"] = reasoning_match.group(1).strip()
+            
+        except Exception as e:
+            logger.warning(f"Error parsing classification response: {e}")
+        
+        return result
+    
+    def _fallback_classify_request(self, request: str, state: ConversationState) -> RequestType:
+        """Fallback keyword-based classification when LLM fails."""
+        request_lower = request.lower()
+        
+        # Check for SQL execution requests
+        if any(keyword in request_lower for keyword in ["execute", "run", "execute this sql", "run this query"]):
+            return RequestType.EXECUTE_SQL
+            
+        # Check for SQL description requests
+        elif any(keyword in request_lower for keyword in ["explain", "describe", "what does", "understand"]):
+            return RequestType.DESCRIBE_SQL
+            
+        # Check for editing previous SQL
+        elif any(keyword in request_lower for keyword in ["edit", "modify", "change", "update", "fix"]):
+            if state.sql_history:
+                return RequestType.EDIT_PREVIOUS
+            else:
+                return RequestType.GENERATE_NEW
+                
+        # Check for follow-up questions
+        elif any(keyword in request_lower for keyword in ["also", "additionally", "furthermore", "and"]):
+            return RequestType.FOLLOW_UP
+            
+        # Default to new SQL generation
+        else:
+            return RequestType.GENERATE_NEW
+    
     def _extract_table_suggestions(self, schema_context: List[Dict[str, Any]]) -> List[str]:
         """Extract table names from schema context."""
         tables = set()
@@ -848,9 +977,13 @@ Format your response clearly and make it understandable for both technical and n
         if not conversation_id:
             conversation_id = str(uuid.uuid4())
         
+        # Generate unique request ID for this specific request fulfillment
+        request_id = str(uuid.uuid4())
+        
         # Initialize conversation state
         initial_state = ConversationState(
             conversation_id=conversation_id,
+            request_id=request_id,
             current_request=query,
             max_retries=self.max_retries
         )
@@ -864,14 +997,62 @@ Format your response clearly and make it understandable for both technical and n
         # Return the final result
         return final_state.final_result
     
+    async def continue_from_checkpoint(
+        self, 
+        request_id: str, 
+        clarification_response: str
+    ) -> Dict[str, Any]:
+        """Continue workflow execution from a saved checkpoint after HITL clarification."""
+        logger.info(f"Resuming workflow from checkpoint for request {request_id}")
+        
+        # Retrieve checkpoint data
+        if request_id not in self._checkpoint_storage:
+            raise ValueError(f"No checkpoint found for request {request_id}")
+        
+        checkpoint_data = self._checkpoint_storage[request_id]
+        
+        # Restore conversation state from checkpoint
+        restored_state = ConversationState.restore_from_checkpoint(
+            checkpoint_data, 
+            clarification_response
+        )
+        
+        # Add the clarification response as a user message
+        restored_state.add_message("user", clarification_response, "clarification_response")
+        
+        # Set request type to clarification to route correctly
+        restored_state.request_type = RequestType.CLARIFICATION
+        
+        # Clear the clarification request since we now have a response
+        restored_state.clarification_request = None
+        
+        logger.info(f"Restored state: conversation_id={restored_state.conversation_id}, workflow_step={restored_state.workflow_step}")
+        
+        # Resume workflow execution - it will continue from get_metadata or generate_sql
+        # depending on the workflow routing logic
+        final_state = self.graph.invoke(restored_state)
+        
+        # Clean up checkpoint after successful continuation
+        if request_id in self._checkpoint_storage:
+            del self._checkpoint_storage[request_id]
+        
+        return final_state.final_result
+
     async def continue_conversation(
         self, 
         conversation_id: str, 
         message: str, 
         conversation_state: ConversationState
     ) -> Dict[str, Any]:
-        """Continue an existing conversation with clarification or follow-up."""
+        """Continue an existing conversation with clarification or follow-up (legacy method)."""
         logger.info(f"Continuing conversation {conversation_id} with message: {message}")
+        
+        # For HITL scenarios, try to find a checkpoint first
+        if hasattr(conversation_state, 'request_id') and conversation_state.request_id in self._checkpoint_storage:
+            return await self.continue_from_checkpoint(conversation_state.request_id, message)
+        
+        # Generate new request ID for this continuation
+        conversation_state.request_id = str(uuid.uuid4())
         
         # Update conversation state
         conversation_state.current_request = message

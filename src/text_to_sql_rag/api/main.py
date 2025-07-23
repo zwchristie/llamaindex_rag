@@ -30,6 +30,9 @@ from ..services.llm_provider_factory import llm_factory
 sessions = {}
 # In-memory conversation storage for HITL workflows
 conversations = {}
+# Enhanced storage for conversation threads vs individual requests
+conversation_threads = {}  # conversation_id -> conversation metadata and message history
+active_requests = {}       # request_id -> checkpoint data for HITL workflows
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -442,6 +445,8 @@ async def get_stats():
 async def start_conversation(request: dict):
     """Start a new conversation with enhanced HITL support."""
     query = request.get("query", "").strip()
+    context = request.get("context", {})
+    
     if not query:
         raise HTTPException(status_code=400, detail="Query cannot be empty")
     
@@ -449,17 +454,34 @@ async def start_conversation(request: dict):
         conversation_id = str(uuid.uuid4())
         result = await sql_agent.generate_sql(query, conversation_id)
         
-        # Store conversation metadata
-        conversations[conversation_id] = {
+        # Store conversation thread metadata
+        conversation_threads[conversation_id] = {
             "conversation_id": conversation_id,
             "initial_query": query,
             "status": result.get("status", "completed"),
             "created_at": datetime.utcnow(),
             "last_interaction": datetime.utcnow(),
-            "messages": [
-                {"role": "user", "content": query, "timestamp": datetime.utcnow().isoformat()}
-            ]
+            "context": context,
+            "message_history": [
+                {
+                    "role": "user", 
+                    "content": query, 
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "message_type": "initial_request"
+                }
+            ],
+            "total_requests": 1,
+            "completed_requests": 1 if result.get("response_type") != "clarification_request" else 0
         }
+        
+        # If this is a clarification request, store the checkpoint
+        if result.get("response_type") == "clarification_request" and result.get("request_id"):
+            # The checkpoint should already be stored by the agent
+            conversation_threads[conversation_id]["status"] = "waiting_for_clarification"
+            conversation_threads[conversation_id]["pending_request_id"] = result.get("request_id")
+        
+        # Maintain backward compatibility with old conversations storage
+        conversations[conversation_id] = conversation_threads[conversation_id].copy()
         
         return {
             "conversation_id": conversation_id,
@@ -477,48 +499,109 @@ async def continue_conversation(conversation_id: str, request: dict):
     if not message:
         raise HTTPException(status_code=400, detail="Message cannot be empty")
     
-    if conversation_id not in conversations:
+    if conversation_id not in conversation_threads:
         raise HTTPException(status_code=404, detail="Conversation not found")
     
     try:
-        conversation_meta = conversations[conversation_id]
+        conversation_thread = conversation_threads[conversation_id]
         
-        # Create a mock conversation state for continuation
-        # In production, you would restore the actual state from storage
-        from ..models.conversation import ConversationState
-        conversation_state = ConversationState(
-            conversation_id=conversation_id,
-            current_request=message,
-            status=ConversationStatus.ACTIVE
-        )
+        # Check if there's a pending clarification request
+        pending_request_id = conversation_thread.get("pending_request_id")
         
-        # Add previous message to context
-        conversation_state.add_message("user", conversation_meta["initial_query"], "request")
+        if pending_request_id and pending_request_id in sql_agent._checkpoint_storage:
+            # This is a clarification response - resume from checkpoint
+            logger.info(f"Resuming from checkpoint for request {pending_request_id}")
+            result = await sql_agent.continue_from_checkpoint(pending_request_id, message)
+            
+            # Clear the pending request
+            if "pending_request_id" in conversation_thread:
+                del conversation_thread["pending_request_id"]
+            
+            conversation_thread["completed_requests"] += 1
+            
+        else:
+            # This is a new request in the conversation thread
+            logger.info(f"Starting new request in conversation {conversation_id}")
+            result = await sql_agent.generate_sql(message, conversation_id)
+            
+            conversation_thread["total_requests"] += 1
+            
+            # Check if this new request also needs clarification
+            if result.get("response_type") == "clarification_request" and result.get("request_id"):
+                conversation_thread["pending_request_id"] = result.get("request_id")
+                conversation_thread["status"] = "waiting_for_clarification"
+            else:
+                conversation_thread["completed_requests"] += 1
         
-        result = await sql_agent.continue_conversation(conversation_id, message, conversation_state)
-        
-        # Update conversation metadata
-        conversation_meta["last_interaction"] = datetime.utcnow()
-        conversation_meta["status"] = result.get("status", "completed")
-        conversation_meta["messages"].append({
+        # Add message to conversation history
+        conversation_thread["message_history"].append({
             "role": "user", 
             "content": message, 
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.utcnow().isoformat(),
+            "message_type": "clarification_response" if pending_request_id else "follow_up"
         })
+        
+        # Update conversation metadata
+        conversation_thread["last_interaction"] = datetime.utcnow()
+        conversation_thread["status"] = result.get("status", "completed")
+        
+        # Maintain backward compatibility
+        conversations[conversation_id] = conversation_thread.copy()
         
         return result
         
     except Exception as e:
+        logger.error(f"Error continuing conversation {conversation_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to continue conversation: {str(e)}")
 
 
 @app.get("/conversations/{conversation_id}")
 async def get_conversation(conversation_id: str):
     """Get conversation details and history."""
-    if conversation_id not in conversations:
+    if conversation_id not in conversation_threads:
         raise HTTPException(status_code=404, detail="Conversation not found")
     
-    return conversations[conversation_id]
+    conversation_thread = conversation_threads[conversation_id]
+    
+    # Add checkpoint information if there's a pending request
+    result = conversation_thread.copy()
+    
+    if "pending_request_id" in conversation_thread:
+        pending_request_id = conversation_thread["pending_request_id"]
+        result["has_pending_clarification"] = pending_request_id in sql_agent._checkpoint_storage
+        result["pending_request_id"] = pending_request_id
+    else:
+        result["has_pending_clarification"] = False
+    
+    return result
+
+
+@app.get("/conversations/{conversation_id}/status")
+async def get_conversation_status(conversation_id: str):
+    """Get conversation status and pending clarifications."""
+    if conversation_id not in conversation_threads:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    
+    conversation_thread = conversation_threads[conversation_id]
+    
+    status = {
+        "conversation_id": conversation_id,
+        "status": conversation_thread.get("status", "unknown"),
+        "total_requests": conversation_thread.get("total_requests", 0),
+        "completed_requests": conversation_thread.get("completed_requests", 0),
+        "has_pending_clarification": False,
+        "pending_request_id": None,
+        "last_interaction": conversation_thread.get("last_interaction")
+    }
+    
+    # Check for pending clarifications
+    if "pending_request_id" in conversation_thread:
+        pending_request_id = conversation_thread["pending_request_id"]
+        if pending_request_id in sql_agent._checkpoint_storage:
+            status["has_pending_clarification"] = True
+            status["pending_request_id"] = pending_request_id
+    
+    return status
 
 
 @app.get("/conversations")
