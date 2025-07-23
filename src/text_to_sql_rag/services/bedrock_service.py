@@ -7,6 +7,7 @@ from botocore.exceptions import ClientError
 import structlog
 
 from ..config.settings import settings
+from ..utils.aws_credentials import AWSCredentialsManager
 
 logger = structlog.get_logger(__name__)
 
@@ -22,12 +23,24 @@ class BedrockEmbeddingService:
         """Create AWS Bedrock client with proper configuration."""
         try:
             if settings.aws.use_profile and settings.aws.profile_name:
-                # Use AWS profile (for local development)
-                logger.info("Using AWS profile for Bedrock client", profile=settings.aws.profile_name)
-                session = boto3.Session(
-                    profile_name=settings.aws.profile_name,
-                    region_name=settings.aws.region
-                )
+                # Try using AWSCredentialsManager for local development with assumed roles
+                logger.info("Attempting to use AWS credentials manager", profile=settings.aws.profile_name)
+                
+                credentials_manager = AWSCredentialsManager(settings.aws.profile_name)
+                session_config = credentials_manager.get_session_config()
+                
+                if session_config:
+                    logger.info("Using AWS credentials from local credentials file", 
+                               profile=settings.aws.profile_name,
+                               has_session_token=bool(session_config.get('aws_session_token')))
+                    session = boto3.Session(**session_config)
+                else:
+                    # Fallback to standard profile-based session
+                    logger.info("Falling back to standard AWS profile", profile=settings.aws.profile_name)
+                    session = boto3.Session(
+                        profile_name=settings.aws.profile_name,
+                        region_name=settings.aws.region
+                    )
             elif settings.aws.access_key_id and settings.aws.secret_access_key:
                 # Use explicit credentials (for production)
                 logger.info("Using explicit AWS credentials for Bedrock client")
@@ -131,12 +144,24 @@ class BedrockLLMService:
         """Create AWS Bedrock client with proper configuration."""
         try:
             if settings.aws.use_profile and settings.aws.profile_name:
-                # Use AWS profile (for local development)
-                logger.info("Using AWS profile for Bedrock client", profile=settings.aws.profile_name)
-                session = boto3.Session(
-                    profile_name=settings.aws.profile_name,
-                    region_name=settings.aws.region
-                )
+                # Try using AWSCredentialsManager for local development with assumed roles
+                logger.info("Attempting to use AWS credentials manager", profile=settings.aws.profile_name)
+                
+                credentials_manager = AWSCredentialsManager(settings.aws.profile_name)
+                session_config = credentials_manager.get_session_config()
+                
+                if session_config:
+                    logger.info("Using AWS credentials from local credentials file", 
+                               profile=settings.aws.profile_name,
+                               has_session_token=bool(session_config.get('aws_session_token')))
+                    session = boto3.Session(**session_config)
+                else:
+                    # Fallback to standard profile-based session
+                    logger.info("Falling back to standard AWS profile", profile=settings.aws.profile_name)
+                    session = boto3.Session(
+                        profile_name=settings.aws.profile_name,
+                        region_name=settings.aws.region
+                    )
             elif settings.aws.access_key_id and settings.aws.secret_access_key:
                 # Use explicit credentials (for production)
                 logger.info("Using explicit AWS credentials for Bedrock client")

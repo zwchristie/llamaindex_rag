@@ -24,9 +24,9 @@ from ..models.simple_models import (
 from ..models.conversation import (
     ConversationState, RequestType, ConversationStatus, AgentResponse
 )
-from ..services.llm_provider_factory import llm_factory
+from ..services.llm_provider_factory import llm_factory\nimport structlog
 
-# In-memory session storage (replace with Redis in production)
+logger = structlog.get_logger(__name__)\n\n# In-memory session storage (replace with Redis in production)
 sessions = {}
 # In-memory conversation storage for HITL workflows
 conversations = {}
