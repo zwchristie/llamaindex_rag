@@ -6,20 +6,23 @@ A comprehensive text-to-SQL system using LlamaIndex for Retrieval-Augmented Gene
 
 ### Core Capabilities
 - **Natural Language to SQL**: Convert natural language queries to SQL using RAG-enhanced context
-- **Human-in-the-Loop (HITL)**: Intelligent clarification requests when confidence is low
-- **Confidence Assessment**: Automatic evaluation of metadata completeness
-- **Adaptive Workflow Routing**: Intelligent routing based on request type classification
-- **Conversation Management**: Multi-turn conversations with context preservation
+- **Enhanced Human-in-the-Loop (HITL)**: Intelligent clarification requests with complete state preservation
+- **Stateful Workflow Resumption**: Resume interrupted workflows exactly where they left off
+- **Confidence Assessment**: Automatic evaluation of metadata completeness with LLM-powered classification
+- **Adaptive Workflow Routing**: Intelligent routing based on LLM-powered request type classification
+- **Advanced Conversation Management**: Multi-turn conversations with separation of conversation threads and individual request fulfillment
 - **Document Management**: MongoDB integration with vector store synchronization
 
 ### Technical Features
-- **LangGraph Agent**: Sophisticated workflow orchestration with retry logic
+- **LangGraph Agent**: Sophisticated workflow orchestration with checkpoint-based state persistence
+- **Workflow State Serialization**: Complete preservation of intermediate workflow data for HITL scenarios
+- **Dual ID System**: Separate conversation IDs (thread tracking) and request IDs (individual fulfillment)
 - **Vector Search**: Hybrid retrieval using OpenSearch vector store
 - **Multiple LLM Providers**: Seamless switching between AWS Bedrock and custom LLM APIs
 - **Local Development Support**: AWS profile-based authentication for local development
 - **Document Processing**: JSON to Dolphin format conversion for better vectorization
 - **Error Recovery**: Intelligent retry mechanisms with context injection
-- **RESTful API**: Comprehensive API endpoints with FastAPI
+- **RESTful API**: Comprehensive API endpoints with FastAPI and enhanced conversation management
 
 ## 📋 Requirements
 
@@ -172,15 +175,18 @@ curl -X POST "http://localhost:8000/query/generate" \
   -H "Content-Type: application/json" \
   -d '{"query": "Show me all users who registered last month"}'
 
-# Start conversation with HITL support
+# Start conversation with enhanced HITL support
 curl -X POST "http://localhost:8000/conversations/start" \
   -H "Content-Type: application/json" \
-  -d '{"query": "What are the sales trends?"}'
+  -d '{"query": "What are the sales trends?", "context": {"user_id": "user123"}}'
 
-# Continue conversation with clarification
+# Continue conversation (automatically detects clarification vs new request)
 curl -X POST "http://localhost:8000/conversations/{id}/continue" \
   -H "Content-Type: application/json" \
   -d '{"message": "I mean sales by product category for Q4 2023"}'
+
+# Check conversation status and pending clarifications
+curl -X GET "http://localhost:8000/conversations/{id}/status"
 ```
 
 #### Document Management
@@ -322,28 +328,139 @@ Use Cases:
    - Unified interface for all provider types
    - Health monitoring and provider information
 
-### Workflow Process
+### Enhanced Workflow Process with HITL State Management
 
 ```mermaid
 graph TD
-    A[User Request] --> B[Classify Request Type]
+    A[User Request] --> B[Classify Request Type<br/>LLM-Powered]
     B --> C{Request Type}
     C -->|Generate New| D[Get Metadata]
     C -->|Describe SQL| E[Describe SQL]
     C -->|Execute SQL| F[Execute SQL]
-    D --> G[Assess Confidence]
+    D --> G[Assess Confidence<br/>LLM Analysis]
     G --> H{Confident?}
-    H -->|No| I[Request Clarification]
+    H -->|No| I[Save Checkpoint<br/>Request Clarification]
     H -->|Yes| J[Generate SQL]
-    I --> K[Wait for Human Input]
-    J --> L{Execute?}
-    L -->|Yes| F
-    L -->|No| M[Return Results]
-    F --> N{Success?}
-    N -->|No| O[Fix SQL]
-    N -->|Yes| M
-    O --> J
+    I --> K[Wait for Human Input<br/>Preserve All State]
+    K --> L[Resume from Checkpoint<br/>Restore Context]
+    L --> J
+    J --> M{Execute?}
+    M -->|Yes| F
+    M -->|No| N[Return Results]
+    F --> O{Success?}
+    O -->|No| P[Fix SQL<br/>Retry with Context]
+    O -->|Yes| N
+    P --> J
+    
+    style I fill:#ffeb3b
+    style K fill:#ffeb3b
+    style L fill:#ffeb3b
+    style B fill:#e3f2fd
+    style G fill:#e3f2fd
 ```
+
+#### Key HITL Enhancements:
+- **Checkpoint-Based State Persistence**: Complete workflow state saved before clarification
+- **Intelligent Resumption**: Exact restoration of schema context, confidence scores, and metadata
+- **Dual ID System**: Conversation threads (conversation_id) separate from request fulfillment (request_id)
+- **LLM-Powered Classification**: Advanced request type detection with reasoning
+- **Context Preservation**: All intermediate data maintained across human interactions
+
+## 🔄 Human-in-the-Loop (HITL) State Management
+
+### Overview
+The enhanced HITL system ensures complete workflow state persistence during clarification requests, enabling seamless resumption of complex SQL generation workflows.
+
+### Key Components
+
+#### 1. Dual ID System
+- **Conversation ID**: Tracks entire conversation threads with multiple exchanges
+- **Request ID**: Tracks individual request fulfillment within conversations
+- **Session ID**: Optional user session tracking for analytics
+
+#### 2. Workflow State Serialization
+```python
+# Automatic state preservation before clarification
+checkpoint_data = {
+    "conversation_id": "conv_123",
+    "request_id": "req_456", 
+    "workflow_state": {
+        "schema_context": [...],      # Retrieved database schema
+        "example_context": [...],     # Retrieved example queries
+        "confidence_score": 0.65,     # LLM confidence assessment
+        "sources": [...],             # Document sources used
+        "intermediate_data": {...}    # Any workflow-specific data
+    },
+    "current_request": "Show me sales data",
+    "request_type": "GENERATE_NEW"
+}
+```
+
+#### 3. Workflow Resumption Process
+1. **Save Checkpoint**: When clarification is needed, complete workflow state is serialized
+2. **Wait for Human**: System returns clarification request to user, maintains state
+3. **Restore Context**: Upon user response, exact workflow state is restored
+4. **Continue Processing**: Workflow resumes with full context preserved
+
+### API Usage Examples
+
+#### Starting a Conversation
+```bash
+curl -X POST "http://localhost:8000/conversations/start" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "Show me user activity",
+    "context": {"user_id": "analyst_1", "department": "sales"}
+  }'
+
+# Response includes conversation_id and request_id
+{
+  "conversation_id": "conv_abc123",
+  "result": {
+    "response_type": "clarification_request",
+    "request_id": "req_def456",
+    "clarification": {
+      "message": "I need clarification about which user activity data you're looking for...",
+      "suggestions": [...]
+    },
+    "checkpoint_saved": true
+  }
+}
+```
+
+#### Continuing with Clarification
+```bash
+curl -X POST "http://localhost:8000/conversations/conv_abc123/continue" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "I want login activity for the past week"}'
+
+# System automatically:
+# 1. Detects pending clarification for req_def456
+# 2. Restores complete workflow state from checkpoint
+# 3. Continues processing with full context
+```
+
+#### Monitoring Conversation Status
+```bash
+curl -X GET "http://localhost:8000/conversations/conv_abc123/status"
+
+# Response shows conversation state
+{
+  "conversation_id": "conv_abc123",
+  "status": "waiting_for_clarification",
+  "total_requests": 1,
+  "completed_requests": 0,
+  "has_pending_clarification": true,
+  "pending_request_id": "req_def456"
+}
+```
+
+### Benefits
+
+1. **No Lost Context**: Schema context, confidence assessments, and retrieved documents are preserved
+2. **Seamless Experience**: Users can provide clarification at any time without starting over
+3. **Intelligent Routing**: System distinguishes between clarification responses and new requests
+4. **Scalable Architecture**: Checkpoint storage can be easily replaced with Redis/database for production
 
 ## 🔧 Configuration
 

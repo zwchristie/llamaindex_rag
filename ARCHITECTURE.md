@@ -48,7 +48,10 @@ src/text_to_sql_rag/
 
 **Key Endpoints**:
 - `/query/generate` - Basic SQL generation
-- `/conversations/*` - HITL conversation management
+- `/conversations/start` - Start enhanced HITL conversation threads
+- `/conversations/{id}/continue` - Continue conversations with automatic checkpoint detection
+- `/conversations/{id}/status` - Monitor conversation status and pending clarifications
+- `/conversations/*` - Advanced HITL conversation management
 - `/documents/*` - Document upload and management
 - `/health` - Service health monitoring
 
@@ -59,23 +62,31 @@ src/text_to_sql_rag/
 ### 2. Core Business Logic (`core/`)
 
 #### `langgraph_agent.py` - LangGraph Agent
-**Purpose**: Orchestrates the intelligent text-to-SQL workflow using LangGraph
+**Purpose**: Orchestrates the intelligent text-to-SQL workflow using LangGraph with enhanced HITL state management
 **Responsibilities**:
-- Request classification (generate, execute, describe, edit)
-- Confidence assessment for metadata completeness
-- Human-in-the-loop clarification workflows
+- LLM-powered request classification (generate, execute, describe, edit)
+- Confidence assessment for metadata completeness using LLM analysis
+- Advanced human-in-the-loop clarification workflows with state persistence
 - SQL generation with context and retry logic
-- Conversation state management
-- Adaptive workflow routing
+- Checkpoint-based conversation state management
+- Adaptive workflow routing with resumption capabilities
 
 **Key Components**:
-- `TextToSQLAgent` - Main agent class
-- `ConversationState` - Workflow state management
-- Workflow nodes: classify, assess_confidence, generate_sql, etc.
-- Helper methods for parsing and context formatting
+- `TextToSQLAgent` - Main agent class with checkpoint storage
+- `ConversationState` - Enhanced workflow state with dual ID system
+- `WorkflowState` - Serializable workflow execution state for HITL persistence
+- Workflow nodes: classify, assess_confidence, generate_sql, request_clarification, etc.
+- Checkpoint management: save/restore state for HITL interruptions
+- Helper methods for parsing, context formatting, and state serialization
 
-**Input**: Natural language queries, conversation context
-**Output**: SQL queries, clarification requests, or execution results
+**Enhanced HITL Features**:
+- **Dual ID System**: Separate conversation_id (thread) and request_id (fulfillment)
+- **State Checkpointing**: Complete workflow state preservation before clarification
+- **Intelligent Resumption**: Exact context restoration after human input
+- **LLM Classification**: Advanced request type detection with reasoning
+
+**Input**: Natural language queries, conversation context, clarification responses
+**Output**: SQL queries, clarification requests, execution results, or checkpoint data
 
 #### `startup.py` - Application Initialization
 **Purpose**: Orchestrates application startup and service initialization
@@ -202,14 +213,22 @@ src/text_to_sql_rag/
 - `HealthCheckResponse` - Service monitoring
 - `HumanInterventionRequest` - HITL workflows
 
-#### `conversation.py` - Conversation Models
-**Purpose**: Models for advanced conversation and HITL workflows
+#### `conversation.py` - Enhanced Conversation Models
+**Purpose**: Models for advanced conversation and enhanced HITL workflows with state persistence
 **Key Models**:
-- `ConversationState` - Complete conversation state management
-- `RequestType` - Enum for request classification
-- `ClarificationRequest` - Human clarification requests
-- `SQLArtifact` - SQL generation artifacts with metadata
+- `ConversationState` - Enhanced conversation state with dual ID system (conversation_id + request_id)
+- `WorkflowState` - Serializable workflow execution state for checkpoint persistence
+- `RequestType` - Enum for request classification (GENERATE_NEW, EDIT_PREVIOUS, FOLLOW_UP, etc.)
+- `ClarificationRequest` - Human clarification requests with structured context
+- `SQLArtifact` - SQL generation artifacts with metadata and execution results
 - `AgentResponse` - Structured agent responses
+- `ConversationMessage` - Individual messages in conversation history
+
+**Enhanced HITL Features**:
+- **State Serialization**: `save_workflow_checkpoint()` and `restore_from_checkpoint()` methods
+- **Dual ID System**: Separation of conversation threads and individual request fulfillment
+- **Property Delegation**: Backward compatibility while supporting new state structure
+- **Context Preservation**: Complete intermediate workflow data maintenance
 
 #### `document.py` - Document Database Models
 **Purpose**: SQLAlchemy models for document persistence
@@ -298,17 +317,33 @@ User Query
 → SQL parsing and validation
 ```
 
-### 3. HITL Clarification Flow
+### 3. Enhanced HITL Clarification Flow with State Persistence
 ```
 Low Confidence Assessment
-→ LangGraphAgent._assess_confidence_node()
-→ ClarificationRequest generation
-→ API response with clarification
-→ User provides clarification
-→ Continue conversation workflow
+→ LangGraphAgent._assess_confidence_node() (LLM-powered analysis)
+→ LangGraphAgent._request_clarification_node()
+→ ConversationState.save_workflow_checkpoint() (Complete state serialization)
+→ Checkpoint stored in agent._checkpoint_storage[request_id]
+→ API response with clarification + request_id
+→ User provides clarification via /conversations/{id}/continue
+→ API detects pending_request_id and calls continue_from_checkpoint()
+→ ConversationState.restore_from_checkpoint() (Full context restoration)
+→ LangGraph workflow resumes with preserved schema context, confidence, metadata
 ```
 
-### 4. LLM Provider Switching Flow
+### 4. Conversation vs Request ID Management Flow
+```
+User starts conversation
+→ Generate conversation_id (thread tracking)
+→ Generate request_id (individual fulfillment)
+→ Store in conversation_threads[conversation_id]
+→ Execute workflow for request_id
+→ If clarification needed: save checkpoint with request_id
+→ User continues: detect pending_request_id vs new request
+→ Resume checkpoint OR start new request_id in same conversation_id
+```
+
+### 5. LLM Provider Switching Flow
 ```
 Provider Switch Request
 → LLMProviderFactory.switch_provider()
@@ -404,14 +439,61 @@ def sync_document(file_path):
     return sync_result
 ```
 
-### 4. Request Classification
+### 4. Enhanced LLM-Powered Request Classification
 ```python
-def classify_request(query):
-    # Keyword analysis
-    # Intent detection
-    # Context evaluation
-    # Route to appropriate workflow
-    return request_type
+def _classify_request_node(state: ConversationState):
+    # Build context for LLM classification
+    context = build_classification_context(state)
+    
+    # LLM-powered classification with reasoning
+    classification_prompt = create_classification_prompt(context)
+    response = llm_factory.generate_text(classification_prompt)
+    
+    # Parse classification and reasoning
+    result = parse_classification_response(response)
+    
+    # Map to RequestType with fallback
+    state.request_type = map_classification(result)
+    
+    return state
+```
+
+### 5. Workflow State Checkpoint Algorithm
+```python
+def save_workflow_checkpoint(state: ConversationState):
+    # Serialize complete workflow state
+    checkpoint_data = {
+        "conversation_id": state.conversation_id,
+        "request_id": state.request_id,
+        "workflow_state": state.workflow_state.serialize(),
+        "current_request": state.current_request,
+        "request_type": state.request_type,
+        "message_history": state.message_history,
+        "timestamps": {...}
+    }
+    
+    # Store checkpoint for resumption
+    agent._checkpoint_storage[state.request_id] = checkpoint_data
+    
+    return checkpoint_data
+
+def restore_from_checkpoint(checkpoint_data, new_request):
+    # Deserialize workflow state
+    workflow_state = WorkflowState.deserialize(checkpoint_data["workflow_state"])
+    
+    # Restore conversation state with preserved context
+    restored_state = ConversationState(
+        conversation_id=checkpoint_data["conversation_id"],
+        request_id=checkpoint_data["request_id"],
+        current_request=new_request,  # New user input
+        workflow_state=workflow_state  # Preserved intermediate state
+    )
+    
+    # Reset HITL flags for continuation
+    restored_state.requires_human_input = False
+    restored_state.needs_clarification = False
+    
+    return restored_state
 ```
 
 ## 🚀 Extensibility Points

@@ -70,7 +70,19 @@ class ClarificationRequest(BaseModel):
 
 
 class WorkflowState(BaseModel):
-    """Serializable workflow execution state for HITL persistence."""
+    """Serializable workflow execution state for HITL persistence.
+    
+    This class encapsulates all intermediate workflow data that needs to be preserved
+    during human-in-the-loop clarification requests. When the workflow is interrupted
+    for clarification, this state is serialized and stored as a checkpoint, allowing
+    the workflow to resume exactly where it left off with complete context.
+    
+    Key Features:
+    - Complete intermediate workflow data preservation
+    - Serialization/deserialization for checkpoint storage
+    - Separation of request-level state from conversation-level state
+    - All data needed to resume LangGraph workflow execution
+    """
     
     # Workflow execution context
     workflow_step: Optional[WorkflowStep] = None
@@ -106,7 +118,30 @@ class WorkflowState(BaseModel):
 
 
 class ConversationState(BaseModel):
-    """Enhanced conversation state for agent workflows."""
+    """Enhanced conversation state for agent workflows with HITL state management.
+    
+    This class manages the complete state of a conversation with advanced human-in-the-loop
+    capabilities. It implements a dual ID system to separate conversation threads from
+    individual request fulfillment, enabling proper state persistence and resumption.
+    
+    Architecture:
+    - conversation_id: Tracks the entire conversation thread with multiple exchanges
+    - request_id: Tracks individual request fulfillment within a conversation
+    - workflow_state: Contains all intermediate workflow data for checkpoint preservation
+    - message_history: Maintains conversation-level message thread continuity
+    
+    Key HITL Features:
+    - Checkpoint-based state persistence before clarification requests
+    - Complete workflow context restoration after human input
+    - Intelligent routing between clarification responses and new requests
+    - Backward compatibility through property delegation
+    
+    Usage:
+    - Start conversation: Creates new conversation_id and initial request_id
+    - Request clarification: Saves checkpoint with current workflow_state
+    - Resume from checkpoint: Restores exact context and continues workflow
+    - New request in thread: Generates new request_id while preserving conversation_id
+    """
     
     # Basic conversation info - separate IDs for conversation vs request tracking
     conversation_id: str  # Tracks the entire conversation thread
@@ -288,7 +323,17 @@ class ConversationState(BaseModel):
         return self.message_history
     
     def save_workflow_checkpoint(self) -> Dict[str, Any]:
-        """Save current workflow state for HITL resumption."""
+        """Save current workflow state for HITL resumption.
+        
+        Creates a complete checkpoint of the current workflow state that can be
+        stored and later used to resume execution after human clarification.
+        This preserves all intermediate data including schema context, confidence
+        scores, retrieved documents, and workflow step information.
+        
+        Returns:
+            Dict containing serialized checkpoint data with all necessary information
+            to restore the exact workflow state for seamless resumption.
+        """
         return {
             "conversation_id": self.conversation_id,
             "request_id": self.request_id,
@@ -302,7 +347,21 @@ class ConversationState(BaseModel):
     
     @classmethod
     def restore_from_checkpoint(cls, checkpoint_data: Dict[str, Any], new_request: str) -> "ConversationState":
-        """Restore conversation state from checkpoint for HITL continuation."""
+        """Restore conversation state from checkpoint for HITL continuation.
+        
+        Reconstructs the complete conversation state from a previously saved checkpoint,
+        enabling seamless resumption of workflow execution after human clarification.
+        All intermediate data is restored including schema context, confidence scores,
+        and workflow step information.
+        
+        Args:
+            checkpoint_data: Previously saved checkpoint data from save_workflow_checkpoint()
+            new_request: The user's clarification response or new message
+            
+        Returns:
+            Fully restored ConversationState with preserved context and reset HITL flags
+            ready for workflow continuation.
+        """
         workflow_state = WorkflowState.deserialize(checkpoint_data["workflow_state"])
         
         # Parse datetime fields

@@ -9,12 +9,12 @@ info:
     conversation management, and human-in-the-loop capabilities.
 
     ## Key Features
-    - 🧠 **Intelligent SQL Generation** from natural language queries
-    - 💬 **Conversation Management** with context preservation
-    - 🤝 **Human-in-the-Loop** clarification workflows
+    - 🧠 **Intelligent SQL Generation** from natural language queries with LLM-powered classification
+    - 💬 **Enhanced Conversation Management** with dual ID system (conversation + request tracking)
+    - 🤝 **Advanced Human-in-the-Loop** with complete workflow state persistence and checkpoint resumption
     - 📚 **Document Management** for schema and report indexing
     - 🔄 **LLM Provider Switching** (AWS Bedrock ↔ Custom APIs)
-    - ⚡ **Real-time Health Monitoring**
+    - ⚡ **Real-time Health Monitoring** and conversation status tracking
 
     ## Integration Guide for React Applications
 
@@ -69,30 +69,48 @@ servers:
 tags:
   - name: Conversations
     description: |
-      **Primary integration point for chat applications**
+      **Primary integration point for chat applications with enhanced HITL**
       
-      These endpoints manage conversational flows with intelligent routing:
-      - Start new conversations with automatic context detection
-      - Handle clarification requests seamlessly
-      - Maintain conversation history and state
+      These endpoints manage advanced conversational flows with intelligent routing and state persistence:
+      - Start new conversations with automatic context detection and dual ID system
+      - Handle clarification requests with complete workflow state preservation
+      - Maintain conversation history and checkpoint-based resumption
+      - Monitor conversation status and pending clarifications
       
-      **React Integration Pattern:**
+      **Enhanced React Integration Pattern:**
       ```javascript
-      const useConversation = () => {
+      const useEnhancedConversation = () => {
         const [messages, setMessages] = useState([]);
         const [conversationId, setConversationId] = useState(null);
+        const [pendingClarification, setPendingClarification] = useState(null);
         
         const sendMessage = async (query) => {
           if (!conversationId) {
             const response = await startConversation(query);
             setConversationId(response.data.conversation_id);
-            return response.data.result;
+            handleResponse(response.data.result);
           } else {
-            return await continueConversation(conversationId, query);
+            const result = await continueConversation(conversationId, query);
+            handleResponse(result);
           }
         };
         
-        return { sendMessage, messages, conversationId };
+        const handleResponse = (result) => {
+          if (result.response_type === 'clarification_request') {
+            setPendingClarification(result);
+          } else {
+            setPendingClarification(null);
+          }
+          // Add to message history...
+        };
+        
+        const checkStatus = async () => {
+          if (conversationId) {
+            return await getConversationStatus(conversationId);
+          }
+        };
+        
+        return { sendMessage, messages, conversationId, pendingClarification, checkStatus };
       };
       ```
 
@@ -138,19 +156,21 @@ paths:
   /conversations/start:
     post:
       tags: [Conversations]
-      summary: Start a new conversation
+      summary: Start a new enhanced conversation with HITL
       description: |
-        **Primary endpoint for chat applications**
+        **Primary endpoint for chat applications with advanced state management**
         
-        Initiates an intelligent conversation flow that can:
-        - Generate SQL directly for clear requests
-        - Ask for clarification when needed
-        - Provide step-by-step guidance for complex queries
+        Initiates an intelligent conversation flow with enhanced capabilities:
+        - LLM-powered request classification with reasoning
+        - Advanced confidence assessment and context analysis
+        - Complete workflow state preservation for clarification requests
+        - Dual ID system: conversation_id (thread) + request_id (fulfillment)
+        - Automatic checkpoint creation for seamless resumption
         
-        **Response Types:**
-        - `sql_result`: Ready-to-use SQL with explanation
-        - `clarification_request`: Needs more information from user
-        - `error`: Something went wrong
+        **Enhanced Response Types:**
+        - `sql_result`: Ready-to-use SQL with explanation and confidence
+        - `clarification_request`: Needs clarification with preserved state (includes request_id)
+        - `error`: Something went wrong with detailed context
         
         **React Integration Example:**
         ```javascript
@@ -287,14 +307,19 @@ paths:
   /conversations/{conversation_id}/continue:
     post:
       tags: [Conversations]
-      summary: Continue an existing conversation
+      summary: Continue conversation with intelligent checkpoint detection
       description: |
-        **Continue conversation with user clarification or follow-up**
+        **Continue conversation with enhanced state management and automatic routing**
         
-        Use this endpoint to:
-        - Provide clarification for ambiguous requests
-        - Ask follow-up questions
-        - Refine or modify previously generated SQL
+        This endpoint intelligently handles two scenarios:
+        - **Clarification Response**: Automatically detects pending clarifications and resumes from checkpoint with preserved context
+        - **New Request**: Starts new request fulfillment within existing conversation thread
+        
+        Enhanced capabilities:
+        - Automatic pending request detection based on conversation state
+        - Complete workflow state restoration from checkpoints
+        - Preserved schema context, confidence scores, and metadata
+        - Intelligent routing between clarification vs new request handling
         
         **React Pattern:**
         ```javascript
@@ -442,6 +467,131 @@ paths:
                   message:
                     type: string
                     example: "Conversation conv_abc123def456 deleted successfully"
+
+  /conversations/{conversation_id}/status:
+    get:
+      tags: [Conversations]
+      summary: Get conversation status and pending clarifications
+      description: |
+        **Monitor conversation state and detect pending clarifications**
+        
+        Essential for chat applications to:
+        - Check if conversation is waiting for clarification
+        - Monitor request completion status
+        - Detect when to show clarification UI vs regular chat
+        - Track conversation progress and health
+        
+        **React Integration Pattern:**
+        ```javascript
+        const useConversationStatus = (conversationId) => {
+          const [status, setStatus] = useState(null);
+          const [isLoading, setIsLoading] = useState(false);
+          
+          const checkStatus = useCallback(async () => {
+            if (!conversationId) return;
+            
+            setIsLoading(true);
+            try {
+              const response = await fetch(`/conversations/${conversationId}/status`);
+              const statusData = await response.json();
+              setStatus(statusData);
+              
+              // Auto-refresh if pending clarification
+              if (statusData.has_pending_clarification) {
+                setTimeout(checkStatus, 5000); // Poll every 5 seconds
+              }
+            } catch (error) {
+              console.error('Failed to get conversation status:', error);
+            } finally {
+              setIsLoading(false);
+            }
+          }, [conversationId]);
+          
+          useEffect(() => {
+            checkStatus();
+          }, [checkStatus]);
+          
+          return { status, isLoading, checkStatus };
+        };
+        ```
+      operationId: getConversationStatus
+      parameters:
+        - name: conversation_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Conversation ID to check status for
+          example: "conv_abc123def456"
+      responses:
+        '200':
+          description: Conversation status retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  conversation_id:
+                    type: string
+                    description: The conversation identifier
+                    example: "conv_abc123def456"
+                  status:
+                    type: string
+                    enum: [active, waiting_for_clarification, completed, error]
+                    description: Current conversation status
+                    example: "waiting_for_clarification"
+                  total_requests:
+                    type: integer
+                    description: Total number of requests in this conversation
+                    example: 2
+                  completed_requests:
+                    type: integer
+                    description: Number of successfully completed requests
+                    example: 1
+                  has_pending_clarification:
+                    type: boolean
+                    description: Whether there's a pending clarification request
+                    example: true
+                  pending_request_id:
+                    type: string
+                    nullable: true
+                    description: ID of pending request awaiting clarification
+                    example: "req_def456ghi789"
+                  last_interaction:
+                    type: string
+                    format: date-time
+                    description: Timestamp of last interaction
+                    example: "2024-01-15T10:30:00Z"
+              examples:
+                waiting_for_clarification:
+                  summary: Conversation waiting for user clarification
+                  value:
+                    conversation_id: "conv_abc123def456"
+                    status: "waiting_for_clarification"
+                    total_requests: 1
+                    completed_requests: 0
+                    has_pending_clarification: true
+                    pending_request_id: "req_def456ghi789"
+                    last_interaction: "2024-01-15T10:30:00Z"
+                active_conversation:
+                  summary: Active conversation with completed requests
+                  value:
+                    conversation_id: "conv_abc123def456"
+                    status: "active"
+                    total_requests: 3
+                    completed_requests: 3
+                    has_pending_clarification: false
+                    pending_request_id: null
+                    last_interaction: "2024-01-15T11:45:00Z"
+        '404':
+          description: Conversation not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                detail: "Conversation conv_abc123def456 not found"
+                error_code: "CONVERSATION_NOT_FOUND"
 
   /conversations:
     get:

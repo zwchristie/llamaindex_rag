@@ -30,7 +30,41 @@ logger = logging.getLogger(__name__)
 
 
 class TextToSQLAgent:
-    """LangGraph-based agent for text-to-SQL generation with HITL and confidence assessment."""
+    """LangGraph-based agent for text-to-SQL generation with enhanced HITL and confidence assessment.
+    
+    This agent orchestrates intelligent text-to-SQL workflows using LangGraph with advanced
+    human-in-the-loop capabilities. It features complete workflow state persistence,
+    enabling seamless resumption of complex SQL generation workflows after clarification.
+    
+    Key Features:
+    - LLM-powered request classification with reasoning and context analysis
+    - Advanced confidence assessment using structured LLM evaluation
+    - Checkpoint-based workflow state persistence for HITL scenarios
+    - Dual ID system supporting conversation threads and individual request fulfillment
+    - Intelligent workflow resumption with preserved context (schema, confidence, metadata)
+    - Sophisticated retry mechanisms with context injection for SQL generation
+    
+    Architecture:
+    - Uses LangGraph state machine for workflow orchestration
+    - Implements checkpoint storage for human-in-the-loop interruption points
+    - Separates conversation-level state from request-level workflow state
+    - Provides fallback mechanisms for LLM classification and confidence assessment
+    
+    Workflow Steps:
+    1. classify_request: LLM-powered request type detection with reasoning
+    2. get_metadata: Schema and example retrieval from vector store
+    3. assess_confidence: LLM analysis of metadata completeness and query clarity
+    4. request_clarification: Save checkpoint and request human input (if needed)
+    5. generate_sql: Context-aware SQL generation with retry logic
+    6. execute_sql: Optional query execution with result processing
+    7. return_results: Final response formatting and delivery
+    
+    HITL Process:
+    - When confidence is low, complete workflow state is serialized as checkpoint
+    - Checkpoint includes schema context, confidence scores, retrieved documents
+    - User provides clarification through continue_from_checkpoint()
+    - Workflow resumes with exact preserved context and continues seamlessly
+    """
     
     def __init__(
         self,
@@ -127,7 +161,22 @@ class TextToSQLAgent:
         return workflow.compile()
     
     def _classify_request_node(self, state: ConversationState) -> ConversationState:
-        """Classify the type of user request using LLM to determine workflow routing."""
+        """Classify the type of user request using LLM to determine workflow routing.
+        
+        Uses advanced LLM-powered classification to analyze user requests and determine
+        the appropriate workflow routing. This includes analyzing conversation context,
+        SQL history, and request intent to provide accurate classification with reasoning.
+        
+        The classification supports these request types:
+        - GENERATE_NEW: New SQL query generation from natural language
+        - EXECUTE_SQL: Execute specific SQL code provided by user
+        - DESCRIBE_SQL: Explain what an SQL query does
+        - EDIT_PREVIOUS: Modify previously generated SQL
+        - FOLLOW_UP: Continue previous conversation with additional requirements
+        - CLARIFICATION: Response to previous clarification request
+        
+        Includes fallback to keyword-based classification if LLM fails.
+        """
         logger.info(f"Classifying request: {state.current_request}")
         
         state.workflow_step = WorkflowStep.CLASSIFY_REQUEST
@@ -1002,7 +1051,23 @@ Format your response clearly and make it understandable for both technical and n
         request_id: str, 
         clarification_response: str
     ) -> Dict[str, Any]:
-        """Continue workflow execution from a saved checkpoint after HITL clarification."""
+        """Continue workflow execution from a saved checkpoint after HITL clarification.
+        
+        This method enables seamless resumption of workflow execution after human
+        clarification by restoring the complete workflow state from a checkpoint.
+        All intermediate data including schema context, confidence scores, and
+        retrieved documents are preserved and restored.
+        
+        Args:
+            request_id: The unique request ID that was saved in the checkpoint
+            clarification_response: User's clarification or additional information
+            
+        Returns:
+            Final workflow result with preserved context and continued execution
+            
+        Raises:
+            ValueError: If no checkpoint exists for the given request_id
+        """
         logger.info(f"Resuming workflow from checkpoint for request {request_id}")
         
         # Retrieve checkpoint data
