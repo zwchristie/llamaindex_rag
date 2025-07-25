@@ -14,7 +14,7 @@ from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core.retrievers import VectorIndexRetriever
 from llama_index.core.query_engine import RetrieverQueryEngine
 from llama_index.vector_stores.opensearch import (
-    OpenSearchVectorStore,
+    OpensearchVectorStore,
     OpensearchVectorClient
 )
 from llama_index.embeddings.bedrock import BedrockEmbedding
@@ -183,10 +183,10 @@ class LlamaIndexVectorService:
             logger.error("Failed to setup LlamaIndex", error=str(e))
             raise
     
-    def _create_vector_store(self) -> OpenSearchVectorStore:
+    def _create_vector_store(self) -> OpensearchVectorStore:
         """Create OpenSearch vector store for LlamaIndex using OpensearchVectorClient."""
         try:
-            vector_store = OpenSearchVectorStore(self.opensearch_client)
+            vector_store = OpensearchVectorStore(self.opensearch_client)
             
             logger.info("Created OpenSearch vector store", index_name=self.index_name)
             return vector_store
