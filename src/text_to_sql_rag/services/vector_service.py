@@ -64,14 +64,48 @@ class CustomBedrockLLM(LLM):
         self._bedrock_service = bedrock_service
         super().__init__(**kwargs)
     
-    def _complete(self, prompt: str, **kwargs) -> str:
+    def complete(self, prompt: str, **kwargs) -> str:
         """Complete a prompt."""
         return self._bedrock_service.generate_text(prompt, **kwargs)
     
-    def _stream_complete(self, prompt: str, **kwargs):
+    def stream_complete(self, prompt: str, **kwargs):
         """Stream complete - not implemented for simplicity."""
         # For now, just return the complete response
-        response = self._complete(prompt, **kwargs)
+        response = self.complete(prompt, **kwargs)
+        yield response
+    
+    def chat(self, messages, **kwargs) -> str:
+        """Chat interface - convert messages to prompt."""
+        # Simple conversion from messages to prompt
+        prompt = ""
+        for message in messages:
+            if hasattr(message, 'content'):
+                prompt += f"{message.content}\n"
+            else:
+                prompt += f"{message}\n"
+        return self.complete(prompt, **kwargs)
+    
+    def stream_chat(self, messages, **kwargs):
+        """Stream chat interface."""
+        response = self.chat(messages, **kwargs)
+        yield response
+    
+    async def acomplete(self, prompt: str, **kwargs) -> str:
+        """Async complete."""
+        return self.complete(prompt, **kwargs)
+    
+    async def astream_complete(self, prompt: str, **kwargs):
+        """Async stream complete."""
+        response = await self.acomplete(prompt, **kwargs)
+        yield response
+    
+    async def achat(self, messages, **kwargs) -> str:
+        """Async chat."""
+        return self.chat(messages, **kwargs)
+    
+    async def astream_chat(self, messages, **kwargs):
+        """Async stream chat."""
+        response = await self.achat(messages, **kwargs)
         yield response
     
     @property
