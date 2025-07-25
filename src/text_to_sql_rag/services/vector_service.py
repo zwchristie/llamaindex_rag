@@ -149,7 +149,8 @@ class LlamaIndexVectorService:
                         region_name=settings.aws.region,
                         profile_name=settings.aws.profile_name,
                         temperature=0.1,
-                        max_tokens=2048
+                        max_tokens=2048,
+                        context_size=200000
                     )
                 else:
                     # Use explicit credentials or default chain
@@ -160,7 +161,8 @@ class LlamaIndexVectorService:
                         aws_secret_access_key=settings.aws.secret_access_key,
                         aws_session_token=settings.aws.session_token,
                         temperature=0.1,
-                        max_tokens=2048
+                        max_tokens=2048,
+                        context_size=200000
                     )
             else:
                 # For custom LLM provider, use a simple OpenAI-like wrapper or None
