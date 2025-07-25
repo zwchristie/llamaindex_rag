@@ -13,11 +13,13 @@ from llama_index.core import (
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core.retrievers import VectorIndexRetriever
 from llama_index.core.query_engine import RetrieverQueryEngine
-from llama_index.vector_stores.opensearch import OpenSearchVectorStore
+from llama_index.vector_stores.opensearch import (
+    OpenSearchVectorStore,
+    OpensearchVectorClient
+)
 from llama_index.embeddings.bedrock import BedrockEmbedding
 from llama_index.llms.bedrock import Bedrock
 
-from opensearchpy import OpenSearch
 import ssl
 
 from ..config.settings import settings
@@ -31,7 +33,6 @@ class LlamaIndexVectorService:
     """Service for managing documents using LlamaIndex with OpenSearch vector store."""
     
     def __init__(self):
-        self.client = self._create_opensearch_client()
         self.index_name = settings.opensearch.index_name
         self.vector_field = settings.opensearch.vector_field
         self.vector_size = settings.opensearch.vector_size
@@ -44,7 +45,8 @@ class LlamaIndexVectorService:
         # Initialize LlamaIndex components
         self._setup_llamaindex()
         
-        # Initialize vector store and index
+        # Initialize OpensearchVectorClient and vector store
+        self.opensearch_client = self._create_opensearch_vector_client()
         self.vector_store = self._create_vector_store()
         self.storage_context = StorageContext.from_defaults(vector_store=self.vector_store)
         
@@ -68,46 +70,52 @@ class LlamaIndexVectorService:
             )
         return self._query_engine
     
-    def _create_opensearch_client(self) -> OpenSearch:
-        """Create OpenSearch client with proper configuration."""
+    def _create_opensearch_vector_client(self) -> OpensearchVectorClient:
+        """Create OpensearchVectorClient with proper configuration."""
         try:
-            # Configure connection based on settings
-            client_config = {
-                'hosts': [{'host': settings.opensearch.host, 'port': settings.opensearch.port}],
-                'use_ssl': settings.opensearch.use_ssl,
-                'verify_certs': settings.opensearch.verify_certs,
-                'timeout': 30,
-                'max_retries': 3,
-                'retry_on_timeout': True
+            # Build endpoint URL
+            protocol = "https" if settings.opensearch.use_ssl else "http"
+            endpoint = f"{protocol}://{settings.opensearch.host}:{settings.opensearch.port}"
+            
+            # Example hostnames for reference:
+            # Local development: "http://localhost:9200"
+            # AWS OpenSearch Service: "https://search-my-domain-abc123.us-east-1.es.amazonaws.com"
+            # Self-hosted: "https://opensearch.example.com:9200"
+            
+            # Create OpensearchVectorClient
+            client_kwargs = {
+                'endpoint': endpoint,
+                'index': self.index_name,
+                'dim': self.vector_size,
+                'embedding_field': self.vector_field,
+                'text_field': 'content',
+                'metadata_field': 'metadata'
             }
             
             # Add authentication if provided
             if settings.opensearch.username and settings.opensearch.password:
-                client_config['http_auth'] = (
-                    settings.opensearch.username, 
+                client_kwargs['http_auth'] = (
+                    settings.opensearch.username,
                     settings.opensearch.password
                 )
             
-            # Configure SSL context if needed
+            # Configure SSL settings
             if settings.opensearch.use_ssl and not settings.opensearch.verify_certs:
-                client_config['ssl_context'] = ssl.create_default_context()
-                client_config['ssl_context'].check_hostname = False
-                client_config['ssl_context'].verify_mode = ssl.CERT_NONE
+                client_kwargs['verify_certs'] = False
+                client_kwargs['ssl_show_warn'] = False
             
-            client = OpenSearch(**client_config)
+            client = OpensearchVectorClient(**client_kwargs)
             
-            # Test connection
-            info = client.info()
             logger.info(
-                "Connected to OpenSearch", 
-                host=settings.opensearch.host, 
-                port=settings.opensearch.port,
-                version=info.get('version', {}).get('number', 'unknown')
+                "Created OpensearchVectorClient",
+                endpoint=endpoint,
+                index=self.index_name,
+                vector_size=self.vector_size
             )
             return client
             
         except Exception as e:
-            logger.error("Failed to connect to OpenSearch", error=str(e))
+            logger.error("Failed to create OpensearchVectorClient", error=str(e))
             raise
     
     def _setup_llamaindex(self) -> None:
@@ -174,16 +182,9 @@ class LlamaIndexVectorService:
             raise
     
     def _create_vector_store(self) -> OpenSearchVectorStore:
-        """Create OpenSearch vector store for LlamaIndex."""
+        """Create OpenSearch vector store for LlamaIndex using OpensearchVectorClient."""
         try:
-            vector_store = OpenSearchVectorStore(
-                client=self.client,
-                index_name=self.index_name,
-                vector_field=self.vector_field,
-                text_field="content",
-                metadata_field="metadata",
-                dim=self.vector_size
-            )
+            vector_store = OpenSearchVectorStore(self.opensearch_client)
             
             logger.info("Created OpenSearch vector store", index_name=self.index_name)
             return vector_store
@@ -494,8 +495,8 @@ class LlamaIndexVectorService:
     def get_index_stats(self) -> Dict[str, Any]:
         """Get statistics about the index."""
         try:
-            # Get index statistics from OpenSearch
-            stats = self.client.indices.stats(index=self.index_name)
+            # Get index statistics from OpenSearch using the underlying client
+            stats = self.opensearch_client._client.indices.stats(index=self.index_name)
             index_stats = stats.get("indices", {}).get(self.index_name, {})
             
             return {
@@ -518,11 +519,11 @@ class LlamaIndexVectorService:
     def health_check(self) -> bool:
         """Check if the service is healthy."""
         try:
-            # Check OpenSearch connection
-            cluster_health = self.client.cluster.health()
+            # Check OpenSearch connection using the underlying client
+            cluster_health = self.opensearch_client._client.cluster.health()
             
             # Check if index exists and is accessible
-            if self.client.indices.exists(index=self.index_name):
+            if self.opensearch_client._client.indices.exists(index=self.index_name):
                 return cluster_health.get("status") in ["green", "yellow"]
             
             return True  # Cluster is healthy even if index doesn't exist yet
