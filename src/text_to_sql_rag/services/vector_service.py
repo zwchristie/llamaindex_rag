@@ -34,17 +34,18 @@ logger = structlog.get_logger(__name__)
 class CustomBedrockEmbedding(BaseEmbedding):
     """Custom embedding wrapper for inference profile ARNs."""
     
-    def __init__(self, bedrock_service: 'BedrockEmbeddingService'):
-        self.bedrock_service = bedrock_service
-        super().__init__()
+    def __init__(self, bedrock_service: 'BedrockEmbeddingService', **kwargs):
+        # Store the service before calling super() to avoid Pydantic validation issues
+        self._bedrock_service = bedrock_service
+        super().__init__(**kwargs)
     
     def _get_query_embedding(self, query: str) -> List[float]:
         """Get embedding for query."""
-        return self.bedrock_service.get_embedding(query)
+        return self._bedrock_service.get_embedding(query)
     
     def _get_text_embedding(self, text: str) -> List[float]:
         """Get embedding for text."""
-        return self.bedrock_service.get_embedding(text)
+        return self._bedrock_service.get_embedding(text)
     
     async def _aget_query_embedding(self, query: str) -> List[float]:
         """Async get embedding for query."""
@@ -58,13 +59,14 @@ class CustomBedrockEmbedding(BaseEmbedding):
 class CustomBedrockLLM(LLM):
     """Custom LLM wrapper for inference profile ARNs."""
     
-    def __init__(self, bedrock_service: 'BedrockLLMService'):
-        self.bedrock_service = bedrock_service
-        super().__init__()
+    def __init__(self, bedrock_service: 'BedrockLLMService', **kwargs):
+        # Store the service before calling super() to avoid Pydantic validation issues
+        self._bedrock_service = bedrock_service
+        super().__init__(**kwargs)
     
     def _complete(self, prompt: str, **kwargs) -> str:
         """Complete a prompt."""
-        return self.bedrock_service.generate_text(prompt, **kwargs)
+        return self._bedrock_service.generate_text(prompt, **kwargs)
     
     def _stream_complete(self, prompt: str, **kwargs):
         """Stream complete - not implemented for simplicity."""
