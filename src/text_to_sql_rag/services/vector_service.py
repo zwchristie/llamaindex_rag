@@ -19,6 +19,8 @@ from llama_index.vector_stores.opensearch import (
 )
 from llama_index.embeddings.bedrock import BedrockEmbedding
 from llama_index.llms.bedrock import Bedrock
+from llama_index.core.embeddings import BaseEmbedding
+from llama_index.core.llms import LLM
 
 import ssl
 
@@ -27,6 +29,58 @@ from ..utils.content_processor import ContentProcessor
 from .bedrock_service import BedrockEmbeddingService, BedrockLLMService
 
 logger = structlog.get_logger(__name__)
+
+
+class CustomBedrockEmbedding(BaseEmbedding):
+    """Custom embedding wrapper for inference profile ARNs."""
+    
+    def __init__(self, bedrock_service: 'BedrockEmbeddingService'):
+        self.bedrock_service = bedrock_service
+        super().__init__()
+    
+    def _get_query_embedding(self, query: str) -> List[float]:
+        """Get embedding for query."""
+        return self.bedrock_service.get_embedding(query)
+    
+    def _get_text_embedding(self, text: str) -> List[float]:
+        """Get embedding for text."""
+        return self.bedrock_service.get_embedding(text)
+    
+    async def _aget_query_embedding(self, query: str) -> List[float]:
+        """Async get embedding for query."""
+        return self._get_query_embedding(query)
+    
+    async def _aget_text_embedding(self, text: str) -> List[float]:
+        """Async get embedding for text."""
+        return self._get_text_embedding(text)
+
+
+class CustomBedrockLLM(LLM):
+    """Custom LLM wrapper for inference profile ARNs."""
+    
+    def __init__(self, bedrock_service: 'BedrockLLMService'):
+        self.bedrock_service = bedrock_service
+        super().__init__()
+    
+    def _complete(self, prompt: str, **kwargs) -> str:
+        """Complete a prompt."""
+        return self.bedrock_service.generate_text(prompt, **kwargs)
+    
+    def _stream_complete(self, prompt: str, **kwargs):
+        """Stream complete - not implemented for simplicity."""
+        # For now, just return the complete response
+        response = self._complete(prompt, **kwargs)
+        yield response
+    
+    @property
+    def metadata(self):
+        """Return metadata about the LLM."""
+        return {"model_name": "custom_bedrock"}
+
+
+def _is_inference_profile_arn(model_id: str) -> bool:
+    """Check if model ID is an inference profile ARN."""
+    return model_id.startswith("arn:aws:bedrock:") and "application-inference-profile" in model_id
 
 
 class LlamaIndexVectorService:
@@ -122,7 +176,12 @@ class LlamaIndexVectorService:
         """Setup LlamaIndex global settings using bedrock services."""
         try:
             # Configure embedding model - always use Bedrock for embeddings
-            if settings.aws.use_profile and settings.aws.profile_name:
+            # Check if we're using inference profile ARNs
+            if _is_inference_profile_arn(settings.aws.embedding_model):
+                # Use custom embedding wrapper for inference profiles
+                embed_model = CustomBedrockEmbedding(self.bedrock_embedding)
+                logger.info("Using custom embedding wrapper for inference profile ARN")
+            elif settings.aws.use_profile and settings.aws.profile_name:
                 # Use AWS profile for embeddings
                 embed_model = BedrockEmbedding(
                     model_name=settings.aws.embedding_model,
@@ -142,7 +201,12 @@ class LlamaIndexVectorService:
             # Configure LLM - only use Bedrock for LlamaIndex if using Bedrock provider
             llm = None
             if settings.is_using_bedrock():
-                if settings.aws.use_profile and settings.aws.profile_name:
+                # Check if we're using inference profile ARNs for LLM
+                if _is_inference_profile_arn(settings.aws.llm_model):
+                    # Use custom LLM wrapper for inference profiles
+                    llm = CustomBedrockLLM(self.bedrock_llm)
+                    logger.info("Using custom LLM wrapper for inference profile ARN")
+                elif settings.aws.use_profile and settings.aws.profile_name:
                     # Use AWS profile for LLM
                     llm = Bedrock(
                         model=settings.aws.llm_model,
