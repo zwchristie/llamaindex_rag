@@ -172,8 +172,8 @@ class LlamaIndexVectorService:
             # AWS OpenSearch Service: "https://search-my-domain-abc123.us-east-1.es.amazonaws.com"
             # Self-hosted: "https://opensearch.example.com:9200"
             
-            # Create OpensearchVectorClient
-            client_kwargs = {
+            # Create OpensearchVectorClient - separate OpenSearch client kwargs from LlamaIndex kwargs
+            llamaindex_kwargs = {
                 'endpoint': endpoint,
                 'index': self.index_name,
                 'dim': self.vector_size,
@@ -182,22 +182,43 @@ class LlamaIndexVectorService:
                 'metadata_field': 'metadata'
             }
             
+            # OpenSearch client kwargs that get passed through
+            opensearch_client_kwargs = {}
+            
             # Add authentication if provided
             if settings.opensearch.username and settings.opensearch.password:
-                client_kwargs['http_auth'] = (
+                opensearch_client_kwargs['http_auth'] = (
                     settings.opensearch.username,
                     settings.opensearch.password
                 )
             
             # Configure SSL settings
-            if settings.opensearch.use_ssl and not settings.opensearch.verify_certs:
-                client_kwargs['verify_certs'] = False
-                client_kwargs['ssl_show_warn'] = False
+            if settings.opensearch.use_ssl:
+                opensearch_client_kwargs['use_ssl'] = True
+                if not settings.opensearch.verify_certs:
+                    opensearch_client_kwargs['verify_certs'] = False
+                    opensearch_client_kwargs['ssl_show_warn'] = False
+                    opensearch_client_kwargs['ssl_assert_hostname'] = False
+            
+            # Combine all kwargs
+            client_kwargs = {**llamaindex_kwargs, **opensearch_client_kwargs}
+            
+            # Debug logging to see what we're passing
+            logger.info(
+                "Creating OpensearchVectorClient with parameters",
+                endpoint=endpoint,
+                index=self.index_name,
+                vector_size=self.vector_size,
+                has_auth=bool(settings.opensearch.username and settings.opensearch.password),
+                use_ssl=settings.opensearch.use_ssl,
+                verify_certs=settings.opensearch.verify_certs,
+                client_kwargs_keys=list(client_kwargs.keys())
+            )
             
             client = OpensearchVectorClient(**client_kwargs)
             
             logger.info(
-                "Created OpensearchVectorClient",
+                "Created OpensearchVectorClient successfully",
                 endpoint=endpoint,
                 index=self.index_name,
                 vector_size=self.vector_size
