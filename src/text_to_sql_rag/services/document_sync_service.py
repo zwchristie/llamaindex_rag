@@ -325,30 +325,25 @@ class DocumentSyncService:
                 logger.info("Document not found in vector store, needs indexing", document_id=document_id)
                 return True
             
-            # Check if MongoDB document is newer than vector store
-            # We'll use the MongoDB document's updated timestamp
-            mongo_updated = mongo_doc.get("updated_at")
+            # Compare content hashes to determine if update is needed
+            mongo_content_hash = mongo_doc.get("content_hash")
             vector_metadata = doc_info.get("metadata", {})
+            vector_content_hash = vector_metadata.get("content_hash")
             
-            # If no timestamp comparison is possible, assume update is needed
-            if not mongo_updated:
-                logger.info("No timestamp available, assuming update needed", document_id=document_id)
+            if not mongo_content_hash:
+                logger.info("No content hash available in MongoDB, assuming update needed", document_id=document_id)
                 return True
             
-            # For now, we'll update if the document type or content length changed significantly
-            # This is a simple heuristic until we have proper versioning
-            current_chunks = doc_info.get("num_chunks", 0)
-            expected_chunks = 1 if mongo_doc.get("document_type") == "report" else 50  # Rough estimate
-            
-            # If chunk count is very different, assume content changed
-            if abs(current_chunks - expected_chunks) > max(10, expected_chunks * 0.5):
-                logger.info("Chunk count changed significantly, update needed", 
-                           document_id=document_id, 
-                           current_chunks=current_chunks, 
-                           expected_chunks=expected_chunks)
+            if mongo_content_hash != vector_content_hash:
+                logger.info("Content hash changed, update needed", 
+                           document_id=document_id,
+                           mongo_hash=mongo_content_hash,
+                           vector_hash=vector_content_hash)
                 return True
             
-            logger.info("Vector store appears up to date", document_id=document_id, chunks=current_chunks)
+            logger.info("Vector store is up to date (content hash matches)", 
+                       document_id=document_id, 
+                       content_hash=mongo_content_hash)
             return False
             
         except Exception as e:
@@ -413,11 +408,18 @@ class DocumentSyncService:
             except Exception as e:
                 logger.info("No existing document to delete (or delete failed)", document_id=document_id, error=str(e))
             
-            # Add/update document in vector store
+            # Add/update document in vector store with content hash for versioning
+            vector_metadata = {
+                **mongo_doc.get("metadata", {}),
+                "content_hash": mongo_doc.get("content_hash"),  # Include content hash for version tracking
+                "updated_at": mongo_doc.get("updated_at"),
+                "file_path": str(path_obj)
+            }
+            
             success = self.vector_service.add_document(
                 document_id=document_id,
                 content=content,
-                metadata=mongo_doc.get("metadata", {}),
+                metadata=vector_metadata,
                 document_type=mongo_doc["document_type"]
             )
             
