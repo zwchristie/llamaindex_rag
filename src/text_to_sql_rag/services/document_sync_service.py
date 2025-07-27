@@ -382,7 +382,9 @@ class DocumentSyncService:
                 return None
             
             # Use file name (without extension) as document ID
-            document_id = file_path.stem  # e.g., "main_schema_metadata" or "adf_report"
+            # Ensure we have a Path object to get the stem
+            path_obj = Path(file_path) if isinstance(file_path, str) else file_path
+            document_id = path_obj.stem  # e.g., "main_schema_metadata" or "adf_report"
             
             # Check if document needs updating in vector store
             vector_needs_update = self._check_vector_store_needs_update(document_id, mongo_doc)
