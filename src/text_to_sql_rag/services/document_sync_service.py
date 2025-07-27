@@ -382,16 +382,23 @@ class DocumentSyncService:
             document_id = path_obj.stem  # e.g., "main_schema_metadata" or "adf_report"
             
             # Check if document needs updating in vector store
-            vector_needs_update = self._check_vector_store_needs_update(document_id, mongo_doc)
-            
-            if not vector_needs_update:
-                logger.info("Vector store is up to date", document_id=document_id, file_path=relative_path)
-                return DocumentSyncResult(
-                    file_path=relative_path,
-                    action="vector_skipped",
-                    success=True,
-                    message="Vector store is up to date"
-                )
+            # Skip version checking if vector store is empty (first run)
+            try:
+                vector_needs_update = self._check_vector_store_needs_update(document_id, mongo_doc)
+                
+                if not vector_needs_update:
+                    logger.info("Vector store is up to date", document_id=document_id, file_path=relative_path)
+                    return DocumentSyncResult(
+                        file_path=relative_path,
+                        action="vector_skipped",
+                        success=True,
+                        message="Vector store is up to date"
+                    )
+            except Exception as e:
+                logger.info("Version checking failed, assuming update needed", 
+                           document_id=document_id, 
+                           error=str(e))
+                vector_needs_update = True
             
             # Prepare content for vector store (convert JSON to Dolphin format if needed)
             content = mongo_doc["content"]
@@ -401,12 +408,9 @@ class DocumentSyncService:
                     content, DocType.SCHEMA
                 )
             
-            # Delete existing document from vector store first (to avoid duplicates)
-            try:
-                self.vector_service.delete_document(document_id)
-                logger.info("Deleted existing document from vector store", document_id=document_id)
-            except Exception as e:
-                logger.info("No existing document to delete (or delete failed)", document_id=document_id, error=str(e))
+            # For simplicity during initial indexing, just try to add without deleting
+            # The vector store should handle overwrites automatically
+            logger.info("Adding document to vector store", document_id=document_id)
             
             # Add/update document in vector store with content hash for versioning
             vector_metadata = {

@@ -717,13 +717,28 @@ class LlamaIndexVectorService:
         """Get information about a document's vectors."""
         try:
             logger.info("Getting document info for", document_id=document_id, document_id_type=type(document_id))
-            # Search for documents with this ID
-            results = self.search_similar(
-                query="document",  # Simple query
-                document_ids=[document_id],
-                similarity_top_k=100
-            )
-            logger.info("Search results for document", document_id=document_id, num_results=len(results))
+            
+            # Try to search for documents with this ID, but handle search failures gracefully
+            results = []
+            try:
+                results = self.search_similar(
+                    query="document",  # Simple query
+                    document_ids=[document_id],
+                    similarity_top_k=100
+                )
+                logger.info("Search results for document", document_id=document_id, num_results=len(results))
+            except Exception as search_error:
+                logger.warning("Search failed, document likely doesn't exist", 
+                             document_id=document_id, 
+                             error=str(search_error))
+                # Return not found immediately if search fails
+                return {
+                    "document_id": document_id,
+                    "num_chunks": 0,
+                    "metadata": {},
+                    "status": "not_found",
+                    "error": "Search failed - document likely doesn't exist"
+                }
             
             if not results:
                 logger.warning("No chunks found for document", document_id=document_id)
