@@ -2,10 +2,10 @@
 LangGraph-based text-to-SQL agent with human-in-the-loop and confidence assessment.
 """
 import json
-import logging
 import uuid
 from typing import Any, Dict, List, Optional
 from datetime import datetime
+import structlog
 
 from langgraph.graph import StateGraph, END
 
@@ -26,7 +26,7 @@ from ..services.vector_service import LlamaIndexVectorService
 from ..services.query_execution_service import QueryExecutionService
 from ..services.llm_provider_factory import llm_factory
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class TextToSQLAgent:
@@ -177,11 +177,13 @@ class TextToSQLAgent:
         
         Includes fallback to keyword-based classification if LLM fails.
         """
+        print("DEBUG: About to log CLASSIFY REQUEST")
         logger.info("=== WORKFLOW NODE: CLASSIFY REQUEST ===")
         logger.info("Starting request classification", 
                    request=state.current_request,
                    conversation_id=state.conversation_id,
                    request_id=state.request_id)
+        print("DEBUG: Finished logging CLASSIFY REQUEST")
         
         state.workflow_step = WorkflowStep.CLASSIFY_REQUEST
         state.add_message("system", f"Processing request: {state.current_request}", "classification")
