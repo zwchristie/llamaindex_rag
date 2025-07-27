@@ -426,43 +426,63 @@ class LlamaIndexVectorService:
     ) -> bool:
         """Add document to the index with JSON to Dolphin format conversion."""
         try:
-            # Convert JSON documents to Dolphin format for better vectorization
-            processed_content = content
+            # Use semantic chunking for JSON documents to preserve business context
+            nodes = []
             if self.content_processor.is_json_content(content):
                 from ..models.simple_models import DocumentType as DocType
                 doc_type_enum = DocType.SCHEMA if document_type.lower() == "schema" else DocType.REPORT
-                processed_content = self.content_processor.convert_json_to_dolphin_format(
-                    content, doc_type_enum
-                )
+                
+                # Create semantic chunks that preserve business relationships
+                semantic_chunks = self.content_processor.create_semantic_chunks(content, doc_type_enum)
+                
                 logger.info(
-                    "Converted JSON document to Dolphin format",
+                    "Created semantic chunks for document",
                     document_id=document_id,
-                    original_length=len(content),
-                    processed_length=len(processed_content)
+                    num_chunks=len(semantic_chunks),
+                    chunk_types=[chunk["metadata"].get("chunk_type") for chunk in semantic_chunks]
                 )
-            
-            # Create LlamaIndex document with metadata
-            doc_metadata = {
-                "document_id": document_id,  # Already a string
-                "document_type": document_type,
-                "is_json_converted": self.content_processor.is_json_content(content),
-                **metadata
-            }
-            
-            document = LlamaDocument(
-                text=processed_content,
-                metadata=doc_metadata,
-                id_=f"doc_{document_id}"
-            )
-            
-            # Use sentence splitter for better chunking
-            splitter = SentenceSplitter(
-                chunk_size=settings.app.chunk_size,
-                chunk_overlap=settings.app.chunk_overlap
-            )
-            
-            # Parse document into nodes
-            nodes = splitter.get_nodes_from_documents([document])
+                
+                # Convert semantic chunks to LlamaIndex nodes
+                for i, chunk in enumerate(semantic_chunks):
+                    chunk_metadata = {
+                        "document_id": document_id,
+                        "document_type": document_type,
+                        "chunk_index": i,
+                        "total_chunks": len(semantic_chunks),
+                        "is_semantic_chunk": True,
+                        **metadata,
+                        **chunk["metadata"]  # Include semantic metadata
+                    }
+                    
+                    node = LlamaDocument(
+                        text=chunk["content"],
+                        metadata=chunk_metadata,
+                        id_=f"doc_{document_id}_chunk_{i}"
+                    )
+                    nodes.append(node)
+            else:
+                # Fallback to traditional chunking for non-JSON content
+                processed_content = content
+                doc_metadata = {
+                    "document_id": document_id,
+                    "document_type": document_type,
+                    "is_json_converted": False,
+                    **metadata
+                }
+                
+                document = LlamaDocument(
+                    text=processed_content,
+                    metadata=doc_metadata,
+                    id_=f"doc_{document_id}"
+                )
+                
+                # Use sentence splitter for traditional chunking
+                splitter = SentenceSplitter(
+                    chunk_size=settings.app.chunk_size,
+                    chunk_overlap=settings.app.chunk_overlap
+                )
+                
+                nodes = splitter.get_nodes_from_documents([document])
             
             # Validate nodes before processing
             if not nodes:
@@ -551,20 +571,33 @@ class LlamaIndexVectorService:
         document_type: Optional[str] = None,
         document_ids: Optional[List[str]] = None
     ) -> List[Dict[str, Any]]:
-        """Search for similar content using specified retriever."""
+        """Search for similar content using specified retriever with semantic awareness."""
         try:
+            logger.info("Starting semantic-aware search", 
+                       query=query,
+                       retriever_type=retriever_type,
+                       similarity_top_k=similarity_top_k,
+                       document_type=document_type,
+                       document_ids=document_ids)
+            
             # Select retriever
             retriever = self.retrievers.get(retriever_type, self.retrievers["vector"])
             
-            # Update similarity_top_k if provided
-            if similarity_top_k:
-                retriever.similarity_top_k = similarity_top_k
+            # Update similarity_top_k if provided - use higher number for semantic filtering
+            search_top_k = similarity_top_k if similarity_top_k else 20  # Get more candidates for semantic filtering
+            retriever.similarity_top_k = search_top_k
             
             # Perform retrieval
             nodes = retriever.retrieve(query)
             
-            # Format results and apply filtering after retrieval
+            logger.info("Retrieved nodes from vector search",
+                       raw_node_count=len(nodes),
+                       query_terms=self._extract_query_terms(query))
+            
+            # Format results with semantic ranking and enhanced filtering
             results = []
+            query_terms = self._extract_query_terms(query)
+            
             for node in nodes:
                 node_data = {
                     "id": node.node_id,
@@ -575,12 +608,12 @@ class LlamaIndexVectorService:
                     "document_type": node.metadata.get("document_type")
                 }
                 
-                # Apply filters if specified
+                # Apply basic filters first
                 should_include = True
                 
                 if document_ids:
                     node_doc_id = node.metadata.get("document_id")
-                    logger.info(f"Document filtering: looking for {document_ids}, found node with doc_id='{node_doc_id}', match={node_doc_id in document_ids}")
+                    logger.debug(f"Document filtering: looking for {document_ids}, found node with doc_id='{node_doc_id}', match={node_doc_id in document_ids}")
                     if node_doc_id not in document_ids:
                         should_include = False
                 
@@ -590,14 +623,36 @@ class LlamaIndexVectorService:
                         should_include = False
                 
                 if should_include:
+                    # Apply semantic ranking based on business context
+                    semantic_score = self._calculate_semantic_relevance(node.metadata, query_terms, query)
+                    node_data["semantic_score"] = semantic_score
+                    node_data["combined_score"] = (node_data["score"] * 0.7) + (semantic_score * 0.3)
+                    
+                    logger.debug("Node evaluation",
+                               node_id=node.node_id,
+                               chunk_type=node.metadata.get("chunk_type"),
+                               entity_type=node.metadata.get("entity_type"),
+                               business_terms=node.metadata.get("business_terms"),
+                               vector_score=node_data["score"],
+                               semantic_score=semantic_score,
+                               combined_score=node_data["combined_score"])
+                    
                     results.append(node_data)
             
-            logger.info(
-                "Performed similarity search",
-                query_length=len(query),
-                num_results=len(results),
-                retriever_type=retriever_type
-            )
+            # Sort by combined score (vector similarity + semantic relevance)
+            results.sort(key=lambda x: x["combined_score"], reverse=True)
+            
+            # Limit to requested number of results
+            final_limit = similarity_top_k if similarity_top_k else 5
+            results = results[:final_limit]
+            
+            logger.info("Completed semantic-aware search",
+                       query_length=len(query),
+                       raw_results=len(nodes),
+                       filtered_results=len(results),
+                       retriever_type=retriever_type,
+                       top_chunk_types=[r["metadata"].get("chunk_type") for r in results[:3]],
+                       top_scores=[f"{r['combined_score']:.3f}" for r in results[:3]])
             
             return results
             
@@ -846,3 +901,71 @@ class LlamaIndexVectorService:
         except Exception as e:
             logger.error("Health check failed", error=str(e))
             return False
+    
+    def _extract_query_terms(self, query: str) -> List[str]:
+        """Extract meaningful terms from the search query."""
+        import re
+        # Simple term extraction - can be enhanced with NLP
+        terms = re.findall(r'\b[a-zA-Z]{3,}\b', query.lower())
+        
+        # Filter out common stop words
+        stop_words = {'the', 'and', 'for', 'are', 'but', 'not', 'all', 'with', 'that', 'what', 'have', 'from', 'they', 'this'}
+        meaningful_terms = [term for term in terms if term not in stop_words]
+        
+        return meaningful_terms
+    
+    def _calculate_semantic_relevance(self, node_metadata: Dict[str, Any], query_terms: List[str], full_query: str) -> float:
+        """Calculate semantic relevance score based on business context and metadata."""
+        score = 0.0
+        
+        # Extract relevant metadata fields
+        chunk_type = node_metadata.get("chunk_type", "")
+        entity_type = node_metadata.get("entity_type", "")
+        business_terms = node_metadata.get("business_terms", [])
+        table_name = node_metadata.get("table_name", "")
+        view_name = node_metadata.get("view_name", "")
+        business_domain = node_metadata.get("business_domain", "")
+        
+        # Boost score for matching business terms
+        if business_terms:
+            for query_term in query_terms:
+                if query_term in business_terms:
+                    score += 0.3
+        
+        # Boost score for relevant chunk types based on query intent
+        if self._is_schema_query(full_query):
+            if chunk_type in ["table_entity", "view_entity", "schema_overview"]:
+                score += 0.4
+            if chunk_type == "relationship_domain":
+                score += 0.2
+        
+        # Boost score for financial domain queries
+        financial_terms = ["deal", "deals", "tranche", "tranches", "fixed", "income", "announced", "status", "bond", "security"]
+        query_has_financial_terms = any(term in full_query.lower() for term in financial_terms)
+        
+        if query_has_financial_terms:
+            if business_domain == "financial_instruments":
+                score += 0.5
+            if entity_type in ["deal_entity", "tranche_entity", "security_entity"]:
+                score += 0.4
+            if any(financial_term in table_name.lower() for financial_term in financial_terms):
+                score += 0.3
+        
+        # Boost score for exact table/entity name matches
+        for query_term in query_terms:
+            if query_term in table_name.lower() or query_term in view_name.lower():
+                score += 0.6
+        
+        # Boost score for status-related queries
+        status_terms = ["status", "state", "announced", "pending", "active", "completed"]
+        if any(term in full_query.lower() for term in status_terms):
+            if entity_type == "status_entity" or "status" in table_name.lower():
+                score += 0.4
+        
+        # Normalize score to 0-1 range
+        return min(score, 1.0)
+    
+    def _is_schema_query(self, query: str) -> bool:
+        """Determine if the query is asking about schema/structure information."""
+        schema_indicators = ["table", "column", "field", "structure", "schema", "database", "what tables", "which tables"]
+        return any(indicator in query.lower() for indicator in schema_indicators)
