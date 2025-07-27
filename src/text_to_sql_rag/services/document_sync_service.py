@@ -381,6 +381,9 @@ class DocumentSyncService:
             path_obj = Path(file_path) if isinstance(file_path, str) else file_path
             document_id = path_obj.stem  # e.g., "main_schema_metadata" or "adf_report"
             
+            # Get relative path for logging and return values
+            relative_path = str(path_obj.relative_to(self.meta_documents_path))
+            
             # Check if document needs updating in vector store
             # Skip version checking if vector store is empty (first run)
             try:
