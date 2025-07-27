@@ -24,9 +24,12 @@ from ..models.simple_models import (
 from ..models.conversation import (
     ConversationState, RequestType, ConversationStatus, AgentResponse
 )
-from ..services.llm_provider_factory import llm_factory\nimport structlog
+from ..services.llm_provider_factory import llm_factory
+import structlog
 
-logger = structlog.get_logger(__name__)\n\n# In-memory session storage (replace with Redis in production)
+logger = structlog.get_logger(__name__)
+
+# In-memory session storage (replace with Redis in production)
 sessions = {}
 # In-memory conversation storage for HITL workflows
 conversations = {}
@@ -287,10 +290,19 @@ async def generate_sql_query(request: SQLGenerationRequest):
         raise HTTPException(status_code=400, detail="Query cannot be empty")
     
     try:
+        logger.info("SQL generation requested", query=request.query)
+        
+        # Check if sql_agent is initialized
+        if sql_agent is None:
+            logger.error("SQL agent is not initialized")
+            raise HTTPException(status_code=500, detail="SQL agent not initialized")
+        
         # Use session_id if provided, otherwise generate new conversation
         conversation_id = request.session_id or str(uuid.uuid4())
+        logger.info("Generating SQL", conversation_id=conversation_id)
         
         result = await sql_agent.generate_sql(request.query, conversation_id)
+        logger.info("SQL generation completed", result_type=result.get("response_type") if result else "None")
         
         # Store conversation state if it requires human input
         if result.get("response_type") == "clarification_request":
@@ -304,7 +316,12 @@ async def generate_sql_query(request: SQLGenerationRequest):
         
         return result
         
+    except HTTPException:
+        raise  # Re-raise HTTP exceptions
     except Exception as e:
+        logger.error("SQL generation failed", error=str(e), error_type=type(e).__name__)
+        import traceback
+        logger.error("Full traceback", traceback=traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"SQL generation failed: {str(e)}")
 
 
