@@ -314,6 +314,48 @@ class DocumentSyncService:
             logger.error("Failed to parse report content", error=str(e))
             return None
     
+    def _check_vector_store_needs_update(self, document_id: str, mongo_doc: dict) -> bool:
+        """Check if vector store needs updating for this document."""
+        try:
+            # Get document info from vector store
+            doc_info = self.vector_service.get_document_info(document_id)
+            
+            # If document doesn't exist in vector store, it needs to be added
+            if doc_info.get("status") == "not_found" or doc_info.get("num_chunks", 0) == 0:
+                logger.info("Document not found in vector store, needs indexing", document_id=document_id)
+                return True
+            
+            # Check if MongoDB document is newer than vector store
+            # We'll use the MongoDB document's updated timestamp
+            mongo_updated = mongo_doc.get("updated_at")
+            vector_metadata = doc_info.get("metadata", {})
+            
+            # If no timestamp comparison is possible, assume update is needed
+            if not mongo_updated:
+                logger.info("No timestamp available, assuming update needed", document_id=document_id)
+                return True
+            
+            # For now, we'll update if the document type or content length changed significantly
+            # This is a simple heuristic until we have proper versioning
+            current_chunks = doc_info.get("num_chunks", 0)
+            expected_chunks = 1 if mongo_doc.get("document_type") == "report" else 50  # Rough estimate
+            
+            # If chunk count is very different, assume content changed
+            if abs(current_chunks - expected_chunks) > max(10, expected_chunks * 0.5):
+                logger.info("Chunk count changed significantly, update needed", 
+                           document_id=document_id, 
+                           current_chunks=current_chunks, 
+                           expected_chunks=expected_chunks)
+                return True
+            
+            logger.info("Vector store appears up to date", document_id=document_id, chunks=current_chunks)
+            return False
+            
+        except Exception as e:
+            logger.warning("Error checking vector store status, assuming update needed", 
+                         document_id=document_id, error=str(e))
+            return True
+    
     def _clean_sql_query(self, sql_query: str) -> str:
         """Clean and format SQL query."""
         # Remove line comments
@@ -339,11 +381,20 @@ class DocumentSyncService:
                 logger.warning("Document not found in MongoDB", file_path=file_path)
                 return None
             
-            # Generate a document ID based on file path
-            document_id = abs(hash(file_path)) % (10**9)  # Generate consistent ID
+            # Use file name (without extension) as document ID
+            document_id = file_path.stem  # e.g., "main_schema_metadata" or "adf_report"
             
             # Check if document needs updating in vector store
-            # For now, we'll add/update all documents since we don't have a way to check vector store versions
+            vector_needs_update = self._check_vector_store_needs_update(document_id, mongo_doc)
+            
+            if not vector_needs_update:
+                logger.info("Vector store is up to date", document_id=document_id, file_path=relative_path)
+                return DocumentSyncResult(
+                    file_path=relative_path,
+                    action="vector_skipped",
+                    success=True,
+                    message="Vector store is up to date"
+                )
             
             # Prepare content for vector store (convert JSON to Dolphin format if needed)
             content = mongo_doc["content"]
@@ -352,6 +403,13 @@ class DocumentSyncService:
                 content = self.content_processor.convert_json_to_dolphin_format(
                     content, DocType.SCHEMA
                 )
+            
+            # Delete existing document from vector store first (to avoid duplicates)
+            try:
+                self.vector_service.delete_document(document_id)
+                logger.info("Deleted existing document from vector store", document_id=document_id)
+            except Exception as e:
+                logger.info("No existing document to delete (or delete failed)", document_id=document_id, error=str(e))
             
             # Add/update document in vector store
             success = self.vector_service.add_document(

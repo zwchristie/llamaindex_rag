@@ -392,7 +392,7 @@ class LlamaIndexVectorService:
     
     def add_document(
         self,
-        document_id: int,
+        document_id: str,
         content: str,
         metadata: Dict[str, Any],
         document_type: str
@@ -416,7 +416,7 @@ class LlamaIndexVectorService:
             
             # Create LlamaIndex document with metadata
             doc_metadata = {
-                "document_id": str(document_id),
+                "document_id": document_id,  # Already a string
                 "document_type": document_type,
                 "is_json_converted": self.content_processor.is_json_content(content),
                 **metadata
@@ -496,7 +496,7 @@ class LlamaIndexVectorService:
         retriever_type: str = "hybrid",
         similarity_top_k: Optional[int] = None,
         document_type: Optional[str] = None,
-        document_ids: Optional[List[int]] = None
+        document_ids: Optional[List[str]] = None
     ) -> List[Dict[str, Any]]:
         """Search for similar content using specified retriever."""
         try:
@@ -527,9 +527,8 @@ class LlamaIndexVectorService:
                 
                 if document_ids:
                     node_doc_id = node.metadata.get("document_id")
-                    doc_ids_str = [str(doc_id) for doc_id in document_ids]
-                    logger.info(f"Document filtering: looking for {doc_ids_str}, found node with doc_id='{node_doc_id}', match={node_doc_id in doc_ids_str}")
-                    if node_doc_id not in doc_ids_str:
+                    logger.info(f"Document filtering: looking for {document_ids}, found node with doc_id='{node_doc_id}', match={node_doc_id in document_ids}")
+                    if node_doc_id not in document_ids:
                         should_include = False
                 
                 if document_type and should_include:
@@ -603,7 +602,7 @@ class LlamaIndexVectorService:
                 "retriever_type": retriever_type
             }
     
-    def delete_document(self, document_id: int) -> bool:
+    def delete_document(self, document_id: str) -> bool:
         """Delete document from the index."""
         try:
             # Get all nodes for this document
@@ -628,7 +627,7 @@ class LlamaIndexVectorService:
     
     def update_document(
         self,
-        document_id: int,
+        document_id: str,
         content: str,
         metadata: Dict[str, Any],
         document_type: str
@@ -648,7 +647,7 @@ class LlamaIndexVectorService:
     def _build_metadata_filters(
         self,
         document_type: Optional[str] = None,
-        document_ids: Optional[List[int]] = None
+        document_ids: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """Build metadata filters for retrieval."""
         filters = {}
@@ -657,11 +656,11 @@ class LlamaIndexVectorService:
             filters["document_type"] = document_type
         
         if document_ids:
-            filters["document_id"] = [str(doc_id) for doc_id in document_ids]
+            filters["document_id"] = document_ids  # Already strings
         
         return filters
     
-    def get_document_info(self, document_id: int) -> Dict[str, Any]:
+    def get_document_info(self, document_id: str) -> Dict[str, Any]:
         """Get information about a document's vectors."""
         try:
             logger.info("Getting document info for", document_id=document_id, document_id_type=type(document_id))

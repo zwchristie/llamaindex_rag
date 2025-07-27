@@ -227,7 +227,7 @@ async def upload_document(
 
 
 @app.get("/documents/{document_id}")
-async def get_document_info(document_id: int):
+async def get_document_info(document_id: str):
     """Get document information from vector store."""
     try:
         logger.info("Getting document info", document_id=document_id, document_id_type=type(document_id))
@@ -244,7 +244,7 @@ async def get_document_info(document_id: int):
 
 
 @app.delete("/documents/{document_id}")
-async def delete_document(document_id: int):
+async def delete_document(document_id: str):
     """Delete document from vector store."""
     try:
         success = vector_service.delete_document(document_id)
