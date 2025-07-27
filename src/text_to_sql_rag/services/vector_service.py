@@ -673,35 +673,38 @@ class LlamaIndexVectorService:
     def list_all_documents(self) -> List[Dict[str, Any]]:
         """List all documents in the index for debugging."""
         try:
-            # Search without any filters to get all documents
-            results = self.search_similar(
-                query="*",  # Match all
-                similarity_top_k=1000  # Get many results
-            )
+            # Get retriever and perform raw search
+            retriever = self.retrievers.get("vector")
+            retriever.similarity_top_k = 1000
             
-            logger.info(f"Raw search results count: {len(results)}")
+            # Search for all documents
+            nodes = retriever.retrieve("document")  # Generic query
+            logger.info(f"Raw retriever nodes count: {len(nodes)}")
             
             # Group by document_id and show unique document_ids
             docs_by_id = {}
             unique_doc_ids = set()
             
-            for i, result in enumerate(results):
-                doc_id = result["document_id"]
+            for i, node in enumerate(nodes):
+                doc_id = node.metadata.get("document_id")
+                doc_type = node.metadata.get("document_type")
                 unique_doc_ids.add(doc_id)
                 
-                if i < 5:  # Log first 5 results for debugging
-                    logger.info(f"Result {i}: doc_id={doc_id}, type={result['document_type']}, node_id={result['id']}")
+                if i < 10:  # Log first 10 results for debugging
+                    logger.info(f"Node {i}: doc_id={doc_id}, type={doc_type}, node_id={node.node_id}")
                 
                 if doc_id not in docs_by_id:
                     docs_by_id[doc_id] = {
                         "document_id": doc_id,
-                        "document_type": result["document_type"],
+                        "document_type": doc_type,
                         "chunk_count": 0,
-                        "sample_metadata": result["metadata"]
+                        "sample_metadata": node.metadata
                     }
                 docs_by_id[doc_id]["chunk_count"] += 1
             
             logger.info(f"Unique document IDs found: {list(unique_doc_ids)}")
+            logger.info(f"Document counts: {[(k, v['chunk_count']) for k, v in docs_by_id.items()]}")
+            
             return list(docs_by_id.values())
             
         except Exception as e:
