@@ -1043,8 +1043,8 @@ Format your response clearly and make it understandable for both technical and n
         # Run the workflow
         final_state = self.graph.invoke(initial_state)
         
-        # Return the final result
-        return final_state.final_result
+        # Return the final result - access from the state dict
+        return final_state.get("final_result")
     
     async def continue_from_checkpoint(
         self, 
