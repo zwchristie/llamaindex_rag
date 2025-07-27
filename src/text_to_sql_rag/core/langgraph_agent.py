@@ -177,7 +177,11 @@ class TextToSQLAgent:
         
         Includes fallback to keyword-based classification if LLM fails.
         """
-        logger.info(f"Classifying request: {state.current_request}")
+        logger.info("=== WORKFLOW NODE: CLASSIFY REQUEST ===")
+        logger.info("Starting request classification", 
+                   request=state.current_request,
+                   conversation_id=state.conversation_id,
+                   request_id=state.request_id)
         
         state.workflow_step = WorkflowStep.CLASSIFY_REQUEST
         state.add_message("system", f"Processing request: {state.current_request}", "classification")
@@ -278,11 +282,18 @@ Reasoning: [Brief explanation of why this classification was chosen]
             state.request_type = self._fallback_classify_request(state.current_request, state)
             logger.info(f"Fallback classified request as: {state.request_type}")
         
+        logger.info("=== CLASSIFY REQUEST COMPLETE ===", 
+                   final_request_type=state.request_type.value if state.request_type else None,
+                   next_step="get_metadata")
+        
         return state
     
     def _get_metadata_node(self, state: ConversationState) -> ConversationState:
         """Retrieve relevant schema and example metadata."""
-        logger.info(f"Getting metadata for query: {state.current_request}")
+        logger.info("=== WORKFLOW NODE: GET METADATA ===")
+        logger.info("Starting metadata retrieval", 
+                   request=state.current_request,
+                   request_type=state.request_type.value if state.request_type else None)
         
         state.workflow_step = WorkflowStep.GET_METADATA
         
@@ -372,11 +383,21 @@ Reasoning: [Brief explanation of why this classification was chosen]
             state.example_context = []
             state.sources = []
         
+        logger.info("=== GET METADATA COMPLETE ===", 
+                   schema_chunks=len(state.schema_context),
+                   example_chunks=len(state.example_context),
+                   sources=len(state.sources),
+                   next_step="assess_confidence")
+        
         return state
     
     def _assess_confidence_node(self, state: ConversationState) -> ConversationState:
         """Assess confidence in available metadata to answer the user's question."""
-        logger.info("Assessing confidence in available metadata")
+        logger.info("=== WORKFLOW NODE: ASSESS CONFIDENCE ===")
+        logger.info("Starting confidence assessment", 
+                   schema_chunks=len(state.schema_context),
+                   example_chunks=len(state.example_context),
+                   confidence_threshold=self.confidence_threshold)
         
         state.workflow_step = WorkflowStep.ASSESS_CONFIDENCE
         
@@ -466,11 +487,20 @@ Only request clarification if confidence is below 0.7 or if there are genuine am
             state.confidence_score = 0.6
             state.needs_clarification = False
         
+        next_step = "request_clarification" if state.needs_clarification else "generate_sql"
+        logger.info("=== ASSESS CONFIDENCE COMPLETE ===", 
+                   confidence_score=state.confidence_score,
+                   needs_clarification=state.needs_clarification,
+                   next_step=next_step)
+        
         return state
     
     def _request_clarification_node(self, state: ConversationState) -> ConversationState:
         """Request clarification from the user."""
-        logger.info("Requesting clarification from user")
+        logger.info("=== WORKFLOW NODE: REQUEST CLARIFICATION ===")
+        logger.info("Starting clarification request", 
+                   confidence_score=state.confidence_score,
+                   clarification_question=state.clarification_request.question if state.clarification_request else None)
         
         state.workflow_step = WorkflowStep.REQUEST_CLARIFICATION
         state.status = ConversationStatus.WAITING_FOR_CLARIFICATION
@@ -501,12 +531,20 @@ Only request clarification if confidence is below 0.7 or if there are genuine am
             "checkpoint_saved": True
         }
         
-        logger.info(f"Clarification request prepared with checkpoint for request {state.request_id}")
+        logger.info("=== REQUEST CLARIFICATION COMPLETE ===", 
+                   request_id=state.request_id,
+                   clarification_saved=True,
+                   workflow_paused=True)
         return state
     
     def _generate_sql_node(self, state: ConversationState) -> ConversationState:
         """Generate SQL using LLM with schema and example context."""
-        logger.info("Generating SQL")
+        logger.info("=== WORKFLOW NODE: GENERATE SQL ===")
+        logger.info("Starting SQL generation", 
+                   request=state.current_request,
+                   schema_chunks=len(state.schema_context),
+                   example_chunks=len(state.example_context),
+                   retry_count=state.retry_count)
         
         state.workflow_step = WorkflowStep.GENERATE_SQL
         
@@ -623,6 +661,13 @@ Requirements:
             logger.error(f"Error generating SQL: {e}")
             state.current_sql = None
         
+        next_step = "execute_sql" if self.query_execution_service and state.current_sql else "return_results"
+        logger.info("=== GENERATE SQL COMPLETE ===", 
+                   sql_generated=bool(state.current_sql),
+                   sql_preview=state.current_sql[:100] + "..." if state.current_sql and len(state.current_sql) > 100 else state.current_sql,
+                   confidence=sql_result.get('confidence', 0.0) if 'sql_result' in locals() else 0.0,
+                   next_step=next_step)
+        
         return state
     
     def _describe_sql_node(self, state: ConversationState) -> ConversationState:
@@ -735,7 +780,11 @@ Format your response clearly and make it understandable for both technical and n
     
     def _return_results_node(self, state: ConversationState) -> ConversationState:
         """Format and return final results."""
-        logger.info("Formatting final results")
+        logger.info("=== WORKFLOW NODE: RETURN RESULTS ===")
+        logger.info("Formatting final results", 
+                   has_sql=bool(state.current_sql),
+                   has_execution_result=bool(state.execution_result),
+                   request_type=state.request_type.value if state.request_type else None)
         
         state.workflow_step = WorkflowStep.RETURN_RESULTS
         state.status = ConversationStatus.COMPLETED
@@ -787,6 +836,11 @@ Format your response clearly and make it understandable for both technical and n
                 response_data["status"] = "error"
             
             state.final_result = response_data
+        
+        logger.info("=== RETURN RESULTS COMPLETE ===", 
+                   response_type=state.final_result.get("response_type") if state.final_result else None,
+                   status=state.final_result.get("status") if state.final_result else None,
+                   workflow_complete=True)
         
         return state
     
@@ -1086,14 +1140,22 @@ Format your response clearly and make it understandable for both technical and n
     
     async def generate_sql(self, query: str, conversation_id: Optional[str] = None) -> Dict[str, Any]:
         """Main entry point for SQL generation with enhanced conversation support."""
-        logger.info(f"Starting SQL generation for query: {query}")
+        logger.info("===============================================")
+        logger.info("=== STARTING SQL GENERATION WORKFLOW ===")
+        logger.info("===============================================")
+        logger.info("Workflow entry point", 
+                   query=query,
+                   query_length=len(query),
+                   conversation_id=conversation_id)
         
         # Generate conversation ID if not provided
         if not conversation_id:
             conversation_id = str(uuid.uuid4())
+            logger.info("Generated new conversation ID", conversation_id=conversation_id)
         
         # Generate unique request ID for this specific request fulfillment
         request_id = str(uuid.uuid4())
+        logger.info("Generated request ID", request_id=request_id)
         
         # Initialize conversation state
         initial_state = ConversationState(
@@ -1107,10 +1169,21 @@ Format your response clearly and make it understandable for both technical and n
         initial_state.add_message("user", query, "request")
         
         # Run the workflow
+        logger.info("Invoking LangGraph workflow", initial_state_ready=True)
         final_state = self.graph.invoke(initial_state)
         
         # Return the final result - access from the state dict
-        return final_state.get("final_result")
+        result = final_state.get("final_result")
+        logger.info("===============================================")
+        logger.info("=== WORKFLOW EXECUTION COMPLETE ===")
+        logger.info("===============================================")
+        logger.info("Final workflow result", 
+                   result_type=result.get("response_type") if result else None,
+                   status=result.get("status") if result else None,
+                   has_sql=bool(result.get("sql")) if result else False,
+                   confidence=result.get("confidence_score") if result else None)
+        
+        return result
     
     async def continue_from_checkpoint(
         self, 
