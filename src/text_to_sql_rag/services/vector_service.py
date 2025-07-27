@@ -38,15 +38,38 @@ class CustomBedrockEmbedding(BaseEmbedding):
         # Store the service before calling super() to avoid Pydantic validation issues
         if bedrock_service is None:
             raise ValueError("bedrock_service cannot be None")
-        self._bedrock_service = bedrock_service
         super().__init__(**kwargs)
+        # Set this after super() to ensure it's not lost during Pydantic validation
+        object.__setattr__(self, '_bedrock_service', bedrock_service)
+    
+    def __getstate__(self):
+        """Custom pickling to preserve bedrock service."""
+        state = self.__dict__.copy()
+        # Ensure bedrock_service is preserved
+        if hasattr(self, '_bedrock_service'):
+            state['_bedrock_service'] = self._bedrock_service
+        return state
+    
+    def __setstate__(self, state):
+        """Custom unpickling to restore bedrock service."""
+        self.__dict__.update(state)
+        # Recreate bedrock service if not present
+        if '_bedrock_service' not in state or state['_bedrock_service'] is None:
+            from .bedrock_service import BedrockEmbeddingService
+            object.__setattr__(self, '_bedrock_service', BedrockEmbeddingService())
     
     def _get_query_embedding(self, query: str) -> List[float]:
         """Get embedding for query."""
+        if not hasattr(self, '_bedrock_service') or self._bedrock_service is None:
+            from .bedrock_service import BedrockEmbeddingService
+            object.__setattr__(self, '_bedrock_service', BedrockEmbeddingService())
         return self._bedrock_service.get_embedding(query)
     
     def _get_text_embedding(self, text: str) -> List[float]:
         """Get embedding for text."""
+        if not hasattr(self, '_bedrock_service') or self._bedrock_service is None:
+            from .bedrock_service import BedrockEmbeddingService
+            object.__setattr__(self, '_bedrock_service', BedrockEmbeddingService())
         return self._bedrock_service.get_embedding(text)
     
     async def _aget_query_embedding(self, query: str) -> List[float]:

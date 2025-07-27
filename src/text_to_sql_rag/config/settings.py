@@ -48,8 +48,8 @@ class AWSSettings(BaseSettings):
     use_profile: bool = Field(default=False, env="AWS_USE_PROFILE")
     
     # Model configurations
-    embedding_model: str = Field(default="amazon.titan-embed-text-v1", env="AWS_EMBEDDING_MODEL")
-    llm_model: str = Field(default="anthropic.claude-3-sonnet-20240229-v1:0", env="AWS_LLM_MODEL")
+    embedding_model: str = Field(default="amazon.titan-embed-text-v2:0", env="AWS_EMBEDDING_MODEL")
+    llm_model: str = Field(default="anthropic.claude-3-5-sonnet-20241022-v2:0", env="AWS_LLM_MODEL")
     
     class Config:
         env_prefix = "AWS_"
