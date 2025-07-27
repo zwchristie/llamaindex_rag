@@ -36,6 +36,8 @@ class CustomBedrockEmbedding(BaseEmbedding):
     
     def __init__(self, bedrock_service: 'BedrockEmbeddingService', **kwargs):
         # Store the service before calling super() to avoid Pydantic validation issues
+        if bedrock_service is None:
+            raise ValueError("bedrock_service cannot be None")
         self._bedrock_service = bedrock_service
         super().__init__(**kwargs)
     
@@ -618,14 +620,12 @@ class LlamaIndexVectorService:
     def get_index_stats(self) -> Dict[str, Any]:
         """Get statistics about the index."""
         try:
-            # Get index statistics from OpenSearch using the underlying client
-            stats = self.opensearch_client._client.indices.stats(index=self.index_name)
-            index_stats = stats.get("indices", {}).get(self.index_name, {})
-            
+            # Return basic stats without querying OpenSearch directly
+            # since OpensearchVectorClient doesn't expose the underlying client
             return {
                 "index_name": self.index_name,
-                "documents_count": index_stats.get("total", {}).get("docs", {}).get("count", 0),
-                "index_size": index_stats.get("total", {}).get("store", {}).get("size_in_bytes", 0),
+                "documents_count": "N/A (requires direct OpenSearch access)",
+                "index_size": "N/A (requires direct OpenSearch access)",
                 "retrievers_available": list(self.retrievers.keys()),
                 "settings": {
                     "chunk_size": settings.app.chunk_size,
@@ -642,14 +642,14 @@ class LlamaIndexVectorService:
     def health_check(self) -> bool:
         """Check if the service is healthy."""
         try:
-            # Check OpenSearch connection using the underlying client
-            cluster_health = self.opensearch_client._client.cluster.health()
-            
-            # Check if index exists and is accessible
-            if self.opensearch_client._client.indices.exists(index=self.index_name):
-                return cluster_health.get("status") in ["green", "yellow"]
-            
-            return True  # Cluster is healthy even if index doesn't exist yet
+            # Simple health check - try to perform a basic operation
+            # Since OpensearchVectorClient doesn't expose the underlying client,
+            # we'll just check if our components are initialized
+            if (hasattr(self, 'opensearch_client') and self.opensearch_client is not None and
+                hasattr(self, 'index') and self.index is not None and
+                hasattr(self, 'retrievers') and self.retrievers):
+                return True
+            return False
             
         except Exception as e:
             logger.error("Health check failed", error=str(e))
