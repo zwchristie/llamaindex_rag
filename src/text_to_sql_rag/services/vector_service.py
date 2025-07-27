@@ -528,6 +528,7 @@ class LlamaIndexVectorService:
                 if document_ids:
                     node_doc_id = node.metadata.get("document_id")
                     doc_ids_str = [str(doc_id) for doc_id in document_ids]
+                    logger.info(f"Document filtering: looking for {doc_ids_str}, found node with doc_id='{node_doc_id}', match={node_doc_id in doc_ids_str}")
                     if node_doc_id not in doc_ids_str:
                         should_include = False
                 
@@ -666,7 +667,7 @@ class LlamaIndexVectorService:
             logger.info("Getting document info for", document_id=document_id, document_id_type=type(document_id))
             # Search for documents with this ID
             results = self.search_similar(
-                query="*",  # Match all
+                query="document",  # Simple query
                 document_ids=[document_id],
                 similarity_top_k=100
             )
