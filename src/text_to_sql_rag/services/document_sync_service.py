@@ -376,13 +376,13 @@ class DocumentSyncService:
                 logger.warning("Document not found in MongoDB", file_path=file_path)
                 return None
             
-            # Use file name (without extension) as document ID
-            # Ensure we have a Path object to get the stem
-            path_obj = Path(file_path) if isinstance(file_path, str) else file_path
-            document_id = path_obj.stem  # e.g., "main_schema_metadata" or "adf_report"
+            # file_path is already a relative path string from _process_single_file
+            # Convert to Path object for document ID extraction
+            relative_path_obj = Path(file_path)
+            document_id = relative_path_obj.stem  # e.g., "main_schema_metadata" or "adf_report"
             
-            # Get relative path for logging and return values
-            relative_path = str(path_obj.relative_to(self.meta_documents_path))
+            # file_path is already the relative path string we need
+            relative_path = file_path
             
             # Check if document needs updating in vector store
             # Skip version checking if vector store is empty (first run)
@@ -420,7 +420,7 @@ class DocumentSyncService:
                 **mongo_doc.get("metadata", {}),
                 "content_hash": mongo_doc.get("content_hash"),  # Include content hash for version tracking
                 "updated_at": mongo_doc.get("updated_at"),
-                "file_path": str(path_obj)
+                "file_path": relative_path
             }
             
             success = self.vector_service.add_document(
