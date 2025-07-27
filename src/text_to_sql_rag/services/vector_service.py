@@ -497,7 +497,12 @@ class LlamaIndexVectorService:
                 
                 if document_ids:
                     node_doc_id = node.metadata.get("document_id")
-                    if node_doc_id not in [str(doc_id) for doc_id in document_ids]:
+                    doc_ids_str = [str(doc_id) for doc_id in document_ids]
+                    logger.debug("Filtering by document_ids", 
+                               node_doc_id=node_doc_id, 
+                               requested_ids=doc_ids_str,
+                               match=node_doc_id in doc_ids_str)
+                    if node_doc_id not in doc_ids_str:
                         should_include = False
                 
                 if document_type and should_include:
@@ -639,17 +644,61 @@ class LlamaIndexVectorService:
                 similarity_top_k=100
             )
             
+            if not results:
+                logger.warning("No chunks found for document", document_id=document_id)
+                return {
+                    "document_id": document_id,
+                    "num_chunks": 0,
+                    "metadata": {},
+                    "status": "not_found"
+                }
+            
             info = {
                 "document_id": document_id,
                 "num_chunks": len(results),
-                "metadata": results[0]["metadata"] if results else {}
+                "metadata": results[0]["metadata"],
+                "status": "found"
             }
             
             return info
             
         except Exception as e:
             logger.error("Failed to get document info", document_id=document_id, error=str(e))
-            return {"document_id": document_id, "num_chunks": 0, "metadata": {}}
+            return {
+                "document_id": document_id, 
+                "num_chunks": 0, 
+                "metadata": {},
+                "status": "error",
+                "error": str(e)
+            }
+    
+    def list_all_documents(self) -> List[Dict[str, Any]]:
+        """List all documents in the index for debugging."""
+        try:
+            # Search without any filters to get all documents
+            results = self.search_similar(
+                query="*",  # Match all
+                similarity_top_k=1000  # Get many results
+            )
+            
+            # Group by document_id
+            docs_by_id = {}
+            for result in results:
+                doc_id = result["document_id"]
+                if doc_id not in docs_by_id:
+                    docs_by_id[doc_id] = {
+                        "document_id": doc_id,
+                        "document_type": result["document_type"],
+                        "chunk_count": 0,
+                        "sample_metadata": result["metadata"]
+                    }
+                docs_by_id[doc_id]["chunk_count"] += 1
+            
+            return list(docs_by_id.values())
+            
+        except Exception as e:
+            logger.error("Failed to list documents", error=str(e))
+            return []
     
     def get_index_stats(self) -> Dict[str, Any]:
         """Get statistics about the index."""

@@ -423,6 +423,19 @@ async def get_session(session_id: str):
     }
 
 
+@app.get("/debug/documents")
+async def debug_list_all_documents():
+    """Debug endpoint to list all documents in the vector store."""
+    try:
+        documents = vector_service.list_all_documents()
+        return {
+            "total_documents": len(documents),
+            "documents": documents
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list documents: {str(e)}")
+
+
 @app.get("/stats")
 async def get_stats():
     """Get application statistics."""
