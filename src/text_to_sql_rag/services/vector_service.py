@@ -477,25 +477,36 @@ class LlamaIndexVectorService:
             if similarity_top_k:
                 retriever.similarity_top_k = similarity_top_k
             
-            # Apply filters if needed (OpenSearch supports native filtering)
-            if document_type or document_ids:
-                filters = self._build_metadata_filters(document_type, document_ids)
-                # Note: Filtering implementation may need adjustment based on LlamaIndex OpenSearch integration
-            
             # Perform retrieval
             nodes = retriever.retrieve(query)
             
-            # Format results
+            # Format results and apply filtering after retrieval
             results = []
             for node in nodes:
-                results.append({
+                node_data = {
                     "id": node.node_id,
                     "score": getattr(node, 'score', 1.0),
                     "content": node.text,
                     "metadata": node.metadata,
                     "document_id": node.metadata.get("document_id"),
                     "document_type": node.metadata.get("document_type")
-                })
+                }
+                
+                # Apply filters if specified
+                should_include = True
+                
+                if document_ids:
+                    node_doc_id = node.metadata.get("document_id")
+                    if node_doc_id not in [str(doc_id) for doc_id in document_ids]:
+                        should_include = False
+                
+                if document_type and should_include:
+                    node_doc_type = node.metadata.get("document_type")
+                    if node_doc_type != document_type:
+                        should_include = False
+                
+                if should_include:
+                    results.append(node_data)
             
             logger.info(
                 "Performed similarity search",
