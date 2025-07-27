@@ -391,12 +391,7 @@ class DocumentSyncService:
                 
                 if not vector_needs_update:
                     logger.info("Vector store is up to date", document_id=document_id, file_path=relative_path)
-                    return DocumentSyncResult(
-                        file_path=relative_path,
-                        action="vector_skipped",
-                        success=True,
-                        message="Vector store is up to date"
-                    )
+                    return "skipped"
             except Exception as e:
                 logger.info("Version checking failed, assuming update needed", 
                            document_id=document_id, 
