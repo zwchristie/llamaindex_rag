@@ -27,7 +27,7 @@ opensearch:
   verify_certs: false
   index_name: "documents"
   vector_field: "vector"
-  vector_size: 1536
+  vector_size: 1024
 
 aws:
   region: "us-east-1"
