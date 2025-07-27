@@ -230,10 +230,15 @@ async def upload_document(
 async def get_document_info(document_id: int):
     """Get document information from vector store."""
     try:
+        logger.info("Getting document info", document_id=document_id, document_id_type=type(document_id))
         info = vector_service.get_document_info(document_id)
-        if info.get("num_chunks", 0) == 0:
+        logger.info("Document info result", info=info)
+        
+        if info.get("status") == "not_found" or info.get("num_chunks", 0) == 0:
             raise HTTPException(status_code=404, detail="Document not found")
         return info
+    except HTTPException:
+        raise  # Re-raise HTTP exceptions
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get document info: {str(e)}")
 

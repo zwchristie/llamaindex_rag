@@ -637,12 +637,14 @@ class LlamaIndexVectorService:
     def get_document_info(self, document_id: int) -> Dict[str, Any]:
         """Get information about a document's vectors."""
         try:
+            logger.info("Getting document info for", document_id=document_id, document_id_type=type(document_id))
             # Search for documents with this ID
             results = self.search_similar(
                 query="*",  # Match all
                 document_ids=[document_id],
                 similarity_top_k=100
             )
+            logger.info("Search results for document", document_id=document_id, num_results=len(results))
             
             if not results:
                 logger.warning("No chunks found for document", document_id=document_id)
