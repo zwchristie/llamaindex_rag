@@ -445,16 +445,46 @@ class LlamaIndexVectorService:
                 })
             
             # Insert nodes into index
-            self.index.insert_nodes(nodes)
-            
-            logger.info(
-                "Added document to index",
-                document_id=document_id,
-                num_chunks=len(nodes),
-                document_type=document_type
-            )
-            
-            return True
+            try:
+                logger.info(
+                    "Attempting to insert nodes",
+                    document_id=document_id,
+                    num_nodes=len(nodes),
+                    first_node_metadata=nodes[0].metadata if nodes else None
+                )
+                
+                self.index.insert_nodes(nodes)
+                
+                logger.info(
+                    "Successfully inserted nodes into index",
+                    document_id=document_id,
+                    num_chunks=len(nodes),
+                    document_type=document_type
+                )
+                
+                # Verify the insertion worked by searching for the document
+                verification_results = self.search_similar(
+                    query="document",
+                    document_ids=[document_id],
+                    similarity_top_k=5
+                )
+                
+                logger.info(
+                    "Verification search results",
+                    document_id=document_id,
+                    verification_count=len(verification_results)
+                )
+                
+                return True
+                
+            except Exception as insert_error:
+                logger.error(
+                    "Failed to insert nodes into index",
+                    document_id=document_id,
+                    error=str(insert_error),
+                    error_type=type(insert_error).__name__
+                )
+                return False
             
         except Exception as e:
             logger.error("Failed to add document to index", document_id=document_id, error=str(e))
