@@ -288,20 +288,36 @@ Reasoning: [Brief explanation of why this classification was chosen]
         
         try:
             # Get schema context
+            logger.info("Searching for schema documents", 
+                       query=state.current_request, 
+                       document_type=DocumentType.SCHEMA.value,
+                       similarity_top_k=5)
             schema_results = self.vector_service.search_similar(
                 query=state.current_request,
                 retriever_type="hybrid",
                 similarity_top_k=5,
                 document_type=DocumentType.SCHEMA.value
             )
+            logger.info("Schema search results", 
+                       num_results=len(schema_results),
+                       result_scores=[r.get("score", 0.0) for r in schema_results],
+                       result_doc_ids=[r.get("metadata", {}).get("document_id") for r in schema_results])
             
             # Get example context
+            logger.info("Searching for example/report documents", 
+                       query=state.current_request, 
+                       document_type=DocumentType.REPORT.value,
+                       similarity_top_k=3)
             example_results = self.vector_service.search_similar(
                 query=state.current_request,
                 retriever_type="hybrid", 
                 similarity_top_k=3,
                 document_type=DocumentType.REPORT.value
             )
+            logger.info("Example search results", 
+                       num_results=len(example_results),
+                       result_scores=[r.get("score", 0.0) for r in example_results],
+                       result_doc_ids=[r.get("metadata", {}).get("document_id") for r in example_results])
             
             # Extract context information
             schema_context = []
@@ -322,6 +338,23 @@ Reasoning: [Brief explanation of why this classification was chosen]
             
             state.schema_context = schema_context
             state.example_context = example_context
+            
+            # Log the actual content being retrieved for debugging
+            logger.info("Retrieved schema context details")
+            for i, ctx in enumerate(schema_context):
+                logger.info(f"Schema result {i+1}", 
+                           document_id=ctx["metadata"].get("document_id"),
+                           content_length=len(ctx["content"]),
+                           content_preview=ctx["content"][:200] + "..." if len(ctx["content"]) > 200 else ctx["content"],
+                           score=ctx["score"])
+            
+            logger.info("Retrieved example context details")
+            for i, ctx in enumerate(example_context):
+                logger.info(f"Example result {i+1}", 
+                           document_id=ctx["metadata"].get("document_id"),
+                           content_length=len(ctx["content"]),
+                           content_preview=ctx["content"][:200] + "..." if len(ctx["content"]) > 200 else ctx["content"],
+                           score=ctx["score"])
             
             # Extract sources
             sources = []
@@ -383,11 +416,32 @@ Confidence: [0.0-1.0]
 Only request clarification if confidence is below 0.7 or if there are genuine ambiguities.
 """
             
+            # Log confidence assessment prompt for debugging
+            logger.info("Sending confidence assessment prompt to LLM",
+                       prompt_length=len(assessment_prompt),
+                       schema_docs=len(state.schema_context),
+                       example_docs=len(state.example_context))
+            logger.debug("Confidence assessment prompt", prompt=assessment_prompt)
+            
             # Get confidence assessment from LLM
             response_text = llm_factory.generate_text(assessment_prompt)
+            
+            # Log LLM assessment response
+            logger.info("Received confidence assessment response",
+                       response_length=len(response_text),
+                       response_preview=response_text[:400] + "..." if len(response_text) > 400 else response_text)
+            
             assessment_result = self._parse_confidence_assessment(response_text)
             
             state.confidence_score = assessment_result["confidence"]
+            
+            # Log confidence assessment result
+            logger.info("Confidence assessment result",
+                       confidence_score=assessment_result["confidence"],
+                       confidence_threshold=self.confidence_threshold,
+                       missing_info=assessment_result.get("missing_info", []),
+                       analysis=assessment_result.get("analysis", ""),
+                       will_request_clarification=(assessment_result["confidence"] < self.confidence_threshold or assessment_result.get("missing_info")))
             
             # Determine if clarification is needed
             if (assessment_result["confidence"] < self.confidence_threshold or 
@@ -533,8 +587,20 @@ Requirements:
 - Include comments in the SQL where helpful
 """
             
+            # Log the full prompt being sent to LLM for debugging
+            logger.info("Sending prompt to LLM", 
+                       prompt_length=len(prompt),
+                       schema_chunks=len(state.schema_context),
+                       example_chunks=len(state.example_context))
+            logger.debug("Full LLM prompt", prompt=prompt)
+            
             # Generate SQL using the vector service's query engine
             response_text = llm_factory.generate_text(prompt)
+            
+            # Log LLM response
+            logger.info("Received LLM response", 
+                       response_length=len(response_text),
+                       response_preview=response_text[:300] + "..." if len(response_text) > 300 else response_text)
             
             # Parse response
             sql_result = self._parse_sql_response(response_text)
