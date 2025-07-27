@@ -63,14 +63,41 @@ class CustomBedrockEmbedding(BaseEmbedding):
         if not hasattr(self, '_bedrock_service') or self._bedrock_service is None:
             from .bedrock_service import BedrockEmbeddingService
             object.__setattr__(self, '_bedrock_service', BedrockEmbeddingService())
-        return self._bedrock_service.get_embedding(query)
+        
+        if not query or len(query.strip()) == 0:
+            logger.warning("Empty query provided for embedding")
+            return [0.0] * 1024
+        
+        try:
+            embedding = self._bedrock_service.get_embedding(query)
+            if not embedding or len(embedding) == 0:
+                logger.warning("Empty embedding returned from service")
+                return [0.0] * 1024
+            return embedding
+        except Exception as e:
+            logger.error("Failed to get query embedding", error=str(e), query_length=len(query))
+            return [0.0] * 1024
     
     def _get_text_embedding(self, text: str) -> List[float]:
         """Get embedding for text."""
         if not hasattr(self, '_bedrock_service') or self._bedrock_service is None:
             from .bedrock_service import BedrockEmbeddingService
             object.__setattr__(self, '_bedrock_service', BedrockEmbeddingService())
-        return self._bedrock_service.get_embedding(text)
+        
+        if not text or len(text.strip()) == 0:
+            logger.warning("Empty text provided for embedding")
+            # Return a zero vector instead of failing
+            return [0.0] * 1024  # Match the vector size
+        
+        try:
+            embedding = self._bedrock_service.get_embedding(text)
+            if not embedding or len(embedding) == 0:
+                logger.warning("Empty embedding returned from service")
+                return [0.0] * 1024
+            return embedding
+        except Exception as e:
+            logger.error("Failed to get embedding", error=str(e), text_length=len(text))
+            return [0.0] * 1024
     
     async def _aget_query_embedding(self, query: str) -> List[float]:
         """Async get embedding for query."""
@@ -437,12 +464,33 @@ class LlamaIndexVectorService:
             # Parse document into nodes
             nodes = splitter.get_nodes_from_documents([document])
             
-            # Add metadata to each node
+            # Validate nodes before processing
+            if not nodes:
+                logger.error("No nodes created from document", document_id=document_id)
+                return False
+            
+            # Filter out empty nodes and validate content
+            valid_nodes = []
             for i, node in enumerate(nodes):
+                if not node.text or len(node.text.strip()) < 10:
+                    logger.warning("Skipping empty or too short node", 
+                                 document_id=document_id, 
+                                 node_index=i,
+                                 text_length=len(node.text) if node.text else 0)
+                    continue
+                
                 node.metadata.update({
                     "chunk_index": i,
                     "total_chunks": len(nodes)
                 })
+                valid_nodes.append(node)
+            
+            if not valid_nodes:
+                logger.error("No valid nodes after filtering", document_id=document_id)
+                return False
+            
+            nodes = valid_nodes
+            logger.info("Processed nodes", document_id=document_id, total_nodes=len(nodes), valid_nodes=len(valid_nodes))
             
             # Insert nodes into index
             try:
@@ -452,6 +500,11 @@ class LlamaIndexVectorService:
                     num_nodes=len(nodes),
                     first_node_metadata=nodes[0].metadata if nodes else None
                 )
+                
+                # Pre-validate that nodes can generate embeddings
+                for node in nodes:
+                    if not node.text:
+                        raise ValueError(f"Node has empty text: {node.node_id}")
                 
                 self.index.insert_nodes(nodes)
                 
