@@ -498,10 +498,6 @@ class LlamaIndexVectorService:
                 if document_ids:
                     node_doc_id = node.metadata.get("document_id")
                     doc_ids_str = [str(doc_id) for doc_id in document_ids]
-                    logger.debug("Filtering by document_ids", 
-                               node_doc_id=node_doc_id, 
-                               requested_ids=doc_ids_str,
-                               match=node_doc_id in doc_ids_str)
                     if node_doc_id not in doc_ids_str:
                         should_include = False
                 
@@ -683,10 +679,19 @@ class LlamaIndexVectorService:
                 similarity_top_k=1000  # Get many results
             )
             
-            # Group by document_id
+            logger.info(f"Raw search results count: {len(results)}")
+            
+            # Group by document_id and show unique document_ids
             docs_by_id = {}
-            for result in results:
+            unique_doc_ids = set()
+            
+            for i, result in enumerate(results):
                 doc_id = result["document_id"]
+                unique_doc_ids.add(doc_id)
+                
+                if i < 5:  # Log first 5 results for debugging
+                    logger.info(f"Result {i}: doc_id={doc_id}, type={result['document_type']}, node_id={result['id']}")
+                
                 if doc_id not in docs_by_id:
                     docs_by_id[doc_id] = {
                         "document_id": doc_id,
@@ -696,6 +701,7 @@ class LlamaIndexVectorService:
                     }
                 docs_by_id[doc_id]["chunk_count"] += 1
             
+            logger.info(f"Unique document IDs found: {list(unique_doc_ids)}")
             return list(docs_by_id.values())
             
         except Exception as e:
