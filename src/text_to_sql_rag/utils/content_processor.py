@@ -455,50 +455,59 @@ The schema supports queries about deal statuses, tranche information, and asset 
     
     def _create_table_semantic_chunk(self, table_data: Dict[str, Any], schema_info: Dict[str, Any]) -> Dict[str, Any]:
         """Create a semantic chunk for a database table with business context."""
-        table_name = table_data.get("name", "unknown_table")
-        description = table_data.get("properties", {}).get("description", "")
+        table_name = table_data.get("table_name", table_data.get("name", "unknown_table"))
+        description = table_data.get("description", table_data.get("properties", {}).get("description", ""))
         
-        # Build comprehensive table information
+        # Build comprehensive table information in clean Dolphin format
         content_lines = [
-            f"=== TABLE: {table_name.upper()} ===",
-            f"Business Purpose: {description}",
-            f"Schema: {schema_info['catalog']}.{schema_info['schema']}",
+            f"DATABASE TABLE: {table_name.upper()}",
+            f"Catalog: {schema_info['catalog']}",
+            f"Schema: {schema_info['schema']}",
+            f"Business Purpose: {description}" if description else "",
             ""
         ]
         
         # Add column information with business context
         if "columns" in table_data:
-            content_lines.append("COLUMNS AND DATA FIELDS:")
+            content_lines.append("COLUMNS:")
             for col in table_data["columns"]:
                 col_name = col.get("name", "")
                 col_type = col.get("type", "")
                 example_values = col.get("example_values", [])
                 not_null = col.get("notNull", False)
                 relationship = col.get("relationship", [])
+                col_description = col.get("description", "")
                 
-                content_lines.append(f"  • {col_name} ({col_type})")
-                if description:
-                    content_lines.append(f"    Purpose: {description}")
+                content_lines.append(f"Column: {col_name}")
+                content_lines.append(f"  Type: {col_type}")
+                if col_description:
+                    content_lines.append(f"  Description: {col_description}")
                 if example_values:
-                    content_lines.append(f"    Example values: {', '.join(map(str, example_values[:5]))}")
+                    content_lines.append(f"  Example values: {', '.join(map(str, example_values[:5]))}")
                 if not_null:
-                    content_lines.append(f"    Required field (NOT NULL)")
+                    content_lines.append(f"  Required: Yes (NOT NULL)")
                 if relationship:
-                    content_lines.append(f"    Related to: {', '.join(relationship)}")
+                    content_lines.append(f"  Related to: {', '.join(relationship)}")
                 content_lines.append("")
         
         # Add primary key information
         if "primaryKey" in table_data:
-            content_lines.append(f"PRIMARY KEY: {table_data['primaryKey']}")
+            content_lines.append(f"Primary Key: {table_data['primaryKey']}")
             content_lines.append("")
         
         # Add reference SQL for data access
         if "refSql" in table_data:
-            content_lines.append("DATA ACCESS QUERY:")
-            content_lines.append(f"```sql\n{table_data['refSql']}\n```")
+            content_lines.append("Query to access all data:")
+            content_lines.append(table_data['refSql'])
             content_lines.append("")
         
-        content_lines.append(f"=== END TABLE {table_name.upper()} ===")
+        # Add business context summary
+        content_lines.extend([
+            "BUSINESS CONTEXT:",
+            f"This table stores {description.lower() if description else 'data'} in the {schema_info['catalog']} catalog.",
+            f"Table can be queried as: {schema_info['catalog']}.{schema_info['schema']}.{table_name}",
+            ""
+        ])
         
         # Extract business terms for metadata
         business_terms = self._extract_business_terms(table_name, description, table_data)
@@ -518,23 +527,24 @@ The schema supports queries about deal statuses, tranche information, and asset 
     
     def _create_view_semantic_chunk(self, view_data: Dict[str, Any], schema_info: Dict[str, Any]) -> Dict[str, Any]:
         """Create a semantic chunk for a database view with analytical context."""
-        view_name = view_data.get("name", "unknown_view")
-        description = view_data.get("properties", {}).get("description", "")
-        view_sql = view_data.get("view_sql", "")
+        view_name = view_data.get("view_name", view_data.get("name", "unknown_view"))
+        description = view_data.get("description", view_data.get("properties", {}).get("description", ""))
+        view_sql = view_data.get("query", view_data.get("view_sql", ""))
         view_type = view_data.get("view_type", "")
         
         content_lines = [
-            f"=== VIEW: {view_name.upper()} ===",
-            f"Analytical Purpose: {description}",
-            f"View Type: {view_type}",
-            f"Schema: {schema_info['catalog']}.{schema_info['schema']}",
+            f"DATABASE VIEW: {view_name.upper()}",
+            f"Catalog: {schema_info['catalog']}",
+            f"Schema: {schema_info['schema']}",
+            f"View Type: {view_type}" if view_type else "",
+            f"Business Purpose: {description}" if description else "",
             ""
         ]
         
         # Add view definition with business context
         if view_sql:
-            content_lines.append("VIEW DEFINITION:")
-            content_lines.append(f"```sql\n{view_sql}\n```")
+            content_lines.append("View Definition SQL:")
+            content_lines.append(view_sql)
             content_lines.append("")
         
         # Add column information
@@ -545,18 +555,25 @@ The schema supports queries about deal statuses, tranche information, and asset 
                 col_type = col.get("type", "")
                 example_values = col.get("example_values", [])
                 
-                content_lines.append(f"  • {col_name} ({col_type})")
+                content_lines.append(f"Column: {col_name}")
+                content_lines.append(f"  Type: {col_type}")
                 if example_values:
-                    content_lines.append(f"    Example values: {', '.join(map(str, example_values[:5]))}")
+                    content_lines.append(f"  Example values: {', '.join(map(str, example_values[:5]))}")
                 content_lines.append("")
         
         # Add reference SQL
         if "refSql" in view_data:
-            content_lines.append("DATA ACCESS QUERY:")
-            content_lines.append(f"```sql\n{view_data['refSql']}\n```")
+            content_lines.append("Query to access view data:")
+            content_lines.append(view_data['refSql'])
             content_lines.append("")
         
-        content_lines.append(f"=== END VIEW {view_name.upper()} ===")
+        # Add business context
+        content_lines.extend([
+            "BUSINESS CONTEXT:",
+            f"This view provides {description.lower() if description else 'analytical data'} from the {schema_info['catalog']} catalog.",
+            f"View can be queried as: {schema_info['catalog']}.{schema_info['schema']}.{view_name}",
+            ""
+        ])
         
         business_terms = self._extract_business_terms(view_name, description, view_data)
         
@@ -589,15 +606,26 @@ The schema supports queries about deal statuses, tranche information, and asset 
             ]
             
             for rel in domain_relationships:
-                rel_name = rel.get("name", "")
-                models = rel.get("models", [])
-                join_type = rel.get("joinType", "")
+                rel_name = rel.get("relationship_name", rel.get("name", ""))
+                models = rel.get("tables", rel.get("models", []))
+                join_type = rel.get("type", rel.get("joinType", ""))
                 condition = rel.get("condition", "")
                 
                 content_lines.append(f"RELATIONSHIP: {rel_name}")
-                content_lines.append(f"  Connected Tables: {' ↔ '.join(models)}")
+                content_lines.append(f"  Connected Tables: {' <-> '.join(models)}")
                 content_lines.append(f"  Relationship Type: {join_type}")
                 content_lines.append(f"  Join Condition: {condition}")
+                
+                # Add example SQL if available
+                example_sql = rel.get("example_sql", "")
+                if example_sql:
+                    content_lines.append("  Example Join SQL:")
+                    content_lines.append(f"  {example_sql}")
+                
+                # Add description if available
+                rel_description = rel.get("description", "")
+                if rel_description:
+                    content_lines.append(f"  Description: {rel_description}")
                 
                 if "properties" in rel:
                     props = rel["properties"]
@@ -620,7 +648,7 @@ The schema supports queries about deal statuses, tranche information, and asset 
                     "business_domain": domain,
                     "catalog": schema_info["catalog"],
                     "schema": schema_info["schema"],
-                    "related_tables": list(set([table for rel in domain_relationships for table in rel.get("models", [])]))
+                    "related_tables": list(set([table for rel in domain_relationships for table in rel.get("tables", rel.get("models", []))]))
                 }
             })
         
@@ -704,8 +732,8 @@ The schema supports queries about deal statuses, tranche information, and asset 
     
     def _determine_relationship_domain(self, relationship: Dict[str, Any]) -> str:
         """Determine the business domain of a relationship."""
-        models = relationship.get("models", [])
-        rel_name = relationship.get("name", "").lower()
+        models = relationship.get("tables", relationship.get("models", []))
+        rel_name = relationship.get("relationship_name", relationship.get("name", "")).lower()
         
         # Check for financial domain patterns
         financial_patterns = ['deal', 'tranche', 'security', 'bond', 'asset']

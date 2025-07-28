@@ -300,29 +300,42 @@ Reasoning: [Brief explanation of why this classification was chosen]
         state.workflow_step = WorkflowStep.GET_METADATA
         
         try:
-            # Get schema context
-            logger.info("Searching for schema documents", 
-                       query=state.current_request, 
-                       document_type=DocumentType.SCHEMA.value,
-                       similarity_top_k=5)
-            schema_results = self.vector_service.search_similar(
-                query=state.current_request,
-                retriever_type="hybrid",
-                similarity_top_k=5,
-                document_type=DocumentType.SCHEMA.value
-            )
-            logger.info("Schema search results", 
+            # First, rewrite the query for better RAG retrieval
+            rewritten_queries = self._rewrite_query_for_rag(state.current_request)
+            logger.info("Query rewriting for RAG", 
+                       original_query=state.current_request,
+                       rewritten_queries=rewritten_queries)
+            
+            # Get schema context using multiple query variations
+            all_schema_results = []
+            for query_variant in rewritten_queries:
+                logger.info("Searching for schema documents", 
+                           query=query_variant, 
+                           document_type=DocumentType.SCHEMA.value,
+                           similarity_top_k=3)
+                results = self.vector_service.search_similar(
+                    query=query_variant,
+                    retriever_type="hybrid",
+                    similarity_top_k=3,
+                    document_type=DocumentType.SCHEMA.value
+                )
+                all_schema_results.extend(results)
+            
+            # Deduplicate and rank schema results
+            schema_results = self._deduplicate_and_rank_results(all_schema_results, max_results=5)
+            logger.info("Combined schema search results", 
                        num_results=len(schema_results),
-                       result_scores=[r.get("score", 0.0) for r in schema_results],
+                       result_scores=[r.get("combined_score", r.get("score", 0.0)) for r in schema_results],
                        result_doc_ids=[r.get("metadata", {}).get("document_id") for r in schema_results])
             
-            # Get example context
+            # Get example context using best rewritten query
+            best_query = rewritten_queries[0] if rewritten_queries else state.current_request
             logger.info("Searching for example/report documents", 
-                       query=state.current_request, 
+                       query=best_query, 
                        document_type=DocumentType.REPORT.value,
                        similarity_top_k=3)
             example_results = self.vector_service.search_similar(
-                query=state.current_request,
+                query=best_query,
                 retriever_type="hybrid", 
                 similarity_top_k=3,
                 document_type=DocumentType.REPORT.value
@@ -1300,3 +1313,62 @@ Format your response clearly and make it understandable for both technical and n
             execution_result=result.get("execution_result"),
             auto_executed=result.get("auto_executed", False)
         )
+    
+    def _rewrite_query_for_rag(self, original_query: str) -> List[str]:
+        """Rewrite user query into multiple variations optimized for RAG retrieval."""
+        queries = [original_query]  # Always include original
+        
+        # Extract key business terms
+        query_lower = original_query.lower()
+        
+        # Financial domain-specific rewrites
+        if any(term in query_lower for term in ['deal', 'deals']):
+            queries.append("deal tables database schema")
+            queries.append("deal entity information")
+        
+        if any(term in query_lower for term in ['tranche', 'tranches']):
+            queries.append("tranche tables database schema")
+            queries.append("tranche entity information")
+        
+        if any(term in query_lower for term in ['fixed income', 'fixed_income']):
+            queries.append("fixed income database tables")
+            queries.append("asset class fixed income")
+        
+        if any(term in query_lower for term in ['status', 'announced']):
+            queries.append("status tables database schema")
+            queries.append("status fields announced state")
+        
+        # Add semantic variations
+        if 'announced status' in query_lower:
+            queries.append("announced status field column")
+            queries.append("deal status announced")
+            queries.append("status announced value")
+        
+        # Add table-focused queries
+        if any(term in query_lower for term in ['deal', 'tranche', 'fixed', 'status']):
+            queries.append("tables columns deal tranche status")
+            queries.append("database schema deal information")
+        
+        # Remove duplicates while preserving order
+        unique_queries = []
+        for q in queries:
+            if q not in unique_queries:
+                unique_queries.append(q)
+        
+        return unique_queries[:4]  # Limit to 4 variations to avoid too many searches
+    
+    def _deduplicate_and_rank_results(self, results: List[Dict[str, Any]], max_results: int = 5) -> List[Dict[str, Any]]:
+        """Deduplicate search results and rank by combined score."""
+        seen_ids = set()
+        unique_results = []
+        
+        for result in results:
+            result_id = result.get("id")
+            if result_id not in seen_ids:
+                seen_ids.add(result_id)
+                unique_results.append(result)
+        
+        # Sort by combined score if available, otherwise by regular score
+        unique_results.sort(key=lambda x: x.get("combined_score", x.get("score", 0.0)), reverse=True)
+        
+        return unique_results[:max_results]

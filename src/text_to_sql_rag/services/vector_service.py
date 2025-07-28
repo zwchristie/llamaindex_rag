@@ -426,40 +426,43 @@ class LlamaIndexVectorService:
     ) -> bool:
         """Add document to the index with JSON to Dolphin format conversion."""
         try:
-            # Use semantic chunking for JSON documents to preserve business context
-            nodes = []
+            # Create individual documents for each semantic entity (not chunks)
+            documents = []
             if self.content_processor.is_json_content(content):
                 from ..models.simple_models import DocumentType as DocType
                 doc_type_enum = DocType.SCHEMA if document_type.lower() == "schema" else DocType.REPORT
                 
-                # Create semantic chunks that preserve business relationships
+                # Create semantic chunks that will become separate documents
                 semantic_chunks = self.content_processor.create_semantic_chunks(content, doc_type_enum)
                 
                 logger.info(
-                    "Created semantic chunks for document",
+                    "Created semantic entities for separate document storage",
                     document_id=document_id,
-                    num_chunks=len(semantic_chunks),
-                    chunk_types=[chunk["metadata"].get("chunk_type") for chunk in semantic_chunks]
+                    num_entities=len(semantic_chunks),
+                    entity_types=[chunk["metadata"].get("chunk_type") for chunk in semantic_chunks]
                 )
                 
-                # Convert semantic chunks to LlamaIndex nodes
+                # Convert each semantic chunk to a complete LlamaIndex document (not node/chunk)
                 for i, chunk in enumerate(semantic_chunks):
+                    entity_id = f"{document_id}_{chunk['metadata'].get('chunk_type', 'entity')}_{i}"
+                    
                     chunk_metadata = {
-                        "document_id": document_id,
+                        "document_id": entity_id,  # Each entity gets its own document ID
+                        "parent_document_id": document_id,  # Track original document
                         "document_type": document_type,
-                        "chunk_index": i,
-                        "total_chunks": len(semantic_chunks),
-                        "is_semantic_chunk": True,
+                        "entity_index": i,
+                        "total_entities": len(semantic_chunks),
+                        "is_semantic_entity": True,
                         **metadata,
                         **chunk["metadata"]  # Include semantic metadata
                     }
                     
-                    node = LlamaDocument(
+                    document = LlamaDocument(
                         text=chunk["content"],
                         metadata=chunk_metadata,
-                        id_=f"doc_{document_id}_chunk_{i}"
+                        id_=entity_id
                     )
-                    nodes.append(node)
+                    documents.append(document)
             else:
                 # Fallback to traditional chunking for non-JSON content
                 processed_content = content
@@ -475,18 +478,33 @@ class LlamaIndexVectorService:
                     metadata=doc_metadata,
                     id_=f"doc_{document_id}"
                 )
-                
-                # Use sentence splitter for traditional chunking
-                splitter = SentenceSplitter(
-                    chunk_size=settings.app.chunk_size,
-                    chunk_overlap=settings.app.chunk_overlap
-                )
-                
-                nodes = splitter.get_nodes_from_documents([document])
+                documents.append(document)
+            
+            # Process all documents (no further chunking for semantic entities)
+            nodes = []
+            for doc in documents:
+                # For semantic entities, store as single nodes (no further chunking)
+                if doc.metadata.get("is_semantic_entity", False):
+                    # Create a single node from the complete entity document
+                    from llama_index.core.schema import TextNode
+                    node = TextNode(
+                        text=doc.text,
+                        metadata=doc.metadata,
+                        id_=doc.id_
+                    )
+                    nodes.append(node)
+                else:
+                    # Use traditional chunking for non-semantic documents
+                    splitter = SentenceSplitter(
+                        chunk_size=settings.app.chunk_size,
+                        chunk_overlap=settings.app.chunk_overlap
+                    )
+                    doc_nodes = splitter.get_nodes_from_documents([doc])
+                    nodes.extend(doc_nodes)
             
             # Validate nodes before processing
             if not nodes:
-                logger.error("No nodes created from document", document_id=document_id)
+                logger.error("No nodes created from documents", document_id=document_id)
                 return False
             
             # Filter out empty nodes and validate content

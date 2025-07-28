@@ -398,13 +398,8 @@ class DocumentSyncService:
                            error=str(e))
                 vector_needs_update = True
             
-            # Prepare content for vector store (convert JSON to Dolphin format if needed)
+            # Use original content - vector service will handle semantic chunking
             content = mongo_doc["content"]
-            if mongo_doc["document_type"] == "schema" and self.content_processor.is_json_content(content):
-                from ..models.simple_models import DocumentType as DocType
-                content = self.content_processor.convert_json_to_dolphin_format(
-                    content, DocType.SCHEMA
-                )
             
             # For simplicity during initial indexing, just try to add without deleting
             # The vector store should handle overwrites automatically
