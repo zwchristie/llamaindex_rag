@@ -918,9 +918,23 @@ Format your response clearly and make it understandable for both technical and n
         """Format context for confidence assessment."""
         formatted_parts = []
         for i, ctx in enumerate(context_list, 1):
-            content_preview = ctx.get("content", "")[:200] + "..." if len(ctx.get("content", "")) > 200 else ctx.get("content", "")
-            formatted_parts.append(f"Document {i}: {content_preview}")
-        return "\n".join(formatted_parts)
+            # Show more content for confidence assessment (1000 chars instead of 200)
+            content = ctx.get("content", "")
+            if len(content) > 1000:
+                # Show beginning and end with ellipsis in middle for better context
+                content_preview = content[:500] + "\n...\n" + content[-500:]
+            else:
+                content_preview = content
+            
+            # Also include entity information for better assessment
+            metadata = ctx.get("metadata", {})
+            entity_type = metadata.get("entity_type", "unknown")
+            entity_name = (metadata.get("table_name") or 
+                          metadata.get("view_name") or 
+                          metadata.get("relationship_name") or "unknown")
+            
+            formatted_parts.append(f"Document {i} ({entity_type}: {entity_name}):\n{content_preview}")
+        return "\n\n".join(formatted_parts)
     
     def _parse_confidence_assessment(self, response_text: str) -> Dict[str, Any]:
         """Parse confidence assessment response."""

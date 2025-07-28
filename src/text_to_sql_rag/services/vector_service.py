@@ -1021,6 +1021,13 @@ class LlamaIndexVectorService:
             logger.info("Step 1: Retrieving relevant models and views", 
                        query=query, similarity_top_k=similarity_top_k)
             
+            # Debug: First check what documents exist in the vector store
+            all_docs = self.list_all_documents()
+            logger.info("Available documents in vector store", 
+                       total_docs=len(all_docs),
+                       doc_types=[doc.get("document_type") for doc in all_docs],
+                       sample_doc_ids=[doc.get("document_id") for doc in all_docs[:5]])
+            
             # Step 1: Get relevant models and views with optimized prompt rewriting
             models_views_results = self._step1_retrieve_models_views(query, similarity_top_k)
             
@@ -1063,11 +1070,14 @@ class LlamaIndexVectorService:
         try:
             # Create optimized search queries for models and views
             rewritten_queries = self._rewrite_query_for_models_views(query)
+            logger.info("Step 1: Rewritten queries for models/views", 
+                       original_query=query,
+                       rewritten_queries=rewritten_queries)
             
             all_results = []
             
-            for rewritten_query in rewritten_queries:
-                logger.info("Searching for models/views", query=rewritten_query)
+            for i, rewritten_query in enumerate(rewritten_queries):
+                logger.info(f"Step 1.{i+1}: Searching for models/views", query=rewritten_query)
                 
                 # Search specifically for individual models and views
                 results = self.search_similar(
@@ -1077,11 +1087,22 @@ class LlamaIndexVectorService:
                     document_type="schema"
                 )
                 
+                logger.info(f"Step 1.{i+1}: Raw search results", 
+                           num_results=len(results),
+                           result_types=[r["metadata"].get("entity_type") for r in results],
+                           result_names=[r["metadata"].get("table_name") or r["metadata"].get("view_name") 
+                                       for r in results])
+                
                 # Filter to only models and views
                 filtered_results = [
                     r for r in results 
                     if r["metadata"].get("entity_type") in ["model", "view"]
                 ]
+                
+                logger.info(f"Step 1.{i+1}: Filtered results (models/views only)", 
+                           num_filtered=len(filtered_results),
+                           filtered_names=[r["metadata"].get("table_name") or r["metadata"].get("view_name") 
+                                         for r in filtered_results])
                 
                 all_results.extend(filtered_results)
             
@@ -1244,9 +1265,39 @@ class LlamaIndexVectorService:
                 "revenue amount tables financial model"
             ])
         
+        # Add Fixed Income domain queries
+        if any(term in query_lower for term in ['deal', 'deals', 'fixed income', 'tranche', 'tranches']):
+            queries.extend([
+                "deal deals table fixed income financial",
+                "tranche tranches table deal data",
+                "fixed income deals database table model",
+                "termsheet deals tranche information"
+            ])
+        
+        if any(term in query_lower for term in ['announced', 'status', 'state']):
+            queries.extend([
+                "status announced table deal information",
+                "status state table database model",
+                "announced status deals tranche"
+            ])
+        
+        if any(term in query_lower for term in ['investor', 'trades', 'trading']):
+            queries.extend([
+                "investor trades table trading data",
+                "investor trading database table model",
+                "trades investor information table"
+            ])
+        
+        if any(term in query_lower for term in ['termsheet', 'term sheet']):
+            queries.extend([
+                "termsheet term sheet view table",
+                "termsheet deals information database",
+                "v_termsheet view termsheet data"
+            ])
+        
         # Remove duplicates and limit
         unique_queries = list(dict.fromkeys(queries))  # Preserves order
-        return unique_queries[:4]  # Limit to 4 variations
+        return unique_queries[:6]  # Increased limit to handle more domain-specific queries
     
     def _create_relationship_queries(self, entity_names: set, original_query: str) -> List[str]:
         """Create queries to find relationships involving specific entities."""
