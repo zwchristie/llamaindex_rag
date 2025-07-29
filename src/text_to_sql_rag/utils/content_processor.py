@@ -708,18 +708,47 @@ The schema supports queries about deal statuses, tranche information, and asset 
                 col_name = col.get("name", "")
                 terms.extend(self._extract_terms_from_name(col_name))
         
-        # Financial domain-specific terms
-        financial_terms = [
+        # Extract from column data types and example values
+        if "columns" in entity_data:
+            for col in entity_data["columns"]:
+                col_type = col.get("type", "")
+                if col_type:
+                    terms.extend(self._extract_terms_from_name(col_type))
+                
+                # Extract meaningful terms from example values
+                example_values = col.get("example_values", [])
+                for value in example_values[:3]:  # Limit to first 3 examples
+                    if isinstance(value, str) and len(value) > 2:
+                        terms.extend(self._extract_terms_from_text(str(value)))
+        
+        # Domain-specific terms
+        domain_terms = [
+            # Financial domain
             "deal", "deals", "tranche", "tranches", "fixed_income", "fixed income",
             "announced", "status", "asset_class", "security", "bond", "loan",
-            "maturity", "rating", "yield", "coupon", "principal", "issuance"
+            "maturity", "rating", "yield", "coupon", "principal", "issuance",
+            # User/Account domain
+            "user", "users", "account", "accounts", "customer", "customers",
+            "profile", "profiles", "person", "people", "individual", "individuals",
+            "authentication", "login", "credential", "credentials",
+            # General business terms
+            "name", "first", "last", "email", "phone", "address", "contact",
+            "created", "updated", "deleted", "modified", "timestamp", "date",
+            "active", "inactive", "enabled", "disabled", "team", "role", "permission"
         ]
         
-        # Check for financial terms in the content
+        # Check for domain terms in the content
         text_content = f"{entity_name} {description}".lower()
-        for term in financial_terms:
+        for term in domain_terms:
             if term in text_content:
                 terms.append(term)
+        
+        # Add column names as business terms (they're often meaningful)
+        if "columns" in entity_data:
+            for col in entity_data["columns"]:
+                col_name = col.get("name", "")
+                if col_name:
+                    terms.append(col_name.lower())
         
         return list(set(terms))
     
@@ -742,7 +771,11 @@ The schema supports queries about deal statuses, tranche information, and asset 
         """Classify the business entity type based on table name."""
         name_lower = table_name.lower()
         
-        if any(term in name_lower for term in ['deal', 'deals']):
+        # User/Account entities
+        if any(term in name_lower for term in ['user', 'users', 'customer', 'customers', 'person', 'people', 'account', 'accounts']):
+            return "user_entity"
+        # Financial entities
+        elif any(term in name_lower for term in ['deal', 'deals']):
             return "deal_entity"
         elif any(term in name_lower for term in ['tranche', 'tranches']):
             return "tranche_entity"
@@ -752,6 +785,15 @@ The schema supports queries about deal statuses, tranche information, and asset 
             return "classification_entity"
         elif any(term in name_lower for term in ['status', 'state']):
             return "status_entity"
+        # Transaction/Order entities
+        elif any(term in name_lower for term in ['order', 'orders', 'transaction', 'transactions', 'trade', 'trades']):
+            return "transaction_entity"
+        # Product/Item entities
+        elif any(term in name_lower for term in ['product', 'products', 'item', 'items', 'inventory']):
+            return "product_entity"
+        # Team/Organization entities
+        elif any(term in name_lower for term in ['team', 'teams', 'group', 'groups', 'organization', 'org']):
+            return "organizational_entity"
         else:
             return "general_entity"
     
@@ -868,7 +910,13 @@ The schema supports queries about deal statuses, tranche information, and asset 
     def _create_individual_model_document(self, model_data: Dict[str, Any], catalog: str, schema_name: str) -> Dict[str, Any]:
         """Create a complete document for a single database model/table."""
         table_name = model_data.get("table_name", model_data.get("name", "unknown_table"))
-        description = model_data.get("description", "")
+        
+        # Handle nested description in properties structure
+        description = ""
+        if "properties" in model_data and "description" in model_data["properties"]:
+            description = model_data["properties"]["description"]
+        else:
+            description = model_data.get("description", "")
         
         # Build comprehensive model document in dolphin format
         content_lines = [
@@ -895,7 +943,16 @@ The schema supports queries about deal statuses, tranche information, and asset 
                 col_type = col.get("type", "")
                 col_key = col.get("key", "")
                 example_values = col.get("example_values", [])
-                nullable = col.get("nullable", True)
+                
+                # Handle both nullable and notNull fields
+                nullable = True  # Default to nullable
+                if "nullable" in col:
+                    nullable = col["nullable"]
+                elif "notNull" in col:
+                    nullable = not col["notNull"]
+                
+                # Handle default values
+                default_value = col.get("default", "")
                 
                 content_lines.extend([
                     f"Column: {col_name}",
@@ -905,13 +962,33 @@ The schema supports queries about deal statuses, tranche information, and asset 
                 if col_key:
                     content_lines.append(f"  Key Type: {col_key}")
                 
-                content_lines.append(f"  Nullable: {'Yes' if nullable else 'No'}")
+                content_lines.append(f"  Required: {'No (nullable)' if nullable else 'Yes (NOT NULL)'}")
+                
+                if default_value:
+                    content_lines.append(f"  Default Value: {default_value}")
                 
                 if example_values:
                     example_str = ", ".join([f"'{val}'" for val in example_values[:5]])
                     content_lines.append(f"  Example Values: {example_str}")
                 
                 content_lines.append("")
+        
+        # Add primary key information
+        if "primaryKey" in model_data:
+            content_lines.extend([
+                "=== PRIMARY KEY ===",
+                f"Primary Key: {model_data['primaryKey']}",
+                ""
+            ])
+        
+        # Add reference SQL if available
+        if "refSql" in model_data:
+            content_lines.extend([
+                "=== REFERENCE SQL ===",
+                "Query to access all data:",
+                model_data['refSql'],
+                ""
+            ])
         
         # Add business context and usage information
         content_lines.extend([
@@ -938,6 +1015,33 @@ The schema supports queries about deal statuses, tranche information, and asset 
         
         content_lines.append("=== END TABLE DOCUMENT ===")
         
+        # Create comprehensive searchable content
+        column_names = [col.get("name", "") for col in model_data.get("columns", [])]
+        column_types = [col.get("type", "") for col in model_data.get("columns", [])]
+        primary_key = model_data.get("primaryKey", "")
+        
+        # Build rich searchable content that includes all important terms
+        searchable_parts = [
+            table_name,
+            "table",
+            "model", 
+            description,
+            ' '.join(business_terms),
+            ' '.join(column_names),
+            ' '.join(column_types),
+            primary_key,
+            catalog,
+            schema_name
+        ]
+        
+        # Add example values for better searchability
+        for col in model_data.get("columns", []):
+            example_values = col.get("example_values", [])
+            if example_values:
+                searchable_parts.extend([str(val) for val in example_values[:3]])
+        
+        searchable_content = ' '.join([part for part in searchable_parts if part]).lower()
+        
         return {
             "content": "\n".join(content_lines),
             "metadata": {
@@ -948,8 +1052,10 @@ The schema supports queries about deal statuses, tranche information, and asset 
                 "schema": schema_name,
                 "business_terms": business_terms,
                 "classified_entity_type": entity_type,
-                "columns": [col.get("name", "") for col in model_data.get("columns", [])],
-                "searchable_content": f"{table_name} table model {description} {' '.join(business_terms)}"
+                "columns": column_names,
+                "column_types": column_types,
+                "primary_key": primary_key,
+                "searchable_content": searchable_content
             }
         }
     
