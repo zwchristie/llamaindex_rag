@@ -300,59 +300,73 @@ Reasoning: [Brief explanation of why this classification was chosen]
         state.workflow_step = WorkflowStep.GET_METADATA
         
         try:
-            # First, rewrite the query for better RAG retrieval
-            rewritten_queries = self._rewrite_query_for_rag(state.current_request)
-            logger.info("Query rewriting for RAG", 
-                       original_query=state.current_request,
-                       rewritten_queries=rewritten_queries)
+            # Use the new 2-step metadata retrieval process
+            logger.info("Using 2-step metadata retrieval process")
+            pruned_metadata = self.vector_service.two_step_metadata_retrieval(
+                query=state.current_request,
+                similarity_top_k=8,  # Get more results for better filtering
+                document_type=DocumentType.SCHEMA.value
+            )
             
-            # Get schema context using multiple query variations
-            all_schema_results = []
-            for query_variant in rewritten_queries:
-                logger.info("Searching for schema documents", 
-                           query=query_variant, 
-                           document_type=DocumentType.SCHEMA.value,
-                           similarity_top_k=3)
-                results = self.vector_service.search_similar(
-                    query=query_variant,
-                    retriever_type="hybrid",
-                    similarity_top_k=3,
-                    document_type=DocumentType.SCHEMA.value
-                )
-                all_schema_results.extend(results)
+            # Extract the pruned results
+            models = pruned_metadata.get("models", [])
+            views = pruned_metadata.get("views", [])
+            relationships = pruned_metadata.get("relationships", [])
             
-            # Deduplicate and rank schema results
-            schema_results = self._deduplicate_and_rank_results(all_schema_results, max_results=5)
-            logger.info("Combined schema search results", 
-                       num_results=len(schema_results),
-                       result_scores=[r.get("combined_score", r.get("score", 0.0)) for r in schema_results],
-                       result_doc_ids=[r.get("metadata", {}).get("document_id") for r in schema_results])
+            logger.info("2-step retrieval results",
+                       num_models=len(models),
+                       num_views=len(views), 
+                       num_relationships=len(relationships),
+                       model_names=[m["metadata"].get("table_name") for m in models],
+                       view_names=[v["metadata"].get("view_name") for v in views],
+                       relationship_names=[r["metadata"].get("relationship_name") for r in relationships])
             
-            # Get example context using best rewritten query
-            best_query = rewritten_queries[0] if rewritten_queries else state.current_request
+            # Convert to the expected schema_context format for compatibility
+            schema_context = []
+            
+            # Add models to schema context
+            for model in models:
+                schema_context.append({
+                    "content": model.get("content", ""),
+                    "metadata": model.get("metadata", {}),
+                    "score": model.get("combined_score", model.get("score", 0.0)),
+                    "entity_type": "model"
+                })
+            
+            # Add views to schema context
+            for view in views:
+                schema_context.append({
+                    "content": view.get("content", ""),
+                    "metadata": view.get("metadata", {}),
+                    "score": view.get("combined_score", view.get("score", 0.0)),
+                    "entity_type": "view"
+                })
+            
+            # Add relationships to schema context
+            for relationship in relationships:
+                schema_context.append({
+                    "content": relationship.get("content", ""),
+                    "metadata": relationship.get("metadata", {}),
+                    "score": relationship.get("combined_score", relationship.get("score", 0.0)),
+                    "entity_type": "relationship"
+                })
+            
+            # Sort by score for consistent ordering
+            schema_context.sort(key=lambda x: x.get("score", 0.0), reverse=True)
+            
+            state.schema_context = schema_context
+            
+            # Get example context using traditional approach (keep this separate)
             logger.info("Searching for example/report documents", 
-                       query=best_query, 
+                       query=state.current_request, 
                        document_type=DocumentType.REPORT.value,
                        similarity_top_k=3)
             example_results = self.vector_service.search_similar(
-                query=best_query,
+                query=state.current_request,
                 retriever_type="hybrid", 
                 similarity_top_k=3,
                 document_type=DocumentType.REPORT.value
             )
-            logger.info("Example search results", 
-                       num_results=len(example_results),
-                       result_scores=[r.get("score", 0.0) for r in example_results],
-                       result_doc_ids=[r.get("metadata", {}).get("document_id") for r in example_results])
-            
-            # Extract context information
-            schema_context = []
-            for result in schema_results:
-                schema_context.append({
-                    "content": result.get("content", ""),
-                    "metadata": result.get("metadata", {}),
-                    "score": result.get("score", 0.0)
-                })
             
             example_context = []
             for result in example_results:
@@ -362,16 +376,17 @@ Reasoning: [Brief explanation of why this classification was chosen]
                     "score": result.get("score", 0.0)
                 })
             
-            state.schema_context = schema_context
             state.example_context = example_context
             
-            # Log the actual content being retrieved for debugging
-            logger.info("Retrieved schema context details")
+            # Log the retrieved content for debugging
+            logger.info("Retrieved 2-step schema context details")
             for i, ctx in enumerate(schema_context):
-                logger.info(f"Schema result {i+1}", 
-                           document_id=ctx["metadata"].get("document_id"),
+                logger.info(f"Schema entity {i+1}", 
+                           entity_type=ctx.get("entity_type"),
+                           entity_name=(ctx["metadata"].get("table_name") or 
+                                      ctx["metadata"].get("view_name") or 
+                                      ctx["metadata"].get("relationship_name")),
                            content_length=len(ctx["content"]),
-                           content_preview=ctx["content"][:200] + "..." if len(ctx["content"]) > 200 else ctx["content"],
                            score=ctx["score"])
             
             logger.info("Retrieved example context details")
@@ -379,18 +394,23 @@ Reasoning: [Brief explanation of why this classification was chosen]
                 logger.info(f"Example result {i+1}", 
                            document_id=ctx["metadata"].get("document_id"),
                            content_length=len(ctx["content"]),
-                           content_preview=ctx["content"][:200] + "..." if len(ctx["content"]) > 200 else ctx["content"],
                            score=ctx["score"])
             
-            # Extract sources
+            # Extract sources from all results
             sources = []
-            for result in schema_results + example_results:
-                metadata = result.get("metadata", {})
+            for ctx in schema_context + example_context:
+                metadata = ctx.get("metadata", {})
                 if "source" in metadata:
                     sources.append(metadata["source"])
+                # Also extract catalog.schema as source info
+                catalog = metadata.get("catalog", "")
+                schema_name = metadata.get("schema", "")
+                if catalog and schema_name:
+                    sources.append(f"{catalog}.{schema_name}")
+            
             state.sources = list(set(sources))
             
-            logger.info(f"Retrieved {len(schema_context)} schema docs and {len(example_context)} example docs")
+            logger.info(f"Retrieved {len(schema_context)} schema entities and {len(example_context)} example docs using 2-step approach")
             
         except Exception as e:
             logger.error(f"Error getting metadata: {e}")
@@ -898,9 +918,23 @@ Format your response clearly and make it understandable for both technical and n
         """Format context for confidence assessment."""
         formatted_parts = []
         for i, ctx in enumerate(context_list, 1):
-            content_preview = ctx.get("content", "")[:200] + "..." if len(ctx.get("content", "")) > 200 else ctx.get("content", "")
-            formatted_parts.append(f"Document {i}: {content_preview}")
-        return "\n".join(formatted_parts)
+            # Show more content for confidence assessment (1000 chars instead of 200)
+            content = ctx.get("content", "")
+            if len(content) > 1000:
+                # Show beginning and end with ellipsis in middle for better context
+                content_preview = content[:500] + "\n...\n" + content[-500:]
+            else:
+                content_preview = content
+            
+            # Also include entity information for better assessment
+            metadata = ctx.get("metadata", {})
+            entity_type = metadata.get("entity_type", "unknown")
+            entity_name = (metadata.get("table_name") or 
+                          metadata.get("view_name") or 
+                          metadata.get("relationship_name") or "unknown")
+            
+            formatted_parts.append(f"Document {i} ({entity_type}: {entity_name}):\n{content_preview}")
+        return "\n\n".join(formatted_parts)
     
     def _parse_confidence_assessment(self, response_text: str) -> Dict[str, Any]:
         """Parse confidence assessment response."""

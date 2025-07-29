@@ -426,40 +426,47 @@ class LlamaIndexVectorService:
     ) -> bool:
         """Add document to the index with JSON to Dolphin format conversion."""
         try:
-            # Create individual documents for each semantic entity (not chunks)
+            # Create individual documents for each model/view/relationship entity
             documents = []
             if self.content_processor.is_json_content(content):
                 from ..models.simple_models import DocumentType as DocType
                 doc_type_enum = DocType.SCHEMA if document_type.lower() == "schema" else DocType.REPORT
                 
-                # Create semantic chunks that will become separate documents
-                semantic_chunks = self.content_processor.create_semantic_chunks(content, doc_type_enum)
+                # Create individual documents using the new approach
+                individual_documents = self.content_processor.create_individual_documents(content, doc_type_enum)
                 
                 logger.info(
-                    "Created semantic entities for separate document storage",
+                    "Created individual documents for separate storage",
                     document_id=document_id,
-                    num_entities=len(semantic_chunks),
-                    entity_types=[chunk["metadata"].get("chunk_type") for chunk in semantic_chunks]
+                    num_documents=len(individual_documents),
+                    entity_types=[doc["metadata"].get("entity_type") for doc in individual_documents],
+                    chunk_types=[doc["metadata"].get("chunk_type") for doc in individual_documents]
                 )
                 
-                # Convert each semantic chunk to a complete LlamaIndex document (not node/chunk)
-                for i, chunk in enumerate(semantic_chunks):
-                    entity_id = f"{document_id}_{chunk['metadata'].get('chunk_type', 'entity')}_{i}"
+                # Convert each individual document to a complete LlamaIndex document
+                for i, doc_data in enumerate(individual_documents):
+                    # Create unique entity ID based on entity type and name
+                    entity_type = doc_data["metadata"].get("entity_type", "entity")
+                    entity_name = (doc_data["metadata"].get("table_name") or 
+                                 doc_data["metadata"].get("view_name") or 
+                                 doc_data["metadata"].get("relationship_name") or 
+                                 f"entity_{i}")
+                    entity_id = f"{document_id}_{entity_type}_{entity_name}"
                     
-                    chunk_metadata = {
+                    doc_metadata = {
                         "document_id": entity_id,  # Each entity gets its own document ID
                         "parent_document_id": document_id,  # Track original document
                         "document_type": document_type,
                         "entity_index": i,
-                        "total_entities": len(semantic_chunks),
-                        "is_semantic_entity": True,
+                        "total_entities": len(individual_documents),
+                        "is_individual_entity": True,
                         **metadata,
-                        **chunk["metadata"]  # Include semantic metadata
+                        **doc_data["metadata"]  # Include all entity metadata
                     }
                     
                     document = LlamaDocument(
-                        text=chunk["content"],
-                        metadata=chunk_metadata,
+                        text=doc_data["content"],
+                        metadata=doc_metadata,
                         id_=entity_id
                     )
                     documents.append(document)
@@ -480,11 +487,11 @@ class LlamaIndexVectorService:
                 )
                 documents.append(document)
             
-            # Process all documents (no further chunking for semantic entities)
+            # Process all documents (no further chunking for individual entities)
             nodes = []
             for doc in documents:
-                # For semantic entities, store as single nodes (no further chunking)
-                if doc.metadata.get("is_semantic_entity", False):
+                # For individual entities, store as single nodes (no further chunking)
+                if doc.metadata.get("is_individual_entity", False):
                     # Create a single node from the complete entity document
                     from llama_index.core.schema import TextNode
                     node = TextNode(
@@ -494,7 +501,7 @@ class LlamaIndexVectorService:
                     )
                     nodes.append(node)
                 else:
-                    # Use traditional chunking for non-semantic documents
+                    # Use traditional chunking for non-individual documents
                     splitter = SentenceSplitter(
                         chunk_size=settings.app.chunk_size,
                         chunk_overlap=settings.app.chunk_overlap
@@ -987,3 +994,490 @@ class LlamaIndexVectorService:
         """Determine if the query is asking about schema/structure information."""
         schema_indicators = ["table", "column", "field", "structure", "schema", "database", "what tables", "which tables"]
         return any(indicator in query.lower() for indicator in schema_indicators)
+    
+    def two_step_metadata_retrieval(
+        self,
+        query: str,
+        similarity_top_k: int = 10,
+        document_type: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Perform 2-step retrieval: first models/views, then relationships, then pruning.
+        
+        This method implements the user's requested approach:
+        1. Semantic search for relevant models/views with rewritten prompts
+        2. Search for relationships relevant to the returned models/views
+        3. Pruning step to remove unneeded metadata
+        
+        Args:
+            query: The user's natural language query
+            similarity_top_k: Maximum number of results per step
+            document_type: Filter by document type if needed
+            
+        Returns:
+            Dictionary containing retrieved and pruned metadata
+        """
+        try:
+            logger.info("=== STARTING 2-STEP METADATA RETRIEVAL ===")
+            logger.info("Step 1: Retrieving relevant models and views", 
+                       query=query, similarity_top_k=similarity_top_k)
+            
+            # Debug: First check what documents exist in the vector store
+            all_docs = self.list_all_documents()
+            logger.info("Available documents in vector store", 
+                       total_docs=len(all_docs),
+                       doc_types=[doc.get("document_type") for doc in all_docs],
+                       sample_doc_ids=[doc.get("document_id") for doc in all_docs[:5]])
+            
+            # Step 1: Get relevant models and views with optimized prompt rewriting
+            models_views_results = self._step1_retrieve_models_views(query, similarity_top_k)
+            
+            logger.info("Step 1 completed", 
+                       num_models_views=len(models_views_results),
+                       entities=[r["metadata"].get("table_name") or r["metadata"].get("view_name") 
+                               for r in models_views_results[:5]])
+            
+            # Step 2: Get relationships relevant to the retrieved models/views
+            logger.info("Step 2: Retrieving relevant relationships")
+            relationships_results = self._step2_retrieve_relationships(models_views_results, query, similarity_top_k)
+            
+            logger.info("Step 2 completed", 
+                       num_relationships=len(relationships_results),
+                       relationship_names=[r["metadata"].get("relationship_name") 
+                                         for r in relationships_results[:5]])
+            
+            # Step 3: Pruning step to remove unneeded metadata
+            logger.info("Step 3: Pruning metadata")
+            pruned_metadata = self._step3_prune_metadata(models_views_results, relationships_results, query)
+            
+            logger.info("=== 2-STEP RETRIEVAL COMPLETE ===", 
+                       final_models=len(pruned_metadata["models"]),
+                       final_views=len(pruned_metadata["views"]),
+                       final_relationships=len(pruned_metadata["relationships"]))
+            
+            return pruned_metadata
+            
+        except Exception as e:
+            logger.error("Failed in 2-step metadata retrieval", error=str(e))
+            return {
+                "models": [],
+                "views": [],
+                "relationships": [],
+                "error": str(e)
+            }
+    
+    def _step1_retrieve_models_views(self, query: str, similarity_top_k: int) -> List[Dict[str, Any]]:
+        """Step 1: Retrieve relevant models and views with optimized prompt rewriting."""
+        try:
+            # Create optimized search queries for models and views
+            rewritten_queries = self._rewrite_query_for_models_views(query)
+            logger.info("Step 1: Rewritten queries for models/views", 
+                       original_query=query,
+                       rewritten_queries=rewritten_queries)
+            
+            all_results = []
+            
+            for i, rewritten_query in enumerate(rewritten_queries):
+                logger.info(f"Step 1.{i+1}: Searching for models/views", query=rewritten_query)
+                
+                # Search specifically for individual models and views
+                results = self.search_similar(
+                    query=rewritten_query,
+                    retriever_type="hybrid",
+                    similarity_top_k=similarity_top_k,
+                    document_type="schema"
+                )
+                
+                logger.info(f"Step 1.{i+1}: Raw search results", 
+                           num_results=len(results),
+                           result_types=[r["metadata"].get("entity_type") for r in results],
+                           result_names=[r["metadata"].get("table_name") or r["metadata"].get("view_name") 
+                                       for r in results])
+                
+                # Filter to only models and views
+                filtered_results = [
+                    r for r in results 
+                    if r["metadata"].get("entity_type") in ["model", "view"]
+                ]
+                
+                logger.info(f"Step 1.{i+1}: Filtered results (models/views only)", 
+                           num_filtered=len(filtered_results),
+                           filtered_names=[r["metadata"].get("table_name") or r["metadata"].get("view_name") 
+                                         for r in filtered_results])
+                
+                all_results.extend(filtered_results)
+            
+            # Deduplicate and rank results
+            unique_results = self._deduplicate_and_rank_results(all_results, max_results=similarity_top_k)
+            
+            return unique_results
+            
+        except Exception as e:
+            logger.error("Failed in step 1 retrieval", error=str(e))
+            return []
+    
+    def _step2_retrieve_relationships(self, models_views_results: List[Dict[str, Any]], query: str, similarity_top_k: int) -> List[Dict[str, Any]]:
+        """Step 2: Retrieve relationships relevant to the models/views from step 1."""
+        try:
+            # Extract table/view names from step 1 results
+            entity_names = set()
+            for result in models_views_results:
+                metadata = result["metadata"]
+                if "table_name" in metadata:
+                    entity_names.add(metadata["table_name"])
+                if "view_name" in metadata:
+                    entity_names.add(metadata["view_name"])
+            
+            if not entity_names:
+                logger.warning("No entity names found from step 1 results")
+                return []
+            
+            logger.info("Searching for relationships involving entities", entities=list(entity_names))
+            
+            # Create relationship-focused search queries
+            relationship_queries = self._create_relationship_queries(entity_names, query)
+            
+            all_relationship_results = []
+            
+            for rel_query in relationship_queries:
+                logger.info("Searching for relationships", query=rel_query)
+                
+                # Search for relationships
+                results = self.search_similar(
+                    query=rel_query,
+                    retriever_type="hybrid",
+                    similarity_top_k=similarity_top_k,
+                    document_type="schema"
+                )
+                
+                # Filter to only relationships that involve our entities
+                relevant_relationships = []
+                for r in results:
+                    if r["metadata"].get("entity_type") == "relationship":
+                        relationship_tables = r["metadata"].get("tables", [])
+                        # Check if this relationship involves any of our entities
+                        if any(table in entity_names for table in relationship_tables):
+                            relevant_relationships.append(r)
+                
+                all_relationship_results.extend(relevant_relationships)
+            
+            # Deduplicate and rank relationship results
+            unique_relationships = self._deduplicate_and_rank_results(all_relationship_results, max_results=similarity_top_k)
+            
+            return unique_relationships
+            
+        except Exception as e:
+            logger.error("Failed in step 2 retrieval", error=str(e))
+            return []
+    
+    def _step3_prune_metadata(self, models_views: List[Dict[str, Any]], relationships: List[Dict[str, Any]], query: str) -> Dict[str, Any]:
+        """Step 3: Prune metadata to remove unneeded information."""
+        try:
+            # Analyze query to determine what information is actually needed
+            query_analysis = self._analyze_query_requirements(query)
+            
+            pruned_models = []
+            pruned_views = []
+            pruned_relationships = []
+            
+            # Prune models based on relevance and query requirements
+            for result in models_views:
+                metadata = result["metadata"]
+                if metadata.get("entity_type") == "model":
+                    pruned_model = self._prune_model_metadata(result, query_analysis)
+                    if pruned_model:
+                        pruned_models.append(pruned_model)
+                elif metadata.get("entity_type") == "view":
+                    pruned_view = self._prune_view_metadata(result, query_analysis)
+                    if pruned_view:
+                        pruned_views.append(pruned_view)
+            
+            # Prune relationships to only include those relevant to remaining models/views
+            retained_entity_names = set()
+            for model in pruned_models:
+                retained_entity_names.add(model["metadata"].get("table_name", ""))
+            for view in pruned_views:
+                retained_entity_names.add(view["metadata"].get("view_name", ""))
+            
+            for relationship in relationships:
+                relationship_tables = relationship["metadata"].get("tables", [])
+                # Keep relationship if it connects retained entities
+                if any(table in retained_entity_names for table in relationship_tables):
+                    pruned_relationship = self._prune_relationship_metadata(relationship, query_analysis)
+                    if pruned_relationship:
+                        pruned_relationships.append(pruned_relationship)
+            
+            logger.info("Pruning completed", 
+                       original_models_views=len(models_views),
+                       original_relationships=len(relationships),
+                       pruned_models=len(pruned_models),
+                       pruned_views=len(pruned_views),
+                       pruned_relationships=len(pruned_relationships))
+            
+            return {
+                "models": pruned_models,
+                "views": pruned_views,
+                "relationships": pruned_relationships,
+                "query_analysis": query_analysis
+            }
+            
+        except Exception as e:
+            logger.error("Failed in step 3 pruning", error=str(e))
+            return {
+                "models": models_views,  # Return unpruned as fallback
+                "views": [],
+                "relationships": relationships,
+                "query_analysis": {},
+                "error": str(e)
+            }
+    
+    def _rewrite_query_for_models_views(self, query: str) -> List[str]:
+        """Create optimized search queries for finding relevant models and views."""
+        queries = [query]  # Always include original
+        query_lower = query.lower()
+        
+        # Extract entities and create focused queries
+        if any(term in query_lower for term in ['user', 'users', 'customer', 'customers']):
+            queries.extend([
+                "users table customers user information",
+                "user entity customer data table",
+                "users customers database table model"
+            ])
+        
+        if any(term in query_lower for term in ['order', 'orders', 'purchase', 'transaction']):
+            queries.extend([
+                "orders table transactions purchases",
+                "order entity transaction data",
+                "orders purchases database table model"
+            ])
+        
+        if any(term in query_lower for term in ['product', 'products', 'item', 'items']):
+            queries.extend([
+                "products table items inventory",
+                "product entity item data",
+                "products items database table model"
+            ])
+        
+        # Add business domain queries
+        if any(term in query_lower for term in ['sales', 'revenue', 'total', 'amount']):
+            queries.extend([
+                "sales revenue tables financial data",
+                "sales summary view analytical data",
+                "revenue amount tables financial model"
+            ])
+        
+        # Add Fixed Income domain queries
+        if any(term in query_lower for term in ['deal', 'deals', 'fixed income', 'tranche', 'tranches']):
+            queries.extend([
+                "deal deals table fixed income financial",
+                "tranche tranches table deal data",
+                "fixed income deals database table model",
+                "termsheet deals tranche information"
+            ])
+        
+        if any(term in query_lower for term in ['announced', 'status', 'state']):
+            queries.extend([
+                "status announced table deal information",
+                "status state table database model",
+                "announced status deals tranche"
+            ])
+        
+        if any(term in query_lower for term in ['investor', 'trades', 'trading']):
+            queries.extend([
+                "investor trades table trading data",
+                "investor trading database table model",
+                "trades investor information table"
+            ])
+        
+        if any(term in query_lower for term in ['termsheet', 'term sheet']):
+            queries.extend([
+                "termsheet term sheet view table",
+                "termsheet deals information database",
+                "v_termsheet view termsheet data"
+            ])
+        
+        # Remove duplicates and limit
+        unique_queries = list(dict.fromkeys(queries))  # Preserves order
+        return unique_queries[:6]  # Increased limit to handle more domain-specific queries
+    
+    def _create_relationship_queries(self, entity_names: set, original_query: str) -> List[str]:
+        """Create queries to find relationships involving specific entities."""
+        queries = []
+        
+        entity_list = list(entity_names)
+        
+        # Create queries that combine entity names with relationship terms
+        if len(entity_list) >= 2:
+            queries.append(f"relationship join {entity_list[0]} {entity_list[1]}")
+            queries.append(f"{entity_list[0]} {entity_list[1]} connection relationship")
+        
+        # Add general relationship queries for each entity
+        for entity in entity_list:
+            queries.extend([
+                f"{entity} relationships joins connections",
+                f"relationship {entity} table connections",
+                f"{entity} foreign key relationships"
+            ])
+        
+        # Add original query context
+        queries.append(f"relationships {original_query}")
+        
+        return queries[:6]  # Limit to 6 relationship queries
+    
+    def _analyze_query_requirements(self, query: str) -> Dict[str, Any]:
+        """Analyze the query to understand what metadata is actually needed."""
+        query_lower = query.lower()
+        
+        analysis = {
+            "needs_aggregation": any(term in query_lower for term in ['count', 'sum', 'total', 'average', 'max', 'min']),
+            "needs_filtering": any(term in query_lower for term in ['where', 'filter', 'specific', 'only', 'particular']),
+            "needs_sorting": any(term in query_lower for term in ['order', 'sort', 'top', 'highest', 'lowest', 'recent']),
+            "needs_joins": any(term in query_lower for term in ['join', 'relate', 'connect', 'with', 'together']),
+            "key_terms": self._extract_query_terms(query),
+            "focus_areas": []
+        }
+        
+        # Identify focus areas
+        if any(term in query_lower for term in ['user', 'customer', 'person']):
+            analysis["focus_areas"].append("user_data")
+        if any(term in query_lower for term in ['order', 'purchase', 'transaction']):
+            analysis["focus_areas"].append("transaction_data")
+        if any(term in query_lower for term in ['product', 'item', 'inventory']):
+            analysis["focus_areas"].append("product_data")
+        
+        return analysis
+    
+    def _prune_model_metadata(self, model_result: Dict[str, Any], query_analysis: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Prune model metadata to keep only relevant information."""
+        try:
+            metadata = model_result["metadata"]
+            table_name = metadata.get("table_name", "")
+            columns = metadata.get("columns", [])
+            
+            # Always keep core metadata
+            pruned_result = {
+                "content": model_result["content"],
+                "metadata": {
+                    "entity_type": "model",
+                    "table_name": table_name,
+                    "catalog": metadata.get("catalog", ""),
+                    "schema": metadata.get("schema", ""),
+                    "business_terms": metadata.get("business_terms", []),
+                    "classified_entity_type": metadata.get("classified_entity_type", ""),
+                    "columns": columns,  # Keep all columns for now, could be pruned further if needed
+                    "pruned": True
+                },
+                "score": model_result.get("score", 0.0),
+                "combined_score": model_result.get("combined_score", model_result.get("score", 0.0))
+            }
+            
+            # Check relevance based on query analysis
+            table_relevant = False
+            key_terms = query_analysis.get("key_terms", [])
+            
+            # Check if table name matches query terms
+            if any(term in table_name.lower() for term in key_terms):
+                table_relevant = True
+            
+            # Check if business terms match
+            business_terms = metadata.get("business_terms", [])
+            if any(term in business_terms for term in key_terms):
+                table_relevant = True
+            
+            # Check focus areas
+            focus_areas = query_analysis.get("focus_areas", [])
+            if focus_areas:
+                if "user_data" in focus_areas and any(term in table_name.lower() for term in ['user', 'customer', 'person']):
+                    table_relevant = True
+                if "transaction_data" in focus_areas and any(term in table_name.lower() for term in ['order', 'transaction', 'purchase']):
+                    table_relevant = True
+                if "product_data" in focus_areas and any(term in table_name.lower() for term in ['product', 'item', 'inventory']):
+                    table_relevant = True
+            
+            return pruned_result if table_relevant else None
+            
+        except Exception as e:
+            logger.error("Failed to prune model metadata", error=str(e))
+            return model_result  # Return original as fallback
+    
+    def _prune_view_metadata(self, view_result: Dict[str, Any], query_analysis: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Prune view metadata to keep only relevant information."""
+        try:
+            metadata = view_result["metadata"]
+            view_name = metadata.get("view_name", "")
+            
+            pruned_result = {
+                "content": view_result["content"],
+                "metadata": {
+                    "entity_type": "view",
+                    "view_name": view_name,
+                    "catalog": metadata.get("catalog", ""),
+                    "schema": metadata.get("schema", ""),
+                    "business_terms": metadata.get("business_terms", []),
+                    "columns": metadata.get("columns", []),
+                    "pruned": True
+                },
+                "score": view_result.get("score", 0.0),
+                "combined_score": view_result.get("combined_score", view_result.get("score", 0.0))
+            }
+            
+            # Similar relevance check as models
+            view_relevant = False
+            key_terms = query_analysis.get("key_terms", [])
+            
+            if any(term in view_name.lower() for term in key_terms):
+                view_relevant = True
+            
+            business_terms = metadata.get("business_terms", [])
+            if any(term in business_terms for term in key_terms):
+                view_relevant = True
+            
+            return pruned_result if view_relevant else None
+            
+        except Exception as e:
+            logger.error("Failed to prune view metadata", error=str(e))
+            return view_result  # Return original as fallback
+    
+    def _prune_relationship_metadata(self, relationship_result: Dict[str, Any], query_analysis: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Prune relationship metadata to keep only relevant information."""
+        try:
+            metadata = relationship_result["metadata"]
+            
+            pruned_result = {
+                "content": relationship_result["content"],
+                "metadata": {
+                    "entity_type": "relationship",
+                    "relationship_name": metadata.get("relationship_name", ""),
+                    "catalog": metadata.get("catalog", ""),
+                    "schema": metadata.get("schema", ""),
+                    "tables": metadata.get("tables", []),
+                    "relationship_type": metadata.get("relationship_type", ""),
+                    "business_terms": metadata.get("business_terms", []),
+                    "pruned": True
+                },
+                "score": relationship_result.get("score", 0.0),
+                "combined_score": relationship_result.get("combined_score", relationship_result.get("score", 0.0))
+            }
+            
+            # Keep all relationships that made it this far as they were already filtered
+            # by relevance to the retained models/views
+            return pruned_result
+            
+        except Exception as e:
+            logger.error("Failed to prune relationship metadata", error=str(e))
+            return relationship_result  # Return original as fallback
+    
+    def _deduplicate_and_rank_results(self, results: List[Dict[str, Any]], max_results: int = 5) -> List[Dict[str, Any]]:
+        """Deduplicate search results and rank by combined score."""
+        seen_ids = set()
+        unique_results = []
+        
+        for result in results:
+            result_id = result.get("id")
+            if result_id not in seen_ids:
+                seen_ids.add(result_id)
+                unique_results.append(result)
+        
+        # Sort by combined score if available, otherwise by regular score
+        unique_results.sort(key=lambda x: x.get("combined_score", x.get("score", 0.0)), reverse=True)
+        
+        return unique_results[:max_results]

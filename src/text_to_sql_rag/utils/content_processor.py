@@ -791,3 +791,330 @@ The schema supports queries about deal statuses, tranche information, and asset 
             "content": self._format_json_as_dolphin(report_data, DocumentType.REPORT),
             "metadata": {"chunk_type": "report_document"}
         }]
+    
+    def create_individual_documents(self, json_content: str, document_type: DocumentType) -> List[Dict[str, Any]]:
+        """Create individual documents for each model/view/relationship in schema metadata.
+        
+        This method takes the main_schema_metadata.json and creates separate documents
+        for each model, view, and relationship. Each document contains complete information
+        about that entity in dolphin format, optimized for semantic search and retrieval.
+        
+        Args:
+            json_content: The main_schema_metadata.json content as string
+            document_type: The type of document (should be SCHEMA)
+            
+        Returns:
+            List of individual documents, each containing complete entity information
+        """
+        try:
+            data = json.loads(json_content)
+            if document_type == DocumentType.SCHEMA:
+                return self._create_individual_schema_documents(data)
+            else:
+                # Fallback for non-schema documents
+                return [{
+                    "content": self.convert_json_to_dolphin_format(json_content, document_type),
+                    "metadata": {
+                        "chunk_type": "full_document",
+                        "entity_type": "unknown"
+                    }
+                }]
+        except json.JSONDecodeError:
+            # If not valid JSON, return as single document
+            return [{
+                "content": json_content,
+                "metadata": {
+                    "chunk_type": "text_document",
+                    "entity_type": "unknown"
+                }
+            }]
+    
+    def _create_individual_schema_documents(self, schema_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Create individual documents for each model, view, and relationship in schema data.
+        
+        This creates completely separate documents for each entity:
+        - One document per model (table)
+        - One document per view  
+        - One document per relationship
+        
+        Each document contains the complete information for that entity in dolphin format.
+        """
+        documents = []
+        
+        # Extract basic schema information
+        catalog = schema_data.get("catalog", "")
+        schema_name = schema_data.get("schema", "")
+        
+        # Create individual documents for each model (table)
+        if "models" in schema_data:
+            for model in schema_data["models"]:
+                doc = self._create_individual_model_document(model, catalog, schema_name)
+                documents.append(doc)
+        
+        # Create individual documents for each view
+        if "views" in schema_data:
+            for view in schema_data["views"]:
+                doc = self._create_individual_view_document(view, catalog, schema_name)
+                documents.append(doc)
+        
+        # Create individual documents for each relationship
+        if "relationships" in schema_data:
+            for relationship in schema_data["relationships"]:
+                doc = self._create_individual_relationship_document(relationship, catalog, schema_name)
+                documents.append(doc)
+        
+        return documents
+    
+    def _create_individual_model_document(self, model_data: Dict[str, Any], catalog: str, schema_name: str) -> Dict[str, Any]:
+        """Create a complete document for a single database model/table."""
+        table_name = model_data.get("table_name", model_data.get("name", "unknown_table"))
+        description = model_data.get("description", "")
+        
+        # Build comprehensive model document in dolphin format
+        content_lines = [
+            "=== DATABASE TABLE DOCUMENT ===",
+            f"Table Name: {table_name.upper()}",
+            f"Catalog: {catalog}",
+            f"Schema: {schema_name}",
+            f"Full Qualified Name: {catalog}.{schema_name}.{table_name}",
+            ""
+        ]
+        
+        if description:
+            content_lines.extend([
+                "Table Description:",
+                description,
+                ""
+            ])
+        
+        # Add detailed column information
+        if "columns" in model_data:
+            content_lines.append("=== TABLE COLUMNS ===")
+            for col in model_data["columns"]:
+                col_name = col.get("name", "")
+                col_type = col.get("type", "")
+                col_key = col.get("key", "")
+                example_values = col.get("example_values", [])
+                nullable = col.get("nullable", True)
+                
+                content_lines.extend([
+                    f"Column: {col_name}",
+                    f"  Data Type: {col_type}",
+                ])
+                
+                if col_key:
+                    content_lines.append(f"  Key Type: {col_key}")
+                
+                content_lines.append(f"  Nullable: {'Yes' if nullable else 'No'}")
+                
+                if example_values:
+                    example_str = ", ".join([f"'{val}'" for val in example_values[:5]])
+                    content_lines.append(f"  Example Values: {example_str}")
+                
+                content_lines.append("")
+        
+        # Add business context and usage information
+        content_lines.extend([
+            "=== BUSINESS CONTEXT ===",
+            f"This table '{table_name}' contains {description.lower() if description else 'data'} in the database.",
+            f"The table can be accessed using: SELECT * FROM {catalog}.{schema_name}.{table_name}",
+            ""
+        ])
+        
+        # Add query examples
+        content_lines.extend([
+            "=== COMMON QUERY PATTERNS ===",
+            f"-- Select all records from {table_name}",
+            f"SELECT * FROM {catalog}.{schema_name}.{table_name};",
+            "",
+            f"-- Count records in {table_name}",
+            f"SELECT COUNT(*) FROM {catalog}.{schema_name}.{table_name};",
+            ""
+        ])
+        
+        # Extract business terms and metadata
+        business_terms = self._extract_business_terms(table_name, description, model_data)
+        entity_type = self._classify_entity_type(table_name)
+        
+        content_lines.append("=== END TABLE DOCUMENT ===")
+        
+        return {
+            "content": "\n".join(content_lines),
+            "metadata": {
+                "chunk_type": "individual_model",
+                "entity_type": "model",
+                "table_name": table_name,
+                "catalog": catalog,
+                "schema": schema_name,
+                "business_terms": business_terms,
+                "classified_entity_type": entity_type,
+                "columns": [col.get("name", "") for col in model_data.get("columns", [])],
+                "searchable_content": f"{table_name} table model {description} {' '.join(business_terms)}"
+            }
+        }
+    
+    def _create_individual_view_document(self, view_data: Dict[str, Any], catalog: str, schema_name: str) -> Dict[str, Any]:
+        """Create a complete document for a single database view."""
+        view_name = view_data.get("view_name", view_data.get("name", "unknown_view"))
+        description = view_data.get("description", "")
+        view_sql = view_data.get("query", view_data.get("view_sql", ""))
+        
+        # Build comprehensive view document in dolphin format
+        content_lines = [
+            "=== DATABASE VIEW DOCUMENT ===",
+            f"View Name: {view_name.upper()}",
+            f"Catalog: {catalog}",
+            f"Schema: {schema_name}",
+            f"Full Qualified Name: {catalog}.{schema_name}.{view_name}",
+            ""
+        ]
+        
+        if description:
+            content_lines.extend([
+                "View Description:",
+                description,
+                ""
+            ])
+        
+        # Add view definition SQL
+        if view_sql:
+            content_lines.extend([
+                "=== VIEW DEFINITION ===",
+                "SQL Definition:",
+                view_sql,
+                ""
+            ])
+        
+        # Add detailed column information
+        if "columns" in view_data:
+            content_lines.append("=== VIEW COLUMNS ===")
+            for col in view_data["columns"]:
+                col_name = col.get("name", "")
+                col_type = col.get("type", "")
+                nullable = col.get("nullable", True)
+                
+                content_lines.extend([
+                    f"Column: {col_name}",
+                    f"  Data Type: {col_type}",
+                    f"  Nullable: {'Yes' if nullable else 'No'}",
+                    ""
+                ])
+        
+        # Add business context
+        content_lines.extend([
+            "=== BUSINESS CONTEXT ===",
+            f"This view '{view_name}' provides {description.lower() if description else 'analytical data'} from the database.",
+            f"The view can be queried using: SELECT * FROM {catalog}.{schema_name}.{view_name}",
+            ""
+        ])
+        
+        # Add query examples
+        content_lines.extend([
+            "=== COMMON QUERY PATTERNS ===",
+            f"-- Select all data from {view_name} view",
+            f"SELECT * FROM {catalog}.{schema_name}.{view_name};",
+            "",
+            f"-- Count records in {view_name} view",
+            f"SELECT COUNT(*) FROM {catalog}.{schema_name}.{view_name};",
+            ""
+        ])
+        
+        business_terms = self._extract_business_terms(view_name, description, view_data)
+        
+        content_lines.append("=== END VIEW DOCUMENT ===")
+        
+        return {
+            "content": "\n".join(content_lines),
+            "metadata": {
+                "chunk_type": "individual_view",
+                "entity_type": "view",
+                "view_name": view_name,
+                "catalog": catalog,
+                "schema": schema_name,
+                "business_terms": business_terms,
+                "columns": [col.get("name", "") for col in view_data.get("columns", [])],
+                "searchable_content": f"{view_name} view {description} {' '.join(business_terms)}"
+            }
+        }
+    
+    def _create_individual_relationship_document(self, relationship_data: Dict[str, Any], catalog: str, schema_name: str) -> Dict[str, Any]:
+        """Create a complete document for a single database relationship."""
+        rel_name = relationship_data.get("relationship_name", relationship_data.get("name", "unknown_relationship"))
+        tables = relationship_data.get("tables", relationship_data.get("models", []))
+        rel_type = relationship_data.get("type", relationship_data.get("joinType", ""))
+        description = relationship_data.get("description", "")
+        example_sql = relationship_data.get("example_sql", "")
+        
+        # Build comprehensive relationship document in dolphin format
+        content_lines = [
+            "=== DATABASE RELATIONSHIP DOCUMENT ===",
+            f"Relationship Name: {rel_name.upper()}",
+            f"Catalog: {catalog}",
+            f"Schema: {schema_name}",
+            ""
+        ]
+        
+        if description:
+            content_lines.extend([
+                "Relationship Description:",
+                description,
+                ""
+            ])
+        
+        # Add relationship details
+        content_lines.extend([
+            "=== RELATIONSHIP DETAILS ===",
+            f"Connected Tables: {' <-> '.join(tables)}",
+            f"Relationship Type: {rel_type}",
+            f"Full Table References: {' <-> '.join([f'{catalog}.{schema_name}.{table}' for table in tables])}",
+            ""
+        ])
+        
+        # Add join information
+        if example_sql:
+            content_lines.extend([
+                "=== JOIN EXAMPLE ===",
+                "Example SQL to join these tables:",
+                example_sql,
+                ""
+            ])
+        
+        # Add business context
+        content_lines.extend([
+            "=== BUSINESS CONTEXT ===",
+            f"This relationship '{rel_name}' defines how {' and '.join(tables)} tables are connected.",
+            f"It represents a {rel_type} relationship between the tables.",
+            ""
+        ])
+        
+        # Add usage patterns
+        content_lines.extend([
+            "=== USAGE PATTERNS ===",
+            f"-- Query data from related tables using this relationship",
+            f"-- Use JOIN operations to combine data from {' and '.join(tables)}",
+            f"-- Relationship type: {rel_type}",
+            ""
+        ])
+        
+        business_terms = []
+        for table in tables:
+            business_terms.extend(self._extract_terms_from_name(table))
+        business_terms.extend(self._extract_terms_from_text(description))
+        business_terms = list(set(business_terms))  # Remove duplicates
+        
+        content_lines.append("=== END RELATIONSHIP DOCUMENT ===")
+        
+        return {
+            "content": "\n".join(content_lines),
+            "metadata": {
+                "chunk_type": "individual_relationship",
+                "entity_type": "relationship",
+                "relationship_name": rel_name,
+                "catalog": catalog,
+                "schema": schema_name,
+                "tables": tables,
+                "relationship_type": rel_type,
+                "business_terms": business_terms,
+                "searchable_content": f"{rel_name} relationship {rel_type} {' '.join(tables)} {description} {' '.join(business_terms)}"
+            }
+        }
