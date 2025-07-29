@@ -455,8 +455,12 @@ The schema supports queries about deal statuses, tranche information, and asset 
     
     def _create_table_semantic_chunk(self, table_data: Dict[str, Any], schema_info: Dict[str, Any]) -> Dict[str, Any]:
         """Create a semantic chunk for a database table with business context."""
-        table_name = table_data.get("table_name", table_data.get("name", "unknown_table"))
-        description = table_data.get("description", table_data.get("properties", {}).get("description", ""))
+        # Handle both name formats
+        table_name = table_data.get("name", table_data.get("table_name", "unknown_table"))
+        
+        # Handle properties structure
+        properties = table_data.get("properties", {})
+        description = properties.get("description", "")
         
         # Build comprehensive table information in clean Dolphin format
         content_lines = [
@@ -474,18 +478,29 @@ The schema supports queries about deal statuses, tranche information, and asset 
                 col_name = col.get("name", "")
                 col_type = col.get("type", "")
                 example_values = col.get("example_values", [])
-                not_null = col.get("notNull", False)
+                
+                # Handle different nullable field names
+                not_null = not col.get("nullable", True) or col.get("notNull", False)
+                
+                # Handle relationships
                 relationship = col.get("relationship", [])
                 col_description = col.get("description", "")
                 
+                # Handle key information
+                key_info = col.get("key", "")
+                
                 content_lines.append(f"Column: {col_name}")
                 content_lines.append(f"  Type: {col_type}")
+                if key_info:
+                    content_lines.append(f"  Key: {key_info}")
                 if col_description:
                     content_lines.append(f"  Description: {col_description}")
                 if example_values:
                     content_lines.append(f"  Example values: {', '.join(map(str, example_values[:5]))}")
                 if not_null:
                     content_lines.append(f"  Required: Yes (NOT NULL)")
+                else:
+                    content_lines.append(f"  Required: No (nullable)")
                 if relationship:
                     content_lines.append(f"  Related to: {', '.join(relationship)}")
                 content_lines.append("")
@@ -527,16 +542,22 @@ The schema supports queries about deal statuses, tranche information, and asset 
     
     def _create_view_semantic_chunk(self, view_data: Dict[str, Any], schema_info: Dict[str, Any]) -> Dict[str, Any]:
         """Create a semantic chunk for a database view with analytical context."""
-        view_name = view_data.get("view_name", view_data.get("name", "unknown_view"))
-        description = view_data.get("description", view_data.get("properties", {}).get("description", ""))
-        view_sql = view_data.get("query", view_data.get("view_sql", ""))
-        view_type = view_data.get("view_type", "")
+        # Handle both name formats
+        view_name = view_data.get("name", view_data.get("view_name", "unknown_view"))
+        
+        # Handle properties structure
+        properties = view_data.get("properties", {})
+        description = properties.get("description", "")
+        view_sql = properties.get("view_sql", view_data.get("query", ""))
+        view_type = properties.get("view_type", "")
+        security_abstraction = properties.get("security_abstraction", "")
         
         content_lines = [
             f"DATABASE VIEW: {view_name.upper()}",
             f"Catalog: {schema_info['catalog']}",
             f"Schema: {schema_info['schema']}",
             f"View Type: {view_type}" if view_type else "",
+            f"Security Abstraction: {security_abstraction}" if security_abstraction else "",
             f"Business Purpose: {description}" if description else "",
             ""
         ]
@@ -555,10 +576,17 @@ The schema supports queries about deal statuses, tranche information, and asset 
                 col_type = col.get("type", "")
                 example_values = col.get("example_values", [])
                 
+                # Handle different nullable field names
+                not_null = not col.get("nullable", True) or col.get("notNull", False)
+                
                 content_lines.append(f"Column: {col_name}")
                 content_lines.append(f"  Type: {col_type}")
                 if example_values:
                     content_lines.append(f"  Example values: {', '.join(map(str, example_values[:5]))}")
+                if not_null:
+                    content_lines.append(f"  Required: Yes (NOT NULL)")
+                else:
+                    content_lines.append(f"  Required: No (nullable)")
                 content_lines.append("")
         
         # Add reference SQL
@@ -606,36 +634,45 @@ The schema supports queries about deal statuses, tranche information, and asset 
             ]
             
             for rel in domain_relationships:
-                rel_name = rel.get("relationship_name", rel.get("name", ""))
-                models = rel.get("tables", rel.get("models", []))
-                join_type = rel.get("type", rel.get("joinType", ""))
+                # Handle both name formats
+                rel_name = rel.get("name", rel.get("relationship_name", ""))
+                
+                # Handle both model formats  
+                models = rel.get("models", rel.get("tables", []))
+                
+                # Handle join type
+                join_type = rel.get("joinType", rel.get("type", ""))
+                
+                # Handle condition
                 condition = rel.get("condition", "")
+                
+                # Handle properties
+                properties = rel.get("properties", {})
+                constraint_name = properties.get("constraint_name", "")
+                relationship_type = properties.get("relationship_type", "")
+                example_join_sql = properties.get("example_join_sql", "")
                 
                 content_lines.append(f"RELATIONSHIP: {rel_name}")
                 content_lines.append(f"  Connected Tables: {' <-> '.join(models)}")
-                content_lines.append(f"  Relationship Type: {join_type}")
+                content_lines.append(f"  Join Type: {join_type}")
+                if constraint_name:
+                    content_lines.append(f"  Constraint Name: {constraint_name}")
+                if relationship_type:
+                    content_lines.append(f"  Relationship Type: {relationship_type}")
                 content_lines.append(f"  Join Condition: {condition}")
                 
-                # Add example SQL if available
-                example_sql = rel.get("example_sql", "")
-                if example_sql:
+                # Add example SQL from properties first, then fallback to direct field
+                if example_join_sql:
+                    content_lines.append("  Example Join SQL (from properties):")
+                    content_lines.append(f"  {example_join_sql}")
+                elif rel.get("example_sql"):
                     content_lines.append("  Example Join SQL:")
-                    content_lines.append(f"  {example_sql}")
+                    content_lines.append(f"  {rel.get('example_sql')}")
                 
                 # Add description if available
                 rel_description = rel.get("description", "")
                 if rel_description:
                     content_lines.append(f"  Description: {rel_description}")
-                
-                if "properties" in rel:
-                    props = rel["properties"]
-                    if "example_join_sql" in props:
-                        content_lines.append("  Example Join SQL:")
-                        content_lines.append(f"  ```sql\n  {props['example_join_sql']}\n  ```")
-                    
-                    if "cardinality_check_sql" in props:
-                        content_lines.append("  Cardinality Verification:")
-                        content_lines.append(f"  ```sql\n  {props['cardinality_check_sql']}\n  ```")
                 
                 content_lines.append("")
             
