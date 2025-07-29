@@ -17,6 +17,61 @@ class ContentProcessor:
             re.IGNORECASE | re.DOTALL
         )
         
+        # Oracle SQL Rules for text-to-SQL generation
+        self.oracle_sql_rules = """
+=== ORACLE SQL GENERATION RULES ===
+
+DIALECT: Oracle SQL (19c)
+
+SECURITY RULES:
+- ONLY USE SELECT statements - NO DELETE, UPDATE, INSERT, or DDL statements
+- ONLY USE tables and columns mentioned in the database schema
+- ALWAYS USE schema qualification (e.g., SYND.DEALS, SYND.USERS)
+
+COLUMN SELECTION RULES:
+- ONLY USE "*" if user explicitly asks for all columns
+- ONLY CHOOSE columns that belong to tables in the database schema
+- ALWAYS QUALIFY column names with table name or alias (e.g., u.username, deals.deal_id)
+
+JOIN RULES:
+- YOU MUST USE "JOIN" when selecting columns from multiple tables
+- Use proper table aliases to avoid ambiguity
+- DON'T USE '.' in table aliases - replace with spaces or underscores
+
+STRING COMPARISON RULES:
+- USE case-insensitive comparisons: lower(table.column) = lower('value')
+- For pattern matching: lower(table.column) LIKE lower('%pattern%')
+- For exact matches: lower(table.column) = lower('exact_value')
+
+DATE/TIME RULES:
+- USE SYSDATE for current date/time
+- USE efficient date ranges: date_column >= start_date AND date_column < end_date
+- DON'T USE EXTRACT(WEEK|DOW|QUARTER|DOY) - use DATE_TRUNC instead
+- DON'T USE INTERVAL expressions
+
+SORTING RULES:
+- USE "NULLS LAST" with ORDER BY: ORDER BY amount DESC NULLS LAST
+
+VIEW USAGE:
+- USE views to simplify queries when available
+- Use the actual view name from CREATE VIEW statements
+
+PROHIBITED FEATURES:
+- DON'T USE FILTER(WHERE expression) clauses
+- DON'T USE EXTRACT(EPOCH FROM expression)
+- DON'T USE LAX_* functions (LAX_BOOL, LAX_FLOAT64, etc.)
+
+ALLOWED FUNCTIONS:
+Aggregation: AVG, COUNT, MAX, MIN, SUM, ARRAY_AGG, BOOL_OR
+Math: ABS, CBRT, CEIL, EXP, FLOOR, LN, ROUND, SIGN, GREATEST, LEAST, MOD, POWER  
+String: LENGTH, REVERSE, CHR, CONCAT, FORMAT, LOWER, LPAD, LTRIM, POSITION, 
+        REPLACE, RPAD, RTRIM, STRPOS, SUBSTR, SUBSTRING, TRANSLATE, TRIM, UPPER
+Date: CURRENT_DATE, DATE_TRUNC, EXTRACT
+Operators: +, -, *, /, ||, <, >, <=, >=, <>, !=
+
+=== END ORACLE SQL RULES ===
+"""
+        
     def extract_sql_queries(self, content: str) -> List[str]:
         """Extract SQL queries from content."""
         matches = self.sql_pattern.findall(content)
@@ -998,14 +1053,41 @@ The schema supports queries about deal statuses, tranche information, and asset 
             ""
         ])
         
-        # Add query examples
+        # Get primary key before using it
+        primary_key = model_data.get("primaryKey", "")
+        
+        # Add Oracle-compliant query examples
         content_lines.extend([
-            "=== COMMON QUERY PATTERNS ===",
-            f"-- Select all records from {table_name}",
+            "=== ORACLE SQL QUERY EXAMPLES ===",
+            f"-- Select all records from {table_name} (use only when user asks for all columns)",
             f"SELECT * FROM {catalog}.{schema_name}.{table_name};",
             "",
-            f"-- Count records in {table_name}",
+            f"-- Count total records",
             f"SELECT COUNT(*) FROM {catalog}.{schema_name}.{table_name};",
+            "",
+            f"-- Select specific columns (always qualify with table name)",
+            f"SELECT {table_name.lower()}.{primary_key.lower() if primary_key else 'column_name'}, {table_name.lower()}.column_name",
+            f"FROM {catalog}.{schema_name}.{table_name} {table_name.lower()};",
+            "",
+            f"-- Case-insensitive search example",
+            f"SELECT {table_name.lower()}.{primary_key.lower() if primary_key else 'column_name'}",
+            f"FROM {catalog}.{schema_name}.{table_name} {table_name.lower()}",
+            f"WHERE lower({table_name.lower()}.column_name) = lower('search_value');",
+            "",
+            f"-- Pattern matching example", 
+            f"SELECT {table_name.lower()}.{primary_key.lower() if primary_key else 'column_name'}",
+            f"FROM {catalog}.{schema_name}.{table_name} {table_name.lower()}",
+            f"WHERE lower({table_name.lower()}.column_name) LIKE lower('%pattern%');",
+            "",
+            f"-- Sorting with nulls last",
+            f"SELECT * FROM {catalog}.{schema_name}.{table_name}",
+            f"ORDER BY column_name DESC NULLS LAST;",
+            ""
+        ])
+        
+        # Add Oracle SQL rules for context
+        content_lines.extend([
+            self.oracle_sql_rules,
             ""
         ])
         
@@ -1018,7 +1100,6 @@ The schema supports queries about deal statuses, tranche information, and asset 
         # Create comprehensive searchable content
         column_names = [col.get("name", "") for col in model_data.get("columns", [])]
         column_types = [col.get("type", "") for col in model_data.get("columns", [])]
-        primary_key = model_data.get("primaryKey", "")
         
         # Build rich searchable content that includes all important terms
         searchable_parts = [
@@ -1031,7 +1112,12 @@ The schema supports queries about deal statuses, tranche information, and asset 
             ' '.join(column_types),
             primary_key,
             catalog,
-            schema_name
+            schema_name,
+            "oracle sql",
+            "select",
+            "join",
+            "where",
+            "order by"
         ]
         
         # Add example values for better searchability
@@ -1055,7 +1141,13 @@ The schema supports queries about deal statuses, tranche information, and asset 
                 "columns": column_names,
                 "column_types": column_types,
                 "primary_key": primary_key,
-                "searchable_content": searchable_content
+                "searchable_content": searchable_content,
+                "sql_dialect": "Oracle SQL 19c",
+                "supports_joins": True,
+                "case_sensitive": False,
+                "requires_schema_qualification": True,
+                "allowed_operations": ["SELECT"],
+                "prohibited_operations": ["DELETE", "UPDATE", "INSERT", "DROP", "CREATE", "ALTER"]
             }
         }
     
@@ -1114,14 +1206,30 @@ The schema supports queries about deal statuses, tranche information, and asset 
             ""
         ])
         
-        # Add query examples
+        # Add Oracle-compliant query examples for views
         content_lines.extend([
-            "=== COMMON QUERY PATTERNS ===",
-            f"-- Select all data from {view_name} view",
+            "=== ORACLE SQL QUERY EXAMPLES FOR VIEW ===",
+            f"-- Select all data from {view_name} view (use only when user asks for all columns)",
             f"SELECT * FROM {catalog}.{schema_name}.{view_name};",
             "",
             f"-- Count records in {view_name} view",
             f"SELECT COUNT(*) FROM {catalog}.{schema_name}.{view_name};",
+            "",
+            f"-- Select specific columns from view (always qualify with view name)",
+            f"SELECT {view_name.lower()}.column_name, {view_name.lower()}.another_column",
+            f"FROM {catalog}.{schema_name}.{view_name} {view_name.lower()};",
+            "",
+            f"-- Join view with other tables (when needed)",
+            f"SELECT {view_name.lower()}.column_name, other_table.column_name",
+            f"FROM {catalog}.{schema_name}.{view_name} {view_name.lower()}",
+            f"JOIN {catalog}.{schema_name}.other_table other_table",
+            f"  ON {view_name.lower()}.join_column = other_table.join_column;",
+            ""
+        ])
+        
+        # Add Oracle SQL rules for views too
+        content_lines.extend([
+            self.oracle_sql_rules,
             ""
         ])
         
