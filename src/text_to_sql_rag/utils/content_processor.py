@@ -49,6 +49,16 @@ DATE/TIME RULES:
 - DON'T USE EXTRACT(WEEK|DOW|QUARTER|DOY) - use DATE_TRUNC instead
 - DON'T USE INTERVAL expressions
 
+DATE TRUNCATION GUIDELINES:
+- EXAMINE example values in date/timestamp columns to determine appropriate truncation level
+- If example values show timestamps with T00:00:00 (e.g., "2021-10-29T00:00:00"), these are DATE values stored as timestamps - use exact date matching or TRUNC(date_column) for day-level queries
+- If example values show actual times (e.g., "2021-10-29T17:32:05"), these are true TIMESTAMP values - consider if user wants day-level precision with TRUNC(date_column) or exact timestamp matching
+- If example values show only dates (2023-12-15), user likely wants exact date matching
+- If example values show month patterns (2023-12-01), user likely wants month-level: TRUNC(date_column, 'MM')
+- For "recent" or "latest" queries, consider if user wants today/this week/this month based on data granularity
+- IMPORTANT: T00:00:00 timestamps indicate date-only data - treat as dates, not times
+- Always check example values before deciding on date truncation strategy
+
 SORTING RULES:
 - USE "NULLS LAST" with ORDER BY: ORDER BY amount DESC NULLS LAST
 

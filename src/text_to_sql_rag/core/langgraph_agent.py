@@ -738,6 +738,14 @@ Based on the database schema and example queries above, generate a SQL query for
 
 "{state.current_request}"
 
+IMPORTANT INSTRUCTIONS:
+- EXAMINE example values in date/timestamp columns to determine the appropriate level of date truncation
+- If example values show timestamps ending in T00:00:00 (e.g., "2021-10-29T00:00:00"), these are DATE values stored as timestamps - treat as dates, not times
+- If example values show actual time components (e.g., "2021-10-29T17:32:05"), these are true TIMESTAMP values - consider if user wants day-level or time-level precision
+- For date columns with only date formats (2023-12-15), use exact date matching
+- For lookup values (status, type, category), use the exact ID values provided in the lookup data
+- Always reference the example values to understand the data format and precision needed
+
 Please respond in markdown format with the following structure:
 
 ## SQL Query
