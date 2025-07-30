@@ -122,6 +122,12 @@ class DocumentSyncService:
             # Extract catalog and document type from path
             catalog, document_type, schema_name = self._extract_metadata_from_path(file_path)
             
+            logger.info("Extracted metadata from path",
+                       file_path=str(file_path),
+                       catalog=catalog,
+                       document_type=document_type.value if document_type else None,
+                       schema_name=schema_name)
+            
             if not catalog:
                 return DocumentSyncResult(
                     file_path=str(file_path),
@@ -187,7 +193,14 @@ class DocumentSyncService:
             relative_path = file_path.relative_to(self.meta_documents_path)
             parts = relative_path.parts
             
+            logger.info("Parsing file path for metadata extraction",
+                       file_path=str(file_path),
+                       relative_path=str(relative_path),
+                       parts=list(parts),
+                       parts_count=len(parts))
+            
             if len(parts) < 2:
+                logger.warning("Path has insufficient parts", parts=list(parts))
                 return None, None, None
             
             catalog = parts[0]
