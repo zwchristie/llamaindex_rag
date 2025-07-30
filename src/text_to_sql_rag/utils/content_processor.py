@@ -904,6 +904,7 @@ ORDER BY count DESC;
                 "content": f"LOOKUP METADATA\n{json.dumps(lookup_data, indent=2)}",
                 "metadata": {
                     "chunk_type": "lookup_fallback",
+                    "entity_type": "lookup",
                     "lookup_name": "unknown",
                     "value_count": 0
                 }
@@ -918,11 +919,16 @@ ORDER BY count DESC;
         content_lines = [
             f"=== LOOKUP DATA: {lookup_name.upper()} ===",
             f"Lookup Name: {lookup_name}",
-            f"Description: {description}" if description else "",
+        ]
+        
+        if description:
+            content_lines.append(f"Description: {description}")
+        
+        content_lines.extend([
             f"Purpose: Database lookup values for {lookup_name} field",
             f"Total Values: {len(values)}",
             ""
-        ]
+        ])
         
         # Add value mappings with context
         if values:
@@ -950,10 +956,18 @@ ORDER BY count DESC;
                             content_lines.append(f"  Aliases: {', '.join(alt_names)}")
         
         # Add usage context
+        example_id = "1"
+        if values:
+            first_value = values[0]
+            if isinstance(first_value, dict):
+                example_id = first_value.get('id', '1')
+            else:
+                example_id = "1"
+        
         content_lines.extend([
             "",
             "USAGE IN SQL:",
-            f"Use the ID value in WHERE clauses: column_name = {values[0].get('id', '1') if values else '1'}",
+            f"Use the ID value in WHERE clauses: column_name = {example_id}",
             f"Search by name: column_name IN (SELECT id FROM lookup_table WHERE name LIKE '%search_term%')",
             "",
             "=== END LOOKUP DATA ==="
@@ -962,15 +976,21 @@ ORDER BY count DESC;
         # Extract search terms for better retrieval
         search_terms = self._extract_lookup_search_terms(lookup_name, description, values)
         
+        # Ensure content is not empty
+        content = "\n".join(content_lines).strip()
+        if not content or len(content) < 10:
+            content = f"LOOKUP DATA: {lookup_name}\nPurpose: Database lookup values\nTotal Values: {len(values)}\nContact administrator for more details."
+        
         return {
-            "content": "\n".join(content_lines),
+            "content": content,
             "metadata": {
                 "chunk_type": "lookup_data",
+                "entity_type": "lookup",
                 "lookup_name": lookup_name,
-                "description": description,
+                "description": description or f"Lookup values for {lookup_name}",
                 "value_count": len(values),
                 "search_terms": search_terms,
-                "values_preview": [v.get("name", "") for v in values[:5]] if values else []
+                "values_preview": [v.get("name", "") if isinstance(v, dict) else str(v) for v in values[:5]] if values else []
             }
         }
     
@@ -991,6 +1011,9 @@ ORDER BY count DESC;
                 value_name = value.get("name", value.get("display_name", ""))
                 if value_name:
                     terms.update(self._extract_terms_from_name(str(value_name)))
+            elif isinstance(value, str):
+                # Handle string values directly
+                terms.update(self._extract_terms_from_name(value))
         
         return list(terms)
     
@@ -1094,6 +1117,8 @@ ORDER BY count DESC;
             data = json.loads(json_content)
             if document_type == DocumentType.SCHEMA:
                 return self._create_individual_schema_documents(data)
+            elif document_type == DocumentType.LOOKUP_METADATA:
+                return self._create_lookup_semantic_chunks(data)
             else:
                 # Fallback for non-schema documents
                 return [{

@@ -430,7 +430,13 @@ class LlamaIndexVectorService:
             documents = []
             if self.content_processor.is_json_content(content):
                 from ..models.simple_models import DocumentType as DocType
-                doc_type_enum = DocType.SCHEMA if document_type.lower() == "schema" else DocType.REPORT
+                # Map document type string to enum
+                if document_type.lower() == "schema":
+                    doc_type_enum = DocType.SCHEMA
+                elif document_type.lower() == "lookup_metadata":
+                    doc_type_enum = DocType.LOOKUP_METADATA
+                else:
+                    doc_type_enum = DocType.REPORT
                 
                 # Create individual documents using the new approach
                 individual_documents = self.content_processor.create_individual_documents(content, doc_type_enum)
@@ -449,7 +455,8 @@ class LlamaIndexVectorService:
                     entity_type = doc_data["metadata"].get("entity_type", "entity")
                     entity_name = (doc_data["metadata"].get("table_name") or 
                                  doc_data["metadata"].get("view_name") or 
-                                 doc_data["metadata"].get("relationship_name") or 
+                                 doc_data["metadata"].get("relationship_name") or
+                                 doc_data["metadata"].get("lookup_name") or 
                                  f"entity_{i}")
                     entity_id = f"{document_id}_{entity_type}_{entity_name}"
                     
