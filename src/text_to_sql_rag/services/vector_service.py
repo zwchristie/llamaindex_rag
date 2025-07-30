@@ -439,6 +439,16 @@ class LlamaIndexVectorService:
                     doc_type_enum = DocType.REPORT
                 
                 # Create individual documents using the new approach
+                logger.info(
+                    "About to call create_individual_documents",
+                    document_id=document_id,
+                    document_type=document_type,
+                    doc_type_enum=doc_type_enum.value if hasattr(doc_type_enum, 'value') else str(doc_type_enum),
+                    content_length=len(content),
+                    content_preview=content[:200],
+                    is_json=self.content_processor.is_json_content(content)
+                )
+                
                 individual_documents = self.content_processor.create_individual_documents(content, doc_type_enum)
                 
                 logger.info(

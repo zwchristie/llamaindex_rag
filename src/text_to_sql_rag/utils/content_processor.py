@@ -864,6 +864,12 @@ ORDER BY count DESC;
         Each chunk contains a specific lookup category with sufficient context
         for the LLM to understand what the lookup data represents and how to use it.
         """
+        import structlog
+        logger = structlog.get_logger(__name__)
+        
+        logger.info("Starting lookup semantic chunking", 
+                   lookup_data_keys=list(lookup_data.keys()) if isinstance(lookup_data, dict) else str(type(lookup_data)))
+        
         chunks = []
         
         # Handle single lookup document
@@ -900,6 +906,7 @@ ORDER BY count DESC;
         
         if not chunks:
             # Fallback chunk if no structured lookup data found
+            logger.warning("No chunks created, using fallback")
             chunks.append({
                 "content": f"LOOKUP METADATA\n{json.dumps(lookup_data, indent=2)}",
                 "metadata": {
@@ -910,6 +917,7 @@ ORDER BY count DESC;
                 }
             })
         
+        logger.info("Lookup semantic chunking complete", chunk_count=len(chunks))
         return chunks
     
     def _create_single_lookup_chunk(self, lookup_name: str, description: str, values: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -1113,14 +1121,33 @@ ORDER BY count DESC;
         Returns:
             List of individual documents, each containing complete entity information
         """
+        import structlog
+        logger = structlog.get_logger(__name__)
+        
         try:
+            logger.info("Creating individual documents", 
+                       document_type=document_type.value if hasattr(document_type, 'value') else str(document_type),
+                       content_length=len(json_content),
+                       content_preview=json_content[:100])
+            
             data = json.loads(json_content)
+            logger.info("Parsed JSON successfully", 
+                       data_keys=list(data.keys()) if isinstance(data, dict) else str(type(data)))
+            
             if document_type == DocumentType.SCHEMA:
-                return self._create_individual_schema_documents(data)
+                result = self._create_individual_schema_documents(data)
+                logger.info("Created schema documents", count=len(result))
+                return result
             elif document_type == DocumentType.LOOKUP_METADATA:
-                return self._create_lookup_semantic_chunks(data)
+                logger.info("Processing lookup metadata")
+                result = self._create_lookup_semantic_chunks(data)
+                logger.info("Created lookup documents", 
+                           count=len(result),
+                           chunk_types=[r.get("metadata", {}).get("chunk_type") for r in result])
+                return result
             else:
                 # Fallback for non-schema documents
+                logger.info("Using fallback for unknown document type")
                 return [{
                     "content": self.convert_json_to_dolphin_format(json_content, document_type),
                     "metadata": {
@@ -1128,7 +1155,8 @@ ORDER BY count DESC;
                         "entity_type": "unknown"
                     }
                 }]
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
+            logger.error("JSON decode error", error=str(e), content_preview=json_content[:200])
             # If not valid JSON, return as single document
             return [{
                 "content": json_content,
@@ -1137,6 +1165,11 @@ ORDER BY count DESC;
                     "entity_type": "unknown"
                 }
             }]
+        except Exception as e:
+            logger.error("Failed to create individual documents", error=str(e))
+            import traceback
+            logger.error("Traceback", traceback=traceback.format_exc())
+            return []
     
     def _create_individual_schema_documents(self, schema_data: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Create individual documents for each model, view, and relationship in schema data.
