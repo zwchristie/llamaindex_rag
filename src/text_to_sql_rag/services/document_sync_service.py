@@ -199,6 +199,14 @@ class DocumentSyncService:
             elif len(parts) >= 3 and parts[1] == "reports":
                 document_type = DocumentType.REPORT
                 schema_name = "reports"  # Reports don't have schema, use "reports" as default
+            elif len(parts) >= 3 and parts[1] == "lookups":
+                # Only process JSON files in lookups folder
+                if file_path.suffix.lower() == '.json':
+                    document_type = DocumentType.LOOKUP_METADATA
+                    schema_name = "lookups"  # Lookups use "lookups" as schema name
+                else:
+                    # Skip non-JSON files in lookups folder (e.g., README.md)
+                    return None, None, None
             else:
                 # Try to infer from file content or name
                 if file_path.suffix.lower() == '.json':
@@ -231,6 +239,12 @@ class DocumentSyncService:
             elif document_type == DocumentType.REPORT:
                 # Parse text report document
                 return self._parse_report_content(content, catalog)
+            
+            elif document_type == DocumentType.LOOKUP_METADATA:
+                # Parse JSON lookup metadata document
+                data = json.loads(content)
+                # For lookup metadata, we'll use a simple dict since it doesn't need a complex model
+                return data
             
         except Exception as e:
             logger.error(
