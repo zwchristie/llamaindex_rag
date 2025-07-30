@@ -712,7 +712,7 @@ class LlamaIndexVectorService:
                     sources.append({
                         "document_id": node.metadata.get("document_id"),
                         "document_type": node.metadata.get("document_type"),
-                        "content_snippet": node.text[:200] + "..." if len(node.text) > 200 else node.text,
+                        "content_snippet": node.text,  # No truncation for debugging
                         "score": getattr(node, 'score', 1.0)
                     })
             

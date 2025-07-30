@@ -629,11 +629,18 @@ The previous SQL query failed with this error:
 Please fix the SQL query to address this error.
 """
             
+            # Get SQL rules from content processor
+            from ..utils.content_processor import ContentProcessor
+            content_processor = ContentProcessor()
+            sql_rules = content_processor.get_sql_rules()
+            
             # Build the full prompt
             prompt = f"""
 {'\n'.join(context_parts)}
 
 {error_context}
+
+{sql_rules}
 
 Based on the database schema and example queries above, generate a SQL query for the following request:
 
@@ -656,7 +663,7 @@ Confidence score: 0.85 (between 0.0 and 1.0)
 Requirements:
 - Only use tables and columns that exist in the provided schema
 - Follow the patterns shown in the example queries
-- Make sure the SQL is syntactically correct
+- Make sure the SQL is syntactically correct and follows the Oracle SQL rules above
 - Include comments in the SQL where helpful
 """
             
@@ -918,13 +925,9 @@ Format your response clearly and make it understandable for both technical and n
         """Format context for confidence assessment."""
         formatted_parts = []
         for i, ctx in enumerate(context_list, 1):
-            # Show more content for confidence assessment (1000 chars instead of 200)
+            # Show full content for debugging - no truncation
             content = ctx.get("content", "")
-            if len(content) > 1000:
-                # Show beginning and end with ellipsis in middle for better context
-                content_preview = content[:500] + "\n...\n" + content[-500:]
-            else:
-                content_preview = content
+            content_preview = content  # No truncation for debugging
             
             # Also include entity information for better assessment
             metadata = ctx.get("metadata", {})

@@ -807,6 +807,10 @@ The schema supports queries about deal statuses, tranche information, and asset 
         
         return list(set(terms))
     
+    def get_sql_rules(self) -> str:
+        """Get Oracle SQL rules for use in prompts only."""
+        return self.oracle_sql_rules
+    
     def _extract_terms_from_name(self, name: str) -> List[str]:
         """Extract meaningful terms from entity names."""
         # Split on underscores and camelCase
@@ -1085,11 +1089,7 @@ The schema supports queries about deal statuses, tranche information, and asset 
             ""
         ])
         
-        # Add Oracle SQL rules for context
-        content_lines.extend([
-            self.oracle_sql_rules,
-            ""
-        ])
+        # Oracle SQL rules are now only added in prompts, not in document content
         
         # Extract business terms and metadata
         business_terms = self._extract_business_terms(table_name, description, model_data)
@@ -1227,11 +1227,7 @@ The schema supports queries about deal statuses, tranche information, and asset 
             ""
         ])
         
-        # Add Oracle SQL rules for views too
-        content_lines.extend([
-            self.oracle_sql_rules,
-            ""
-        ])
+        # Oracle SQL rules are now only added in prompts, not in document content
         
         business_terms = self._extract_business_terms(view_name, description, view_data)
         
