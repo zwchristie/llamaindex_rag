@@ -90,6 +90,7 @@ class TextToSQLAgent:
         # Add nodes
         workflow.add_node("classify_request", self._classify_request_node)
         workflow.add_node("get_metadata", self._get_metadata_node)
+        workflow.add_node("get_lookup_data", self._get_lookup_data_node)
         workflow.add_node("assess_confidence", self._assess_confidence_node)
         workflow.add_node("request_clarification", self._request_clarification_node)
         workflow.add_node("generate_sql", self._generate_sql_node)
@@ -112,8 +113,11 @@ class TextToSQLAgent:
             }
         )
         
-        # From get_metadata, assess confidence
-        workflow.add_edge("get_metadata", "assess_confidence")
+        # From get_metadata, get lookup data
+        workflow.add_edge("get_metadata", "get_lookup_data")
+        
+        # From get_lookup_data, assess confidence
+        workflow.add_edge("get_lookup_data", "assess_confidence")
         
         # From assess_confidence, either clarify or generate SQL
         workflow.add_conditional_edges(
@@ -422,6 +426,44 @@ Reasoning: [Brief explanation of why this classification was chosen]
                    schema_chunks=len(state.schema_context),
                    example_chunks=len(state.example_context),
                    sources=len(state.sources),
+                   next_step="get_lookup_data")
+        
+        return state
+    
+    def _get_lookup_data_node(self, state: ConversationState) -> ConversationState:
+        """Get relevant lookup metadata to help with SQL generation."""
+        logger.info("=== WORKFLOW NODE: GET LOOKUP DATA ===")
+        logger.info("Starting lookup data retrieval", 
+                   user_request=state.current_request)
+        
+        state.workflow_step = WorkflowStep.GET_LOOKUP_DATA
+        
+        try:
+            # Search for relevant lookup data based on user request
+            lookup_results = self.vector_service.search_similar(
+                query=state.current_request,
+                retriever_type="hybrid",
+                similarity_top_k=10,
+                document_type="lookup_metadata"
+            )
+            
+            logger.info("Raw lookup search results", 
+                       num_results=len(lookup_results),
+                       lookup_names=[r.get("metadata", {}).get("lookup_name", "unknown") for r in lookup_results])
+            
+            # Filter and process lookup results
+            state.lookup_context = self._process_lookup_results(lookup_results, state.current_request)
+            
+            logger.info("Processed lookup data", 
+                       final_lookup_count=len(state.lookup_context),
+                       lookup_names=[ctx.get("metadata", {}).get("lookup_name", "unknown") for ctx in state.lookup_context])
+            
+        except Exception as e:
+            logger.error(f"Error getting lookup data: {e}")
+            state.lookup_context = []
+        
+        logger.info("=== GET LOOKUP DATA COMPLETE ===", 
+                   lookup_chunks=len(state.lookup_context),
                    next_step="assess_confidence")
         
         return state
@@ -432,6 +474,7 @@ Reasoning: [Brief explanation of why this classification was chosen]
         logger.info("Starting confidence assessment", 
                    schema_chunks=len(state.schema_context),
                    example_chunks=len(state.example_context),
+                   lookup_chunks=len(state.lookup_context),
                    confidence_threshold=self.confidence_threshold)
         
         state.workflow_step = WorkflowStep.ASSESS_CONFIDENCE
@@ -450,6 +493,9 @@ Available schema context ({len(state.schema_context)} documents):
 
 Available example queries ({len(state.example_context)} documents):
 {self._format_context_for_assessment(state.example_context)}
+
+Available lookup data ({len(state.lookup_context)} lookups):
+{self._format_context_for_assessment(state.lookup_context)}
 
 ANALYSIS TASKS:
 1. Determine if you can confidently generate SQL for this request
@@ -639,6 +685,16 @@ GUIDELINES:
                 for i, example in enumerate(state.example_context):
                     context_parts.append(f"Example {i+1}:")
                     context_parts.append(example["content"])
+                    context_parts.append("")
+            
+            # Add lookup context
+            if state.lookup_context:
+                context_parts.append("=== LOOKUP DATA FOR FILTERING ===")
+                context_parts.append("Use these lookup values when filtering data:")
+                for i, lookup in enumerate(state.lookup_context):
+                    lookup_name = lookup.get("metadata", {}).get("lookup_name", f"Lookup {i+1}")
+                    context_parts.append(f"LOOKUP: {lookup_name}")
+                    context_parts.append(lookup["content"])
                     context_parts.append("")
             
             # Add previous SQL if editing
@@ -1163,6 +1219,56 @@ Format your response clearly and make it understandable for both technical and n
             message_parts.append(f"Available tables that might be relevant: {', '.join(clarification_request.suggested_tables)}")
         
         return "\n".join(message_parts)
+    
+    def _process_lookup_results(self, lookup_results: List[Dict[str, Any]], user_request: str) -> List[Dict[str, Any]]:
+        """Process and filter lookup results to include only relevant lookup data."""
+        if not lookup_results:
+            return []
+        
+        processed_lookups = []
+        
+        for result in lookup_results:
+            content = result.get("content", "")
+            metadata = result.get("metadata", {})
+            lookup_name = metadata.get("lookup_name", "")
+            
+            # Include lookup if it seems relevant
+            if self._is_lookup_relevant(content, lookup_name, user_request):
+                processed_lookups.append({
+                    "content": content,
+                    "metadata": metadata,
+                    "score": result.get("score", 0.0)
+                })
+        
+        # Sort by relevance score and return top results
+        processed_lookups.sort(key=lambda x: x.get("score", 0), reverse=True)
+        return processed_lookups[:5]  # Limit to top 5 relevant lookups
+    
+    def _is_lookup_relevant(self, content: str, lookup_name: str, user_request: str) -> bool:
+        """Determine if a lookup is relevant to the user's request."""
+        request_lower = user_request.lower()
+        content_lower = content.lower()
+        lookup_name_lower = lookup_name.lower()
+        
+        # Check if lookup name appears in the request
+        if lookup_name_lower in request_lower:
+            return True
+        
+        # Check for keywords that suggest filtering/lookup needs
+        filter_keywords = ['status', 'type', 'category', 'state', 'equal', 'equals', '=', 'where']
+        if any(keyword in request_lower for keyword in filter_keywords):
+            # Check if any values in the lookup appear in the request
+            lines = content_lower.split('\n')
+            for line in lines:
+                if 'id' in line and ':' in line:
+                    # Extract value names from "ID X: 'value_name'" format
+                    parts = line.split("'")
+                    if len(parts) >= 2:
+                        value_name = parts[1].lower()
+                        if value_name in request_lower:
+                            return True
+        
+        return False
     
     def _extract_sql_from_request(self, request: str) -> Optional[str]:
         """Extract SQL query from user request."""

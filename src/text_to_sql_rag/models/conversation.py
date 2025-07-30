@@ -29,6 +29,7 @@ class WorkflowStep(str, Enum):
     """Workflow steps in the agent."""
     CLASSIFY_REQUEST = "classify_request"
     GET_METADATA = "get_metadata"
+    GET_LOOKUP_DATA = "get_lookup_data"
     ASSESS_CONFIDENCE = "assess_confidence"
     REQUEST_CLARIFICATION = "request_clarification"
     GENERATE_SQL = "generate_sql"
@@ -88,6 +89,7 @@ class WorkflowState(BaseModel):
     workflow_step: Optional[WorkflowStep] = None
     schema_context: List[Dict[str, Any]] = Field(default_factory=list)
     example_context: List[Dict[str, Any]] = Field(default_factory=list)
+    lookup_context: List[Dict[str, Any]] = Field(default_factory=list)
     sources: List[str] = Field(default_factory=list)
     confidence_score: float = 0.0
     needs_clarification: bool = False
@@ -232,6 +234,14 @@ class ConversationState(BaseModel):
     @example_context.setter
     def example_context(self, value: List[Dict[str, Any]]):
         self.workflow_state.example_context = value
+    
+    @property
+    def lookup_context(self) -> List[Dict[str, Any]]:
+        return self.workflow_state.lookup_context
+    
+    @lookup_context.setter
+    def lookup_context(self, value: List[Dict[str, Any]]):
+        self.workflow_state.lookup_context = value
     
     @property
     def sources(self) -> List[str]:

@@ -29,27 +29,38 @@ The documents are organized by catalog (application name) and contain:
 - Text files with descriptions of what data the report returns
 - SQL for getting the report data
 
+### Lookup Metadata Documents (JSON)
+- JSON documents containing lookup data for categorical fields
+- ID-to-name mappings for database foreign keys
+- Valid values for status, type, category fields
+- Helps prevent SQL errors from incorrect literal values
+
 ## Example Structure
 ```
 meta_documents/
-├── my_application/
+├── p1-synd/
 │   ├── schema/
-│   │   ├── my_schema_metadata.json
-│   │   └── another_schema_metadata.json
-│   └── reports/
-│       ├── sales_report.txt
-│       ├── user_analytics.txt
-│       └── financial_summary.txt
+│   │   └── main_schema_metadata.json
+│   ├── reports/
+│   │   ├── sales_summary_report.txt
+│   │   └── user_analytics_report.txt
+│   └── lookups/
+│       ├── tranche_statuses.json
+│       ├── deal_types.json
+│       └── asset_categories.json
 └── another_application/
     ├── schema/
     │   └── main_schema_metadata.json
-    └── reports/
-        └── monthly_report.txt
+    ├── reports/
+    │   └── monthly_report.txt
+    └── lookups/
+        └── status_codes.json
 ```
 
 ## File Naming Convention
 - Schema files: `{schema_name}_metadata.json`
 - Report files: `{report_name}.txt`
+- Lookup files: `{lookup_category}.json`
 
 ## Synchronization
 Documents in this folder are automatically synchronized with MongoDB and the vector store on application startup.

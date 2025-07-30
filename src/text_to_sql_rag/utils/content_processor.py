@@ -444,6 +444,8 @@ Operators: +, -, *, /, ||, <, >, <=, >=, <>, !=
                 return self._create_schema_semantic_chunks(data)
             elif document_type == DocumentType.REPORT:
                 return self._create_report_semantic_chunks(data)
+            elif document_type == DocumentType.LOOKUP_METADATA:
+                return self._create_lookup_semantic_chunks(data)
             else:
                 # Fallback to single chunk
                 return [{
@@ -855,6 +857,142 @@ FROM schema_name.table_name
 GROUP BY table_name.category
 ORDER BY count DESC;
 """
+    
+    def _create_lookup_semantic_chunks(self, lookup_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Create semantic chunks for lookup metadata with rich context.
+        
+        Each chunk contains a specific lookup category with sufficient context
+        for the LLM to understand what the lookup data represents and how to use it.
+        """
+        chunks = []
+        
+        # Handle single lookup document
+        if "name" in lookup_data and "values" in lookup_data:
+            lookup_name = lookup_data.get("name", "")
+            description = lookup_data.get("description", "")
+            values = lookup_data.get("values", [])
+            
+            # Create a comprehensive chunk for this lookup
+            chunk = self._create_single_lookup_chunk(lookup_name, description, values)
+            chunks.append(chunk)
+        
+        # Handle multiple lookups in one document
+        elif "lookups" in lookup_data:
+            for lookup in lookup_data["lookups"]:
+                lookup_name = lookup.get("name", "")
+                description = lookup.get("description", "")
+                values = lookup.get("values", [])
+                
+                chunk = self._create_single_lookup_chunk(lookup_name, description, values)
+                chunks.append(chunk)
+        
+        # Handle other possible structures
+        else:
+            # Try to find lookup data in any key
+            for key, value in lookup_data.items():
+                if isinstance(value, dict) and ("values" in value or "data" in value):
+                    lookup_name = key
+                    description = value.get("description", f"Lookup data for {key}")
+                    values = value.get("values", value.get("data", []))
+                    
+                    chunk = self._create_single_lookup_chunk(lookup_name, description, values)
+                    chunks.append(chunk)
+        
+        if not chunks:
+            # Fallback chunk if no structured lookup data found
+            chunks.append({
+                "content": f"LOOKUP METADATA\n{json.dumps(lookup_data, indent=2)}",
+                "metadata": {
+                    "chunk_type": "lookup_fallback",
+                    "lookup_name": "unknown",
+                    "value_count": 0
+                }
+            })
+        
+        return chunks
+    
+    def _create_single_lookup_chunk(self, lookup_name: str, description: str, values: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Create a single lookup chunk with rich context and searchable information."""
+        
+        # Build comprehensive content with context
+        content_lines = [
+            f"=== LOOKUP DATA: {lookup_name.upper()} ===",
+            f"Lookup Name: {lookup_name}",
+            f"Description: {description}" if description else "",
+            f"Purpose: Database lookup values for {lookup_name} field",
+            f"Total Values: {len(values)}",
+            ""
+        ]
+        
+        # Add value mappings with context
+        if values:
+            content_lines.append("AVAILABLE VALUES:")
+            content_lines.append("Format: ID -> Display Name")
+            content_lines.append("")
+            
+            # Add each value with rich context
+            for value in values:
+                if isinstance(value, dict):
+                    value_id = value.get("id", value.get("value_id", ""))
+                    value_name = value.get("name", value.get("display_name", value.get("label", "")))
+                    value_code = value.get("code", "")
+                    
+                    # Create searchable entry
+                    if value_id and value_name:
+                        entry = f"ID {value_id}: '{value_name}'"
+                        if value_code and value_code != value_name:
+                            entry += f" (code: {value_code})"
+                        content_lines.append(entry)
+                        
+                        # Add alternative search terms
+                        alt_names = value.get("aliases", value.get("alternatives", []))
+                        if alt_names:
+                            content_lines.append(f"  Aliases: {', '.join(alt_names)}")
+        
+        # Add usage context
+        content_lines.extend([
+            "",
+            "USAGE IN SQL:",
+            f"Use the ID value in WHERE clauses: column_name = {values[0].get('id', '1') if values else '1'}",
+            f"Search by name: column_name IN (SELECT id FROM lookup_table WHERE name LIKE '%search_term%')",
+            "",
+            "=== END LOOKUP DATA ==="
+        ])
+        
+        # Extract search terms for better retrieval
+        search_terms = self._extract_lookup_search_terms(lookup_name, description, values)
+        
+        return {
+            "content": "\n".join(content_lines),
+            "metadata": {
+                "chunk_type": "lookup_data",
+                "lookup_name": lookup_name,
+                "description": description,
+                "value_count": len(values),
+                "search_terms": search_terms,
+                "values_preview": [v.get("name", "") for v in values[:5]] if values else []
+            }
+        }
+    
+    def _extract_lookup_search_terms(self, lookup_name: str, description: str, values: List[Dict[str, Any]]) -> List[str]:
+        """Extract search terms for better lookup retrieval."""
+        terms = set()
+        
+        # Add terms from lookup name
+        terms.update(self._extract_terms_from_name(lookup_name))
+        
+        # Add terms from description
+        if description:
+            terms.update(self._extract_terms_from_text(description))
+        
+        # Add terms from value names (first few)
+        for value in values[:10]:  # Limit to avoid too many terms
+            if isinstance(value, dict):
+                value_name = value.get("name", value.get("display_name", ""))
+                if value_name:
+                    terms.update(self._extract_terms_from_name(str(value_name)))
+        
+        return list(terms)
     
     def _extract_terms_from_name(self, name: str) -> List[str]:
         """Extract meaningful terms from entity names."""

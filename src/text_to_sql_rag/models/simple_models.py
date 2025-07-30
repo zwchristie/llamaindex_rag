@@ -10,6 +10,7 @@ class DocumentType(str, Enum):
     """Supported document types."""
     REPORT = "report"
     SCHEMA = "schema"
+    LOOKUP_METADATA = "lookup_metadata"
 
 
 class DocumentMetadata(BaseModel):

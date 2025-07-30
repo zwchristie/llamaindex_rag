@@ -1,0 +1,36 @@
+{
+  "name": "tranche statuses",
+  "description": "Lookup information of the possible tranche status with their corresponding id and string representations",
+  "values": [
+    {
+      "id": 1,
+      "name": "announced",
+      "code": "ANNOUNCED",
+      "description": "Tranche has been publicly announced"
+    },
+    {
+      "id": 2,
+      "name": "pending",
+      "code": "PENDING",
+      "description": "Tranche is pending approval or processing"
+    },
+    {
+      "id": 3,
+      "name": "active",
+      "code": "ACTIVE",
+      "description": "Tranche is currently active and trading"
+    },
+    {
+      "id": 4,
+      "name": "settled",
+      "code": "SETTLED",
+      "description": "Tranche has been settled"
+    },
+    {
+      "id": 5,
+      "name": "cancelled",
+      "code": "CANCELLED",
+      "description": "Tranche has been cancelled"
+    }
+  ]
+}
