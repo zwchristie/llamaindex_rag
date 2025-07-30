@@ -437,39 +437,55 @@ Reasoning: [Brief explanation of why this classification was chosen]
         state.workflow_step = WorkflowStep.ASSESS_CONFIDENCE
         
         try:
-            # Build confidence assessment prompt
+            # Build integrated confidence assessment and schema trimming prompt
             assessment_prompt = f"""
-You are a SQL expert analyzing whether you have sufficient database metadata to confidently answer a user's question.
+You are a SQL expert analyzing database metadata to answer a user's question. Your task is to:
+1. Assess confidence in your ability to generate the SQL
+2. Identify exactly which schema information is needed (trimming unnecessary data)
 
 User's request: "{state.current_request}"
 
 Available schema context ({len(state.schema_context)} documents):
-{self._format_context_for_assessment(state.schema_context[:3])}
+{self._format_context_for_assessment(state.schema_context)}
 
 Available example queries ({len(state.example_context)} documents):
-{self._format_context_for_assessment(state.example_context[:2])}
+{self._format_context_for_assessment(state.example_context)}
 
-Analyze the following:
-1. Do you have clear information about the relevant tables and columns needed?
-2. Are there any ambiguous terms in the request that need clarification?
-3. Are there multiple possible interpretations of the request?
-4. Do you have sufficient examples to understand the data structure?
+ANALYSIS TASKS:
+1. Determine if you can confidently generate SQL for this request
+2. Identify EXACTLY which tables/views/relationships are needed
+3. For each needed entity, specify which columns are required
+4. Consider join requirements and dependencies
 
-Respond in this format:
+Respond in this EXACT format:
 
 ## Confidence Assessment
 Confidence: [0.0-1.0]
 
 ## Analysis
-[Brief analysis of what you know and what might be missing]
+[Brief analysis of what you understand and any concerns]
+
+## Required Schema Entities
+[List ONLY the entities (tables/views/relationships) actually needed for this query]
+- Entity: [table/view name] | Type: [table/view/relationship] | Reason: [why needed]
+- Entity: [name] | Type: [type] | Reason: [why needed]
+
+## Required Columns
+[For each entity listed above, specify which columns are needed]
+- [entity_name]: [column1, column2, column3] | Reason: [why these columns]
 
 ## Missing Information
-[List specific information needed for clarification, or "None" if confident]
+[Specific information needed for clarification, or "None" if confident]
 
 ## Suggested Questions
-[Specific questions to ask the user, or "None" if confident]
+[Questions to ask user if clarification needed, or "None" if confident]
 
-Only request clarification if confidence is below 0.7 or if there are genuine ambiguities.
+GUIDELINES:
+- Only list entities you will actually use in the SQL query
+- Be surgical - don't include unnecessary tables or columns
+- Consider foreign keys and joins when determining requirements
+- If confidence < 0.7, focus on missing information
+- If confidence >= 0.7, focus on precise entity/column requirements
 """
             
             # Log confidence assessment prompt for debugging
@@ -487,7 +503,7 @@ Only request clarification if confidence is below 0.7 or if there are genuine am
                        response_length=len(response_text),
                        response_preview=response_text[:400] + "..." if len(response_text) > 400 else response_text)
             
-            assessment_result = self._parse_confidence_assessment(response_text)
+            assessment_result = self._parse_confidence_and_trimming_assessment(response_text)
             
             state.confidence_score = assessment_result["confidence"]
             
@@ -497,6 +513,7 @@ Only request clarification if confidence is below 0.7 or if there are genuine am
                        confidence_threshold=self.confidence_threshold,
                        missing_info=assessment_result.get("missing_info", []),
                        analysis=assessment_result.get("analysis", ""),
+                       required_entities=assessment_result.get("required_entities", []),
                        will_request_clarification=(assessment_result["confidence"] < self.confidence_threshold or assessment_result.get("missing_info")))
             
             # Determine if clarification is needed
@@ -513,6 +530,21 @@ Only request clarification if confidence is below 0.7 or if there are genuine am
                 )
             else:
                 state.needs_clarification = False
+                
+                # If we're confident, trim schema data based on LLM analysis
+                original_count = len(state.schema_context)
+                logger.info("Trimming schema data based on LLM analysis", 
+                           original_count=original_count,
+                           required_entities=[e.get("name") for e in assessment_result.get("required_entities", [])])
+                
+                state.schema_context = self._trim_schema_based_on_llm_analysis(
+                    state.schema_context, 
+                    assessment_result
+                )
+                
+                logger.info("LLM-based schema trimming completed", 
+                           original_count=original_count,
+                           trimmed_count=len(state.schema_context))
             
             logger.info(f"Confidence assessment: {state.confidence_score}, needs clarification: {state.needs_clarification}")
             
@@ -633,14 +665,18 @@ Please fix the SQL query to address this error.
             from ..utils.content_processor import ContentProcessor
             content_processor = ContentProcessor()
             sql_rules = content_processor.get_sql_rules()
+            sql_examples = content_processor.get_sql_examples()
             
             # Build the full prompt
+            context_text = '\n'.join(context_parts)
             prompt = f"""
-{'\n'.join(context_parts)}
+{context_text}
 
 {error_context}
 
 {sql_rules}
+
+{sql_examples}
 
 Based on the database schema and example queries above, generate a SQL query for the following request:
 
@@ -939,8 +975,8 @@ Format your response clearly and make it understandable for both technical and n
             formatted_parts.append(f"Document {i} ({entity_type}: {entity_name}):\n{content_preview}")
         return "\n\n".join(formatted_parts)
     
-    def _parse_confidence_assessment(self, response_text: str) -> Dict[str, Any]:
-        """Parse confidence assessment response."""
+    def _parse_confidence_and_trimming_assessment(self, response_text: str) -> Dict[str, Any]:
+        """Parse integrated confidence assessment and schema trimming response."""
         import re
         
         result = {
@@ -948,7 +984,9 @@ Format your response clearly and make it understandable for both technical and n
             "analysis": "",
             "missing_info": [],
             "clarification_question": "",
-            "confidence_issues": []
+            "confidence_issues": [],
+            "required_entities": [],
+            "required_columns": {}
         }
         
         try:
@@ -963,6 +1001,56 @@ Format your response clearly and make it understandable for both technical and n
             analysis_match = analysis_pattern.search(response_text)
             if analysis_match:
                 result["analysis"] = analysis_match.group(1).strip()
+            
+            # Extract required schema entities
+            entities_pattern = re.compile(r'## Required Schema Entities\s*([^#]*)', re.IGNORECASE | re.DOTALL)
+            entities_match = entities_pattern.search(response_text)
+            if entities_match:
+                entities_text = entities_match.group(1).strip()
+                # Parse entity lines: "- Entity: table_name | Type: table | Reason: why needed"
+                entity_lines = [line.strip() for line in entities_text.split('\n') if line.strip().startswith('-')]
+                for line in entity_lines:
+                    try:
+                        # Extract entity name, type, and reason
+                        entity_match = re.search(r'Entity:\s*([^|]+)\s*\|\s*Type:\s*([^|]+)\s*\|\s*Reason:\s*(.+)', line)
+                        if entity_match:
+                            entity_name = entity_match.group(1).strip()
+                            entity_type = entity_match.group(2).strip()
+                            reason = entity_match.group(3).strip()
+                            
+                            result["required_entities"].append({
+                                "name": entity_name,
+                                "type": entity_type,
+                                "reason": reason
+                            })
+                    except Exception as parse_error:
+                        logger.warning(f"Failed to parse entity line: {line}, error: {parse_error}")
+            
+            # Extract required columns
+            columns_pattern = re.compile(r'## Required Columns\s*([^#]*)', re.IGNORECASE | re.DOTALL)
+            columns_match = columns_pattern.search(response_text)
+            if columns_match:
+                columns_text = columns_match.group(1).strip()
+                # Parse column lines: "- entity_name: [col1, col2, col3] | Reason: why these columns"
+                column_lines = [line.strip() for line in columns_text.split('\n') if line.strip().startswith('-')]
+                for line in column_lines:
+                    try:
+                        # Extract entity name, columns, and reason
+                        column_match = re.search(r'([^:]+):\s*\[([^\]]+)\]\s*\|\s*Reason:\s*(.+)', line.replace('- ', ''))
+                        if column_match:
+                            entity_name = column_match.group(1).strip()
+                            columns_str = column_match.group(2).strip()
+                            reason = column_match.group(3).strip()
+                            
+                            # Parse column list
+                            columns = [col.strip() for col in columns_str.split(',')]
+                            
+                            result["required_columns"][entity_name] = {
+                                "columns": columns,
+                                "reason": reason
+                            }
+                    except Exception as parse_error:
+                        logger.warning(f"Failed to parse column line: {line}, error: {parse_error}")
             
             # Extract missing information
             missing_pattern = re.compile(r'## Missing Information\s*([^#]*)', re.IGNORECASE | re.DOTALL)
@@ -980,8 +1068,14 @@ Format your response clearly and make it understandable for both technical and n
                 if questions_text.lower() != "none":
                     result["clarification_question"] = questions_text
             
+            logger.info("Parsed LLM assessment",
+                       confidence=result["confidence"],
+                       required_entities_count=len(result["required_entities"]),
+                       required_columns_count=len(result["required_columns"]),
+                       entity_names=[e["name"] for e in result["required_entities"]])
+            
         except Exception as e:
-            logger.warning(f"Error parsing confidence assessment: {e}")
+            logger.warning(f"Error parsing confidence and trimming assessment: {e}")
         
         return result
     
@@ -1393,6 +1487,101 @@ Format your response clearly and make it understandable for both technical and n
                 unique_queries.append(q)
         
         return unique_queries[:4]  # Limit to 4 variations to avoid too many searches
+    
+    def _trim_schema_based_on_llm_analysis(
+        self, 
+        schema_context: List[Dict[str, Any]], 
+        assessment_result: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """Trim schema context based on LLM analysis of required entities.
+        
+        This method uses the LLM's analysis to surgically remove unnecessary schema
+        entities and optionally trim columns within entities to reduce prompt size.
+        """
+        try:
+            logger.info("=== LLM-BASED SCHEMA TRIMMING ===")
+            
+            required_entities = assessment_result.get("required_entities", [])
+            required_columns = assessment_result.get("required_columns", {})
+            
+            if not required_entities:
+                logger.warning("No required entities specified by LLM, keeping original schema")
+                return schema_context
+            
+            # Create a map of required entity names for quick lookup
+            required_entity_names = {entity["name"].lower() for entity in required_entities}
+            
+            logger.info("LLM specified required entities",
+                       required_entities=list(required_entity_names),
+                       original_count=len(schema_context))
+            
+            trimmed_context = []
+            
+            for entity in schema_context:
+                metadata = entity.get("metadata", {})
+                
+                # Get entity identifier
+                entity_name = (metadata.get("table_name") or 
+                             metadata.get("view_name") or 
+                             metadata.get("relationship_name") or "").lower()
+                
+                entity_type = metadata.get("entity_type", "unknown")
+                
+                # Check if this entity is required by the LLM
+                if entity_name in required_entity_names:
+                    # Entity is required - include it (optionally with column trimming)
+                    trimmed_entity = self._trim_entity_columns(entity, entity_name, required_columns)
+                    trimmed_context.append(trimmed_entity)
+                    
+                    logger.debug("Keeping required entity",
+                               entity_name=entity_name,
+                               entity_type=entity_type,
+                               column_trimming=entity_name in required_columns)
+                else:
+                    # Entity not required - remove it
+                    logger.debug("Removing unrequired entity",
+                               entity_name=entity_name,
+                               entity_type=entity_type)
+            
+            logger.info("LLM-based schema trimming completed",
+                       original_count=len(schema_context),
+                       trimmed_count=len(trimmed_context),
+                       kept_entities=[
+                           entity.get("metadata", {}).get("table_name") or 
+                           entity.get("metadata", {}).get("view_name") or 
+                           entity.get("metadata", {}).get("relationship_name") or "unknown"
+                           for entity in trimmed_context
+                       ])
+            
+            return trimmed_context
+            
+        except Exception as e:
+            logger.error("Failed to trim schema based on LLM analysis", error=str(e))
+            # Return original context if trimming fails
+            return schema_context
+    
+    def _trim_entity_columns(
+        self, 
+        entity: Dict[str, Any], 
+        entity_name: str, 
+        required_columns: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Optionally trim columns within an entity based on LLM requirements.
+        
+        Note: For now, this returns the entity unchanged to avoid breaking SQL generation.
+        In the future, we could implement column-level trimming by modifying the entity content.
+        """
+        # For now, return the entity unchanged to maintain full schema information
+        # Column-level trimming could be implemented later if needed for further optimization
+        
+        if entity_name in required_columns:
+            column_info = required_columns[entity_name]
+            logger.debug("Column requirements specified for entity",
+                       entity_name=entity_name,
+                       required_columns=column_info.get("columns", []),
+                       reason=column_info.get("reason", ""))
+        
+        return entity
     
     def _deduplicate_and_rank_results(self, results: List[Dict[str, Any]], max_results: int = 5) -> List[Dict[str, Any]]:
         """Deduplicate search results and rank by combined score."""

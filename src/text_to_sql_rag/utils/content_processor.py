@@ -811,6 +811,51 @@ The schema supports queries about deal statuses, tranche information, and asset 
         """Get Oracle SQL rules for use in prompts only."""
         return self.oracle_sql_rules
     
+    def get_sql_examples(self) -> str:
+        """Get Oracle SQL query examples for use in prompts only."""
+        return """=== ORACLE SQL QUERY EXAMPLES ===
+-- Select all records from a table (use only when user asks for all columns)
+SELECT * FROM schema_name.table_name;
+
+-- Count total records
+SELECT COUNT(*) FROM schema_name.table_name;
+
+-- Select specific columns (always qualify with table name)
+SELECT table_name.column1, table_name.column2
+FROM schema_name.table_name;
+
+-- Case-insensitive search example
+SELECT table_name.id, table_name.name
+FROM schema_name.table_name
+WHERE lower(table_name.column_name) = lower('search_value');
+
+-- Pattern matching example
+SELECT table_name.id, table_name.name
+FROM schema_name.table_name
+WHERE lower(table_name.column_name) LIKE lower('%pattern%');
+
+-- Sorting with nulls last
+SELECT * FROM schema_name.table_name
+ORDER BY column_name DESC NULLS LAST;
+
+-- Join tables example
+SELECT t1.column1, t2.column2
+FROM schema_name.table1 t1
+JOIN schema_name.table2 t2
+  ON t1.join_column = t2.join_column;
+
+-- View query example
+SELECT view_name.column1, view_name.column2
+FROM schema_name.view_name
+WHERE view_name.filter_column = 'value';
+
+-- Aggregate query example
+SELECT table_name.category, COUNT(*) as count
+FROM schema_name.table_name
+GROUP BY table_name.category
+ORDER BY count DESC;
+"""
+    
     def _extract_terms_from_name(self, name: str) -> List[str]:
         """Extract meaningful terms from entity names."""
         # Split on underscores and camelCase
@@ -983,7 +1028,7 @@ The schema supports queries about deal statuses, tranche information, and asset 
             f"Table Name: {table_name.upper()}",
             f"Catalog: {catalog}",
             f"Schema: {schema_name}",
-            f"Full Qualified Name: {catalog}.{schema_name}.{table_name}",
+            f"Schema Qualified Name: {schema_name}.{table_name}",
             ""
         ]
         
@@ -1053,41 +1098,12 @@ The schema supports queries about deal statuses, tranche information, and asset 
         content_lines.extend([
             "=== BUSINESS CONTEXT ===",
             f"This table '{table_name}' contains {description.lower() if description else 'data'} in the database.",
-            f"The table can be accessed using: SELECT * FROM {catalog}.{schema_name}.{table_name}",
+            f"The table can be accessed using: SELECT * FROM {schema_name}.{table_name}",
             ""
         ])
         
         # Get primary key before using it
         primary_key = model_data.get("primaryKey", "")
-        
-        # Add Oracle-compliant query examples
-        content_lines.extend([
-            "=== ORACLE SQL QUERY EXAMPLES ===",
-            f"-- Select all records from {table_name} (use only when user asks for all columns)",
-            f"SELECT * FROM {catalog}.{schema_name}.{table_name};",
-            "",
-            f"-- Count total records",
-            f"SELECT COUNT(*) FROM {catalog}.{schema_name}.{table_name};",
-            "",
-            f"-- Select specific columns (always qualify with table name)",
-            f"SELECT {table_name.lower()}.{primary_key.lower() if primary_key else 'column_name'}, {table_name.lower()}.column_name",
-            f"FROM {catalog}.{schema_name}.{table_name} {table_name.lower()};",
-            "",
-            f"-- Case-insensitive search example",
-            f"SELECT {table_name.lower()}.{primary_key.lower() if primary_key else 'column_name'}",
-            f"FROM {catalog}.{schema_name}.{table_name} {table_name.lower()}",
-            f"WHERE lower({table_name.lower()}.column_name) = lower('search_value');",
-            "",
-            f"-- Pattern matching example", 
-            f"SELECT {table_name.lower()}.{primary_key.lower() if primary_key else 'column_name'}",
-            f"FROM {catalog}.{schema_name}.{table_name} {table_name.lower()}",
-            f"WHERE lower({table_name.lower()}.column_name) LIKE lower('%pattern%');",
-            "",
-            f"-- Sorting with nulls last",
-            f"SELECT * FROM {catalog}.{schema_name}.{table_name}",
-            f"ORDER BY column_name DESC NULLS LAST;",
-            ""
-        ])
         
         # Oracle SQL rules are now only added in prompts, not in document content
         
@@ -1163,7 +1179,7 @@ The schema supports queries about deal statuses, tranche information, and asset 
             f"View Name: {view_name.upper()}",
             f"Catalog: {catalog}",
             f"Schema: {schema_name}",
-            f"Full Qualified Name: {catalog}.{schema_name}.{view_name}",
+            f"Schema Qualified Name: {schema_name}.{view_name}",
             ""
         ]
         
@@ -1202,30 +1218,11 @@ The schema supports queries about deal statuses, tranche information, and asset 
         content_lines.extend([
             "=== BUSINESS CONTEXT ===",
             f"This view '{view_name}' provides {description.lower() if description else 'analytical data'} from the database.",
-            f"The view can be queried using: SELECT * FROM {catalog}.{schema_name}.{view_name}",
+            f"The view can be queried using: SELECT * FROM {schema_name}.{view_name}",
             ""
         ])
         
-        # Add Oracle-compliant query examples for views
-        content_lines.extend([
-            "=== ORACLE SQL QUERY EXAMPLES FOR VIEW ===",
-            f"-- Select all data from {view_name} view (use only when user asks for all columns)",
-            f"SELECT * FROM {catalog}.{schema_name}.{view_name};",
-            "",
-            f"-- Count records in {view_name} view",
-            f"SELECT COUNT(*) FROM {catalog}.{schema_name}.{view_name};",
-            "",
-            f"-- Select specific columns from view (always qualify with view name)",
-            f"SELECT {view_name.lower()}.column_name, {view_name.lower()}.another_column",
-            f"FROM {catalog}.{schema_name}.{view_name} {view_name.lower()};",
-            "",
-            f"-- Join view with other tables (when needed)",
-            f"SELECT {view_name.lower()}.column_name, other_table.column_name",
-            f"FROM {catalog}.{schema_name}.{view_name} {view_name.lower()}",
-            f"JOIN {catalog}.{schema_name}.other_table other_table",
-            f"  ON {view_name.lower()}.join_column = other_table.join_column;",
-            ""
-        ])
+        # Oracle SQL examples are now added once in prompts, not duplicated in every document
         
         # Oracle SQL rules are now only added in prompts, not in document content
         
@@ -1276,7 +1273,7 @@ The schema supports queries about deal statuses, tranche information, and asset 
             "=== RELATIONSHIP DETAILS ===",
             f"Connected Tables: {' <-> '.join(tables)}",
             f"Relationship Type: {rel_type}",
-            f"Full Table References: {' <-> '.join([f'{catalog}.{schema_name}.{table}' for table in tables])}",
+            f"Schema Table References: {' <-> '.join([f'{schema_name}.{table}' for table in tables])}",
             ""
         ])
         
