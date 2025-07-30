@@ -431,7 +431,11 @@ class LlamaIndexVectorService:
             if self.content_processor.is_json_content(content):
                 from ..models.simple_models import DocumentType as DocType
                 # Map document type string to enum
-                if document_type.lower() == "schema":
+                # FORCE CORRECT TYPE FOR LOOKUP FILES
+                if "lookup" in document_id.lower() or "lookups" in document_id.lower():
+                    doc_type_enum = DocType.LOOKUP_METADATA
+                    logger.info("FORCED document type to LOOKUP_METADATA based on document_id", document_id=document_id)
+                elif document_type.lower() == "schema":
                     doc_type_enum = DocType.SCHEMA
                 elif document_type.lower() == "lookup_metadata":
                     doc_type_enum = DocType.LOOKUP_METADATA
