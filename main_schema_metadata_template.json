@@ -1,0 +1,67 @@
+{
+  "catalog": "p1-synd",
+  "schema": "main_schema",
+  "models": [
+    {
+      "table_name": "EXAMPLE_TABLE",
+      "columns": [
+        {
+          "name": "id",
+          "type": "NUMBER(10)",
+          "key": "PRIMARY KEY",
+          "example_values": ["1", "2", "3", "4", "5"],
+          "nullable": false
+        },
+        {
+          "name": "name",
+          "type": "VARCHAR2(255)",
+          "key": null,
+          "example_values": ["Example Name 1", "Example Name 2", "Example Name 3"],
+          "nullable": false
+        },
+        {
+          "name": "created_date",
+          "type": "DATE",
+          "key": null,
+          "example_values": ["2024-01-15", "2024-01-16", "2024-01-17"],
+          "nullable": false
+        },
+        {
+          "name": "status_id",
+          "type": "NUMBER(2)",
+          "key": null,
+          "example_values": ["1", "2", "3"],
+          "nullable": true
+        },
+        {
+          "name": "amount",
+          "type": "NUMBER(15,2)",
+          "key": null,
+          "example_values": ["1000.50", "2500.75", "999.99"],
+          "nullable": true
+        }
+      ]
+    }
+  ],
+  "views": [
+    {
+      "view_name": "V_EXAMPLE_VIEW",
+      "columns": [
+        {
+          "name": "id",
+          "type": "NUMBER(10)",
+          "key": null,
+          "example_values": ["1", "2", "3"],
+          "nullable": false
+        },
+        {
+          "name": "calculated_field",
+          "type": "NUMBER(15,2)",
+          "key": null,
+          "example_values": ["1500.25", "2750.80"],
+          "nullable": true
+        }
+      ]
+    }
+  ]
+}
