@@ -74,30 +74,238 @@ class DDLExtractor:
             return {}
     
     def get_table_ddl(self, table_name: str, schema: str = None) -> str:
-        """Extract DDL for a specific table."""
+        """Extract DDL for a specific table using direct Oracle queries."""
         try:
-            # Reflect the table
-            table = Table(table_name, self.metadata, autoload_with=self.engine, schema=schema)
+            # First try SQLAlchemy reflection approach
+            try:
+                table = Table(table_name, self.metadata, autoload_with=self.engine, schema=schema)
+                create_statement = CreateTable(table).compile(dialect=oracle.dialect())
+                return str(create_statement)
+            except Exception as reflection_error:
+                logger.warning(f"SQLAlchemy reflection failed for {table_name}, trying direct query: {reflection_error}")
             
-            # Generate CREATE TABLE statement
-            create_statement = CreateTable(table).compile(dialect=oracle.dialect())
+            # Fallback: Use Oracle's DBMS_METADATA to get actual DDL
+            schema_prefix = f"{schema}." if schema else ""
+            if schema:
+                ddl_query = f"""
+                    SELECT DBMS_METADATA.GET_DDL('TABLE', '{table_name.upper()}', '{schema.upper()}') as ddl
+                    FROM DUAL
+                """
+            else:
+                ddl_query = f"""
+                    SELECT DBMS_METADATA.GET_DDL('TABLE', '{table_name.upper()}') as ddl
+                    FROM DUAL
+                """
             
-            return str(create_statement)
+            try:
+                with self.engine.connect() as conn:
+                    from sqlalchemy import text
+                    result = conn.execute(text(ddl_query)).fetchone()
+                    if result and result[0]:
+                        # Clean up the DDL output - handle CLOB properly
+                        ddl_clob = result[0]
+                        if hasattr(ddl_clob, 'read'):
+                            ddl = ddl_clob.read()
+                        else:
+                            ddl = str(ddl_clob)
+                        
+                        # Remove Oracle-specific metadata formatting
+                        ddl = ddl.replace('  ', ' ').strip()
+                        # Remove trailing semicolon and whitespace
+                        ddl = ddl.rstrip('; \n\r')
+                        return ddl
+            except Exception as dbms_error:
+                logger.warning(f"DBMS_METADATA failed for {table_name}: {dbms_error}")
             
+            # Final fallback: Generate basic DDL from system tables
+            # Try user_tab_columns first (current user's tables), then all_tab_columns
+            columns_queries = [
+                f"""
+                    SELECT 
+                        column_name,
+                        data_type,
+                        data_length,
+                        data_precision,
+                        data_scale,
+                        nullable,
+                        data_default
+                    FROM user_tab_columns 
+                    WHERE table_name = '{table_name.upper()}'
+                    ORDER BY column_id
+                """,
+                f"""
+                    SELECT 
+                        column_name,
+                        data_type,
+                        data_length,
+                        data_precision,
+                        data_scale,
+                        nullable,
+                        data_default
+                    FROM all_tab_columns 
+                    WHERE table_name = '{table_name.upper()}'
+                    {f"AND owner = '{schema.upper()}'" if schema else ""}
+                    ORDER BY column_id
+                """
+            ]
+            
+            constraints_queries = [
+                f"""
+                    SELECT 
+                        constraint_name,
+                        constraint_type,
+                        column_name
+                    FROM user_cons_columns acc
+                    JOIN user_constraints ac ON acc.constraint_name = ac.constraint_name
+                    WHERE acc.table_name = '{table_name.upper()}'
+                    AND ac.constraint_type IN ('P', 'U', 'C')
+                    ORDER BY acc.position
+                """,
+                f"""
+                    SELECT 
+                        constraint_name,
+                        constraint_type,
+                        column_name
+                    FROM all_cons_columns acc
+                    JOIN all_constraints ac ON acc.constraint_name = ac.constraint_name
+                    WHERE acc.table_name = '{table_name.upper()}'
+                    {f"AND acc.owner = '{schema.upper()}'" if schema else ""}
+                    AND ac.constraint_type IN ('P', 'U', 'C')
+                    ORDER BY acc.position
+                """
+            ]
+            
+            with self.engine.connect() as conn:
+                # Try to get columns with fallback queries
+                columns_result = None
+                for columns_query in columns_queries:
+                    try:
+                        from sqlalchemy import text
+                        columns_result = conn.execute(text(columns_query)).fetchall()
+                        if columns_result:
+                            break
+                    except Exception as e:
+                        logger.debug(f"Columns query failed: {e}")
+                        continue
+                
+                if not columns_result:
+                    logger.error(f"No columns found for table {table_name}")
+                    return None
+                
+                # Try to get constraints with fallback queries
+                constraints_result = []
+                for constraints_query in constraints_queries:
+                    try:
+                        from sqlalchemy import text
+                        constraints_result = conn.execute(text(constraints_query)).fetchall()
+                        break
+                    except Exception as e:
+                        logger.debug(f"Constraints query failed: {e}")
+                        continue
+                
+                # Build DDL manually
+                ddl_lines = [f"CREATE TABLE {schema_prefix}{table_name.upper()} ("]
+                
+                column_definitions = []
+                for col in columns_result:
+                    col_name, data_type, data_length, data_precision, data_scale, nullable, default = col
+                    
+                    # Build column definition
+                    col_def = f"    {col_name} {data_type}"
+                    
+                    # Add precision/scale for numeric types
+                    if data_type in ['NUMBER', 'DECIMAL'] and data_precision:
+                        if data_scale and data_scale > 0:
+                            col_def += f"({data_precision},{data_scale})"
+                        else:
+                            col_def += f"({data_precision})"
+                    elif data_type in ['VARCHAR2', 'CHAR'] and data_length:
+                        col_def += f"({data_length})"
+                    
+                    # Add nullable constraint
+                    if nullable == 'N':
+                        col_def += " NOT NULL"
+                    
+                    # Add default value
+                    if default:
+                        col_def += f" DEFAULT {default}"
+                    
+                    column_definitions.append(col_def)
+                
+                ddl_lines.append(",\n".join(column_definitions))
+                
+                # Add primary key constraints
+                pk_columns = [c[2] for c in constraints_result if c[1] == 'P']
+                if pk_columns:
+                    ddl_lines.append(f",\n    PRIMARY KEY ({', '.join(pk_columns)})")
+                
+                ddl_lines.append(");")
+                
+                return "\n".join(ddl_lines)
+                
         except Exception as e:
-            logger.error(f"Failed to get DDL for table {table_name}: {e}")
+            logger.error(f"All DDL extraction methods failed for table {table_name}: {e}")
             return None
     
     def get_view_ddl(self, view_name: str, schema: str = None) -> str:
-        """Extract DDL for a specific view (this is more complex for views)."""
+        """Extract DDL for a specific view using Oracle system tables."""
         try:
-            # For views, we'll create a simplified structure since getting the actual
-            # CREATE VIEW statement requires additional privileges
+            # First try to get actual view definition from Oracle
+            schema_prefix = f"{schema}." if schema else ""
+            
+            try:
+                # Try DBMS_METADATA for views
+                if schema:
+                    ddl_query = f"""
+                        SELECT DBMS_METADATA.GET_DDL('VIEW', '{view_name.upper()}', '{schema.upper()}') as ddl
+                        FROM DUAL
+                    """
+                else:
+                    ddl_query = f"""
+                        SELECT DBMS_METADATA.GET_DDL('VIEW', '{view_name.upper()}') as ddl
+                        FROM DUAL
+                    """
+                
+                with self.engine.connect() as conn:
+                    from sqlalchemy import text
+                    result = conn.execute(text(ddl_query)).fetchone()
+                    if result and result[0]:
+                        # Clean up the DDL output - handle CLOB properly
+                        ddl_clob = result[0]
+                        if hasattr(ddl_clob, 'read'):
+                            ddl = ddl_clob.read()
+                        else:
+                            ddl = str(ddl_clob)
+                        
+                        # Clean up the DDL output
+                        ddl = ddl.replace('  ', ' ').strip()
+                        ddl = ddl.rstrip('; \n\r')
+                        return ddl
+            except Exception as dbms_error:
+                logger.warning(f"DBMS_METADATA failed for view {view_name}: {dbms_error}")
+            
+            # Fallback: Get view definition from system tables
+            view_definition_query = f"""
+                SELECT text
+                FROM all_views
+                WHERE view_name = '{view_name.upper()}'
+                {f"AND owner = '{schema.upper()}'" if schema else ""}
+            """
+            
+            with self.engine.connect() as conn:
+                from sqlalchemy import text
+                result = conn.execute(text(view_definition_query)).fetchone()
+                if result and result[0]:
+                    view_text = str(result[0])
+                    ddl = f"CREATE OR REPLACE VIEW {schema_prefix}{view_name.upper()} AS\n{view_text}"
+                    return ddl
+            
+            # Final fallback: Use SQLAlchemy reflection
             view_columns = self.inspector.get_columns(view_name, schema=schema)
             
             ddl_lines = [f"-- {view_name} view structure"]
             ddl_lines.append(f"-- Note: This is a simplified view structure")
-            ddl_lines.append(f"CREATE OR REPLACE VIEW {view_name} AS")
+            ddl_lines.append(f"CREATE OR REPLACE VIEW {schema_prefix}{view_name.upper()} AS")
             ddl_lines.append("SELECT")
             
             column_lines = []
