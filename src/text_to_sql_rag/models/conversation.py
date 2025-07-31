@@ -87,9 +87,10 @@ class WorkflowState(BaseModel):
     
     # Workflow execution context
     workflow_step: Optional[WorkflowStep] = None
-    schema_context: List[Dict[str, Any]] = Field(default_factory=list)
-    example_context: List[Dict[str, Any]] = Field(default_factory=list)
-    lookup_context: List[Dict[str, Any]] = Field(default_factory=list)
+    # LEGACY: These fields are maintained for compatibility but replaced by hierarchical context
+    schema_context: List[Dict[str, Any]] = Field(default_factory=list)  # LEGACY: Now handled by hierarchical service
+    example_context: List[Dict[str, Any]] = Field(default_factory=list)  # LEGACY: Now integrated into hierarchical tiers
+    lookup_context: List[Dict[str, Any]] = Field(default_factory=list)  # Still used but populated differently
     sources: List[str] = Field(default_factory=list)
     confidence_score: float = 0.0
     needs_clarification: bool = False

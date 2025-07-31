@@ -1117,8 +1117,198 @@ ORDER BY count DESC;
             "metadata": {"chunk_type": "report_document"}
         }]
     
-    def create_individual_documents(self, json_content: str, document_type: DocumentType) -> List[Dict[str, Any]]:
-        """Create individual documents for each model/view/relationship in schema metadata.
+    # ================================================================================================
+    # NEW HIERARCHICAL CONTENT PROCESSING METHODS
+    # ================================================================================================
+    
+    def create_hierarchical_documents(self, content: str, document_type: DocumentType) -> List[Dict[str, Any]]:
+        """Create documents for the new hierarchical architecture.
+        
+        Args:
+            content: Document content (DDL, JSON, etc.)
+            document_type: One of the new hierarchical types
+            
+        Returns:
+            List of document chunks for vector indexing
+        """
+        if document_type == DocumentType.DDL:
+            return self._create_ddl_chunks(content)
+        elif document_type == DocumentType.BUSINESS_DESC:
+            return self._create_business_desc_chunks(content)
+        elif document_type == DocumentType.BUSINESS_RULES:
+            return self._create_business_rules_chunks(content)
+        elif document_type == DocumentType.COLUMN_DETAILS:
+            return self._create_column_details_chunks(content)
+        elif document_type == DocumentType.LOOKUP_METADATA:
+            # Reuse existing lookup processing
+            data = json.loads(content)
+            return self._create_lookup_semantic_chunks(data)
+        else:
+            # Fallback for legacy types
+            logger.warning(f"Using legacy processing for document type: {document_type}")
+            return [{"content": content, "metadata": {"chunk_type": "legacy"}}]
+    
+    def _create_ddl_chunks(self, ddl_content: str) -> List[Dict[str, Any]]:
+        """Create chunks for DDL files - typically one chunk per table/view."""
+        # Extract table/view name from DDL
+        import re
+        
+        # Look for CREATE TABLE or CREATE VIEW statements
+        table_match = re.search(r'CREATE\s+(?:OR\s+REPLACE\s+)?TABLE\s+(\w+)', ddl_content, re.IGNORECASE)
+        view_match = re.search(r'CREATE\s+(?:OR\s+REPLACE\s+)?VIEW\s+(\w+)', ddl_content, re.IGNORECASE)
+        
+        if table_match:
+            entity_name = table_match.group(1)
+            entity_type = "table"
+        elif view_match:
+            entity_name = view_match.group(1)
+            entity_type = "view"
+        else:
+            entity_name = "unknown"
+            entity_type = "unknown"
+        
+        # Extract description from comments
+        description_match = re.search(r'--\s*([^\n]+)', ddl_content)
+        description = description_match.group(1).strip() if description_match else f"{entity_type} {entity_name}"
+        
+        return [{
+            "content": ddl_content,
+            "metadata": {
+                "chunk_type": "ddl",
+                "entity_type": entity_type,
+                "entity_name": entity_name.upper(),
+                "table_name": entity_name.upper() if entity_type == "table" else None,
+                "view_name": entity_name.upper() if entity_type == "view" else None,
+                "description": description
+            }
+        }]
+    
+    def _create_business_desc_chunks(self, json_content: str) -> List[Dict[str, Any]]:
+        """Create chunks for business description files - one chunk per domain."""
+        try:
+            data = json.loads(json_content)
+            domain = data.get("domain", "unknown")
+            description = data.get("description", "")
+            tables = data.get("tables", {})
+            
+            # Create comprehensive content for the domain
+            content_parts = []
+            content_parts.append(f"Domain: {domain}")
+            content_parts.append(f"Description: {description}")
+            content_parts.append("")
+            content_parts.append("Tables in this domain:")
+            
+            for table_name, table_desc in tables.items():
+                content_parts.append(f"- {table_name}: {table_desc}")
+            
+            content = "\n".join(content_parts)
+            
+            return [{
+                "content": content,
+                "metadata": {
+                    "chunk_type": "business_description",
+                    "domain": domain,
+                    "table_count": len(tables),
+                    "tables": list(tables.keys())
+                }
+            }]
+            
+        except Exception as e:
+            logger.error(f"Failed to process business description: {e}")
+            return [{"content": json_content, "metadata": {"chunk_type": "business_description", "error": str(e)}}]
+    
+    def _create_business_rules_chunks(self, json_content: str) -> List[Dict[str, Any]]:
+        """Create chunks for business rules files - one chunk per rule area."""
+        try:
+            data = json.loads(json_content)
+            area = data.get("area", "unknown")
+            description = data.get("description", "")
+            rules = data.get("rules", [])
+            
+            # Create comprehensive content for the rule area
+            content_parts = []
+            content_parts.append(f"Rule Area: {area}")
+            content_parts.append(f"Description: {description}")
+            content_parts.append("")
+            
+            for i, rule in enumerate(rules, 1):
+                content_parts.append(f"Rule {i}: {rule.get('pattern', 'Unknown Pattern')}")
+                content_parts.append(f"Applies to columns: {', '.join(rule.get('columns', []))}")
+                content_parts.append(f"Rule: {rule.get('rule', '')}")
+                content_parts.append(f"SQL Guidance: {rule.get('sql_guidance', '')}")
+                if rule.get('example'):
+                    content_parts.append(f"Example: {rule.get('example')}")
+                content_parts.append("")
+            
+            content = "\n".join(content_parts)
+            
+            return [{
+                "content": content,
+                "metadata": {
+                    "chunk_type": "business_rules",
+                    "area": area,
+                    "rule_count": len(rules),
+                    "patterns": [rule.get("pattern") for rule in rules]
+                }
+            }]
+            
+        except Exception as e:
+            logger.error(f"Failed to process business rules: {e}")
+            return [{"content": json_content, "metadata": {"chunk_type": "business_rules", "error": str(e)}}]
+    
+    def _create_column_details_chunks(self, json_content: str) -> List[Dict[str, Any]]:
+        """Create chunks for column details files - one chunk per table."""
+        try:
+            data = json.loads(json_content)
+            table_name = data.get("table", "unknown")
+            columns = data.get("columns", {})
+            
+            # Create comprehensive content for the table columns
+            content_parts = []
+            content_parts.append(f"Table: {table_name}")
+            content_parts.append("")
+            content_parts.append("Columns:")
+            
+            for col_name, col_info in columns.items():
+                content_parts.append(f"- {col_name}:")
+                content_parts.append(f"  Type: {col_info.get('type', 'unknown')}")
+                content_parts.append(f"  Description: {col_info.get('description', 'No description')}")
+                
+                if col_info.get('nullable') is not None:
+                    content_parts.append(f"  Nullable: {col_info['nullable']}")
+                
+                if col_info.get('constraint'):
+                    content_parts.append(f"  Constraint: {col_info['constraint']}")
+                
+                if col_info.get('example_values'):
+                    content_parts.append(f"  Example values: {', '.join(map(str, col_info['example_values']))}")
+                
+                if col_info.get('join_hint'):
+                    content_parts.append(f"  Join hint: {col_info['join_hint']}")
+                
+                content_parts.append("")
+            
+            content = "\n".join(content_parts)
+            
+            return [{
+                "content": content,
+                "metadata": {
+                    "chunk_type": "column_details",
+                    "table_name": table_name.upper(),
+                    "column_count": len(columns),
+                    "columns": list(columns.keys())
+                }
+            }]
+            
+        except Exception as e:
+            logger.error(f"Failed to process column details: {e}")
+            return [{"content": json_content, "metadata": {"chunk_type": "column_details", "error": str(e)}}]
+    
+    def create_individual_documents_LEGACY(self, json_content: str, document_type: DocumentType) -> List[Dict[str, Any]]:
+        """LEGACY: Create individual documents for each model/view/relationship in schema metadata.
+        
+        WARNING: This method is deprecated. New tiered architecture uses separate DDL, 
+        BUSINESS_DESC, BUSINESS_RULES, and COLUMN_DETAILS files instead.
         
         This method takes the main_schema_metadata.json and creates separate documents
         for each model, view, and relationship. Each document contains complete information

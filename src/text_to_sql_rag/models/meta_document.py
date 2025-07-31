@@ -1,4 +1,9 @@
-"""Models for metadata documents (schema and reports)."""
+"""Models for metadata documents (schema and reports).
+
+NOTE: SchemaMetadata is primarily used for legacy schema files.
+New hierarchical architecture uses separate DDL, BUSINESS_DESC, BUSINESS_RULES, 
+and COLUMN_DETAILS document types with simpler JSON structures.
+"""
 
 from datetime import datetime
 from typing import Dict, Any, List, Optional, Union

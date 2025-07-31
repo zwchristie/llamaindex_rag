@@ -453,7 +453,13 @@ class LlamaIndexVectorService:
                     is_json=self.content_processor.is_json_content(content)
                 )
                 
-                individual_documents = self.content_processor.create_individual_documents(content, doc_type_enum)
+                # Use hierarchical document processing for new types
+                if doc_type_enum in [DocType.DDL, DocType.BUSINESS_DESC, DocType.BUSINESS_RULES, 
+                                   DocType.COLUMN_DETAILS, DocType.LOOKUP_METADATA]:
+                    individual_documents = self.content_processor.create_hierarchical_documents(content, doc_type_enum)
+                else:
+                    # Fall back to legacy processing for old schema files
+                    individual_documents = self.content_processor.create_individual_documents_LEGACY(content, doc_type_enum)
                 
                 logger.info(
                     "Created individual documents for separate storage",
@@ -1016,13 +1022,15 @@ class LlamaIndexVectorService:
         schema_indicators = ["table", "column", "field", "structure", "schema", "database", "what tables", "which tables"]
         return any(indicator in query.lower() for indicator in schema_indicators)
     
-    def two_step_metadata_retrieval(
+    def two_step_metadata_retrieval_LEGACY(
         self,
         query: str,
         similarity_top_k: int = 10,
         document_type: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Perform 2-step retrieval: first models/views, then relationships, then pruning.
+        """LEGACY: Perform 2-step retrieval: first models/views, then relationships, then pruning.
+        
+        WARNING: This method is deprecated and replaced by HierarchicalContextService.
         
         This method implements the user's requested approach:
         1. Semantic search for relevant models/views with rewritten prompts

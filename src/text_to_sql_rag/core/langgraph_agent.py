@@ -24,6 +24,7 @@ from ..models.conversation import (
 )
 from ..services.vector_service import LlamaIndexVectorService
 from ..services.query_execution_service import QueryExecutionService
+from ..services.hierarchical_context_service import HierarchicalContextService
 from ..services.llm_provider_factory import llm_factory
 
 logger = structlog.get_logger(__name__)
@@ -77,6 +78,16 @@ class TextToSQLAgent:
         self.query_execution_service = query_execution_service
         self.max_retries = max_retries
         self.confidence_threshold = confidence_threshold
+        
+        # Initialize hierarchical context service
+        from ..services.llm_service import LLMService
+        llm_service = LLMService()  # Create LLM service instance
+        self.hierarchical_context_service = HierarchicalContextService(
+            vector_service=vector_service,
+            llm_service=llm_service,
+            max_context_tokens=15000
+        )
+        
         self.graph = self._build_graph()
         
         # Checkpoint storage for HITL state persistence
@@ -87,10 +98,8 @@ class TextToSQLAgent:
         """Build the enhanced LangGraph workflow with HITL and confidence assessment."""
         workflow = StateGraph(ConversationState)
         
-        # Add nodes
+        # Add nodes (hierarchical context - removed old metadata nodes)
         workflow.add_node("classify_request", self._classify_request_node)
-        workflow.add_node("get_metadata", self._get_metadata_node)
-        workflow.add_node("get_lookup_data", self._get_lookup_data_node)
         workflow.add_node("assess_confidence", self._assess_confidence_node)
         workflow.add_node("request_clarification", self._request_clarification_node)
         workflow.add_node("generate_sql", self._generate_sql_node)
@@ -102,22 +111,16 @@ class TextToSQLAgent:
         # Define the flow
         workflow.set_entry_point("classify_request")
         
-        # From classify_request, route based on request type
+        # From classify_request, route based on request type (bypass old metadata nodes)
         workflow.add_conditional_edges(
             "classify_request",
             self._route_by_request_type,
             {
-                "get_metadata": "get_metadata",
+                "assess_confidence": "assess_confidence",  # Skip to confidence assessment
                 "describe_sql": "describe_sql",
                 "execute_sql": "execute_sql"
             }
         )
-        
-        # From get_metadata, get lookup data
-        workflow.add_edge("get_metadata", "get_lookup_data")
-        
-        # From get_lookup_data, assess confidence
-        workflow.add_edge("get_lookup_data", "assess_confidence")
         
         # From assess_confidence, either clarify or generate SQL
         workflow.add_conditional_edges(
@@ -294,7 +297,12 @@ Reasoning: [Brief explanation of why this classification was chosen]
         
         return state
     
-    def _get_metadata_node(self, state: ConversationState) -> ConversationState:
+    # ================================================================================================
+    # LEGACY METADATA RETRIEVAL METHODS (REPLACED BY HIERARCHICAL CONTEXT SERVICE)  
+    # These methods are preserved for reference but are no longer used in the workflow
+    # ================================================================================================
+    
+    def _get_metadata_node_LEGACY(self, state: ConversationState) -> ConversationState:
         """Retrieve relevant schema and example metadata."""
         logger.info("=== WORKFLOW NODE: GET METADATA ===")
         logger.info("Starting metadata retrieval", 
@@ -306,7 +314,7 @@ Reasoning: [Brief explanation of why this classification was chosen]
         try:
             # Use the new 2-step metadata retrieval process
             logger.info("Using 2-step metadata retrieval process")
-            pruned_metadata = self.vector_service.two_step_metadata_retrieval(
+            pruned_metadata = self.vector_service.two_step_metadata_retrieval_LEGACY(
                 query=state.current_request,
                 similarity_top_k=8,  # Get more results for better filtering
                 document_type=DocumentType.SCHEMA.value
@@ -430,7 +438,7 @@ Reasoning: [Brief explanation of why this classification was chosen]
         
         return state
     
-    def _get_lookup_data_node(self, state: ConversationState) -> ConversationState:
+    def _get_lookup_data_node_LEGACY(self, state: ConversationState) -> ConversationState:
         """Get relevant lookup metadata to help with SQL generation."""
         logger.info("=== WORKFLOW NODE: GET LOOKUP DATA ===")
         logger.info("Starting lookup data retrieval", 
@@ -651,18 +659,27 @@ GUIDELINES:
         return state
     
     def _generate_sql_node(self, state: ConversationState) -> ConversationState:
-        """Generate SQL using LLM with schema and example context."""
-        logger.info("=== WORKFLOW NODE: GENERATE SQL ===")
-        logger.info("Starting SQL generation", 
+        """Generate SQL using hierarchical context service for efficient metadata retrieval."""
+        logger.info("=== WORKFLOW NODE: GENERATE SQL (HIERARCHICAL) ===")
+        logger.info("Starting SQL generation with hierarchical context", 
                    request=state.current_request,
-                   schema_chunks=len(state.schema_context),
-                   example_chunks=len(state.example_context),
                    retry_count=state.retry_count)
         
         state.workflow_step = WorkflowStep.GENERATE_SQL
         
         try:
-            # Build context prompt
+            # Build hierarchical context using the new service
+            logger.info("Building hierarchical context...")
+            hierarchical_context = self.hierarchical_context_service.build_context(
+                query=state.current_request,
+                include_advanced_rules=state.retry_count > 0,  # Include rules if retrying
+                debug=True
+            )
+            
+            # Store context info in state for debugging
+            state.schema_context = [{"content": f"Selected tables: {', '.join(hierarchical_context.selected_tables)}"}]
+            
+            # Build context prompt with hierarchical tiers
             context_parts = []
             
             # Add conversation context if this is a follow-up
@@ -671,31 +688,10 @@ GUIDELINES:
                 context_parts.append(state.get_conversation_summary())
                 context_parts.append("")
             
-            # Add schema context
-            if state.schema_context:
-                context_parts.append("=== DATABASE SCHEMA ===")
-                for i, schema in enumerate(state.schema_context[:3]):  # Limit to top 3
-                    context_parts.append(f"Schema {i+1}:")
-                    context_parts.append(schema["content"])
-                    context_parts.append("")
-            
-            # Add example context
-            if state.example_context:
-                context_parts.append("=== EXAMPLE QUERIES ===")
-                for i, example in enumerate(state.example_context):
-                    context_parts.append(f"Example {i+1}:")
-                    context_parts.append(example["content"])
-                    context_parts.append("")
-            
-            # Add lookup context
-            if state.lookup_context:
-                context_parts.append("=== LOOKUP DATA FOR FILTERING ===")
-                context_parts.append("Use these lookup values when filtering data:")
-                for i, lookup in enumerate(state.lookup_context):
-                    lookup_name = lookup.get("metadata", {}).get("lookup_name", f"Lookup {i+1}")
-                    context_parts.append(f"LOOKUP: {lookup_name}")
-                    context_parts.append(lookup["content"])
-                    context_parts.append("")
+            # Add hierarchical context (replaces old schema/example/lookup context)
+            context_parts.append("=== METADATA CONTEXT ===")
+            context_parts.append(hierarchical_context.get_combined_context())
+            context_parts.append("")
             
             # Add previous SQL if editing
             if state.request_type == RequestType.EDIT_PREVIOUS and state.sql_history:
@@ -717,14 +713,14 @@ The previous SQL query failed with this error:
 Please fix the SQL query to address this error.
 """
             
-            # Get SQL rules from content processor
-            from ..utils.content_processor import ContentProcessor
-            content_processor = ContentProcessor()
-            sql_rules = content_processor.get_sql_rules()
-            sql_examples = content_processor.get_sql_examples()
-            
             # Build the full prompt
             context_text = '\n'.join(context_parts)
+            
+            logger.info("Hierarchical context built",
+                       selected_tables=len(hierarchical_context.selected_tables),
+                       tiers_count=len(hierarchical_context.tiers),
+                       total_tokens=hierarchical_context.total_tokens,
+                       retrieval_time_ms=hierarchical_context.retrieval_time_ms)
             prompt = f"""
 {context_text}
 
@@ -987,14 +983,15 @@ Format your response clearly and make it understandable for both technical and n
         return state
     
     def _route_by_request_type(self, state: ConversationState) -> str:
-        """Route workflow based on request type."""
+        """Route workflow based on request type (hierarchical context)."""
         if state.request_type == RequestType.DESCRIBE_SQL:
             return "describe_sql"
         elif state.request_type == RequestType.EXECUTE_SQL:
             return "execute_sql"
         else:
             # For GENERATE_NEW, EDIT_PREVIOUS, FOLLOW_UP, CLARIFICATION
-            return "get_metadata"
+            # Skip to confidence assessment - hierarchical context happens in generate_sql
+            return "assess_confidence"
     
     def _should_request_clarification(self, state: ConversationState) -> str:
         """Determine if we should request clarification."""

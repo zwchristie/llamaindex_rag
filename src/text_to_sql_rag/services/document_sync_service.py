@@ -205,23 +205,53 @@ class DocumentSyncService:
             
             catalog = parts[0]
             
-            # Determine document type from directory structure
+            # Determine document type from directory structure (new tiered architecture)
             if len(parts) >= 3 and parts[1] == "schema":
-                document_type = DocumentType.SCHEMA
-                schema_name = file_path.stem.replace('_metadata', '')
-            elif len(parts) >= 3 and parts[1] == "reports":
-                document_type = DocumentType.REPORT
-                schema_name = "reports"  # Reports don't have schema, use "reports" as default
+                if len(parts) >= 4 and parts[2] == "ddl":
+                    # New DDL files: /catalog/schema/ddl/table_name.sql
+                    if file_path.suffix.lower() == '.sql':
+                        document_type = DocumentType.DDL
+                        schema_name = file_path.stem  # table/view name
+                    else:
+                        return None, None, None
+                else:
+                    # Legacy schema files: /catalog/schema/main_schema_metadata.json
+                    document_type = DocumentType.SCHEMA
+                    schema_name = file_path.stem.replace('_metadata', '')
+            elif len(parts) >= 3 and parts[1] == "descriptions":
+                # Business descriptions: /catalog/descriptions/domain.json
+                if file_path.suffix.lower() == '.json':
+                    document_type = DocumentType.BUSINESS_DESC
+                    schema_name = file_path.stem  # domain name
+                else:
+                    return None, None, None
+            elif len(parts) >= 3 and parts[1] == "business_rules":
+                # Business rules: /catalog/business_rules/area.json
+                if file_path.suffix.lower() == '.json':
+                    document_type = DocumentType.BUSINESS_RULES
+                    schema_name = file_path.stem  # rule area name
+                else:
+                    return None, None, None
+            elif len(parts) >= 3 and parts[1] == "columns":
+                # Column details: /catalog/columns/table_name.json
+                if file_path.suffix.lower() == '.json':
+                    document_type = DocumentType.COLUMN_DETAILS
+                    schema_name = file_path.stem  # table name
+                else:
+                    return None, None, None
             elif len(parts) >= 3 and parts[1] == "lookups":
-                # Only process JSON files in lookups folder
+                # Lookup metadata: /catalog/lookups/lookup_name.json
                 if file_path.suffix.lower() == '.json':
                     document_type = DocumentType.LOOKUP_METADATA
                     schema_name = "lookups"  # Lookups use "lookups" as schema name
                 else:
-                    # Skip non-JSON files in lookups folder (e.g., README.md)
                     return None, None, None
+            elif len(parts) >= 3 and parts[1] == "reports":
+                # Reports: /catalog/reports/report_name.txt
+                document_type = DocumentType.REPORT
+                schema_name = "reports"  # Reports don't have schema, use "reports" as default
             else:
-                # Try to infer from file content or name
+                # Legacy fallback - try to infer from file content or name
                 if file_path.suffix.lower() == '.json':
                     document_type = DocumentType.SCHEMA
                     schema_name = file_path.stem.replace('_metadata', '')
@@ -244,8 +274,9 @@ class DocumentSyncService:
     ) -> Optional[Any]:
         """Parse document content based on type."""
         try:
+            # Legacy types
             if document_type == DocumentType.SCHEMA:
-                # Parse JSON schema document
+                # Parse JSON schema document (legacy)
                 data = json.loads(content)
                 return SchemaMetadata(**data)
             
@@ -253,10 +284,33 @@ class DocumentSyncService:
                 # Parse text report document
                 return self._parse_report_content(content, catalog)
             
+            # New tiered types - use simple dict parsing for flexibility
+            elif document_type == DocumentType.DDL:
+                # DDL files are plain SQL - return as simple metadata
+                return {
+                    "table_name": schema_name,
+                    "ddl_content": content,
+                    "file_type": "sql"
+                }
+            
+            elif document_type == DocumentType.BUSINESS_DESC:
+                # Business description JSON files
+                data = json.loads(content)
+                return data
+            
+            elif document_type == DocumentType.BUSINESS_RULES:
+                # Business rules JSON files
+                data = json.loads(content)
+                return data
+            
+            elif document_type == DocumentType.COLUMN_DETAILS:
+                # Column details JSON files
+                data = json.loads(content)
+                return data
+            
             elif document_type == DocumentType.LOOKUP_METADATA:
                 # Parse JSON lookup metadata document
                 data = json.loads(content)
-                # For lookup metadata, we'll use a simple dict since it doesn't need a complex model
                 return data
             
         except Exception as e:
