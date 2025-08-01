@@ -157,6 +157,9 @@ class Settings:
         self.mongodb = MongoDBSettings()
         self.llm_provider = LLMProviderSettings()
         
+        # Bedrock endpoint URL (for HTTP-based Bedrock access)
+        self.bedrock_endpoint_url = os.getenv("BEDROCK_ENDPOINT_URL")
+        
         # Only load custom LLM settings if needed
         if self._should_load_custom_llm():
             try:
@@ -180,6 +183,10 @@ class Settings:
     def is_using_bedrock(self) -> bool:
         """Check if using AWS Bedrock provider."""
         return self.llm_provider.provider == "bedrock"
+    
+    def is_using_bedrock_endpoint(self) -> bool:
+        """Check if using Bedrock endpoint provider."""
+        return self.llm_provider.provider == "bedrock_endpoint"
 
 
 # Global settings instance

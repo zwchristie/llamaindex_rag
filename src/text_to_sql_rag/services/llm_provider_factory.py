@@ -5,6 +5,7 @@ import structlog
 
 from ..config.settings import settings
 from .bedrock_service import BedrockLLMService
+from .bedrock_endpoint_service import BedrockEndpointLLMWrapper
 from .custom_llm_service import CustomLLMService
 
 logger = structlog.get_logger(__name__)
@@ -29,6 +30,9 @@ class LLMProviderFactory:
             if provider_name == "bedrock":
                 self._current_provider = self._get_bedrock_service()
                 logger.info("Initialized Bedrock LLM provider")
+            elif provider_name == "bedrock_endpoint":
+                self._current_provider = self._get_bedrock_endpoint_service()
+                logger.info("Initialized Bedrock Endpoint LLM provider")
             elif provider_name == "custom":
                 self._current_provider = self._get_custom_service()
                 logger.info("Initialized Custom LLM provider")
@@ -54,6 +58,18 @@ class LLMProviderFactory:
             self._bedrock_service = BedrockLLMService()
         return self._bedrock_service
     
+    def _get_bedrock_endpoint_service(self) -> BedrockEndpointLLMWrapper:
+        """Get or create Bedrock endpoint LLM service."""
+        if not hasattr(self, '_bedrock_endpoint_service') or self._bedrock_endpoint_service is None:
+            # Get endpoint URL from settings
+            endpoint_url = getattr(settings, 'bedrock_endpoint_url', None)
+            if not endpoint_url:
+                raise ValueError("Bedrock endpoint URL not configured. Set BEDROCK_ENDPOINT_URL in settings.")
+            
+            model_id = getattr(settings.aws, 'llm_model', 'us.anthropic.claude-3-haiku-20240307-v1:0')
+            self._bedrock_endpoint_service = BedrockEndpointLLMWrapper(endpoint_url, model_id)
+        return self._bedrock_endpoint_service
+    
     def _get_custom_service(self) -> CustomLLMService:
         """Get or create custom LLM service."""
         if self._custom_service is None:
@@ -62,7 +78,7 @@ class LLMProviderFactory:
             self._custom_service = CustomLLMService()
         return self._custom_service
     
-    def get_current_provider(self) -> Union[BedrockLLMService, CustomLLMService]:
+    def get_current_provider(self) -> Union[BedrockLLMService, BedrockEndpointLLMWrapper, CustomLLMService]:
         """Get the current LLM provider."""
         if self._current_provider is None:
             raise RuntimeError("No LLM provider initialized")
@@ -76,6 +92,10 @@ class LLMProviderFactory:
             if provider_name == "bedrock":
                 self._current_provider = self._get_bedrock_service()
                 logger.info("Switched to Bedrock LLM provider")
+                return True
+            elif provider_name == "bedrock_endpoint":
+                self._current_provider = self._get_bedrock_endpoint_service()
+                logger.info("Switched to Bedrock Endpoint LLM provider")
                 return True
             elif provider_name == "custom":
                 self._current_provider = self._get_custom_service()
@@ -98,6 +118,13 @@ class LLMProviderFactory:
                 "region": settings.aws.region,
                 "using_profile": settings.aws.use_profile,
                 "profile_name": settings.aws.profile_name if settings.aws.use_profile else None
+            }
+        elif isinstance(self._current_provider, BedrockEndpointLLMWrapper):
+            return {
+                "provider": "bedrock_endpoint",
+                "model": self._current_provider.model_id,
+                "endpoint_url": self._current_provider.bedrock_service.endpoint_base_url,
+                "invoke_url": self._current_provider.bedrock_service.invoke_url
             }
         elif isinstance(self._current_provider, CustomLLMService):
             return {
@@ -141,6 +168,9 @@ class LLMProviderFactory:
         elif isinstance(provider, BedrockLLMService):
             # BedrockLLMService has different parameter names
             return provider.generate_text(prompt, **kwargs)
+        elif isinstance(provider, BedrockEndpointLLMWrapper):
+            # BedrockEndpointLLMWrapper uses generate_response method
+            return provider.generate_response(prompt, **kwargs)
         else:
             raise RuntimeError(f"Unknown provider type: {type(provider)}")
     
@@ -167,6 +197,13 @@ class LLMProviderFactory:
                 schema_context=schema_context,
                 example_queries=example_queries
             )
+        elif isinstance(provider, BedrockEndpointLLMWrapper):
+            # BedrockEndpointLLMWrapper doesn't have generate_sql_query, use generate_response
+            # This would need to be implemented based on your SQL generation needs
+            logger.warning("generate_sql_query not directly supported with endpoint wrapper, using generate_response")
+            prompt = f"Schema: {schema_context}\nQuery: {natural_language_query}"
+            response = provider.generate_response(prompt)
+            return {"sql": response, "explanation": "", "confidence": 0.8}
         else:
             raise RuntimeError(f"Unknown provider type: {type(provider)}")
     
@@ -185,6 +222,10 @@ class LLMProviderFactory:
             # Bedrock doesn't have conversation continuation, so just generate new text
             logger.warning("Conversation continuation not supported with Bedrock, using generate_text")
             return provider.generate_text(message, **kwargs)
+        elif isinstance(provider, BedrockEndpointLLMWrapper):
+            # Endpoint wrapper doesn't have conversation continuation, use generate_response
+            logger.warning("Conversation continuation not supported with Bedrock endpoint, using generate_response")
+            return provider.generate_response(message, **kwargs)
         else:
             raise RuntimeError(f"Unknown provider type: {type(provider)}")
     
@@ -202,8 +243,21 @@ class LLMProviderFactory:
             # Bedrock doesn't support conversation retrieval
             logger.warning("Conversation message retrieval not supported with Bedrock")
             return []
+        elif isinstance(provider, BedrockEndpointLLMWrapper):
+            # Endpoint wrapper doesn't support conversation retrieval
+            logger.warning("Conversation message retrieval not supported with Bedrock endpoint")
+            return []
         else:
             raise RuntimeError(f"Unknown provider type: {type(provider)}")
+    
+    def get_llm_client(self, provider: str = None, model: str = None):
+        """Get LLM client for direct use (compatibility method)."""
+        if provider and provider.lower() == "bedrock_endpoint":
+            # Return the endpoint wrapper directly
+            return self._get_bedrock_endpoint_service()
+        else:
+            # Return the current provider
+            return self.get_current_provider()
 
 
 # Global LLM provider factory instance

@@ -27,49 +27,65 @@ import ssl
 from ..config.settings import settings
 from ..utils.content_processor import ContentProcessor
 from .bedrock_service import BedrockEmbeddingService, BedrockLLMService
+from .bedrock_endpoint_service import BedrockEndpointEmbeddingService, BedrockEndpointLLMWrapper
 
 logger = structlog.get_logger(__name__)
 
 
 class CustomBedrockEmbedding(BaseEmbedding):
-    """Custom embedding wrapper for inference profile ARNs."""
+    """Custom embedding wrapper for inference profile ARNs and endpoint services."""
     
-    def __init__(self, bedrock_service: 'BedrockEmbeddingService', **kwargs):
+    def __init__(self, bedrock_service=None, endpoint_service=None, **kwargs):
         # Store the service before calling super() to avoid Pydantic validation issues
-        if bedrock_service is None:
-            raise ValueError("bedrock_service cannot be None")
+        if bedrock_service is None and endpoint_service is None:
+            raise ValueError("Either bedrock_service or endpoint_service must be provided")
         super().__init__(**kwargs)
         # Set this after super() to ensure it's not lost during Pydantic validation
-        object.__setattr__(self, '_bedrock_service', bedrock_service)
+        if bedrock_service:
+            object.__setattr__(self, '_bedrock_service', bedrock_service)
+            object.__setattr__(self, '_endpoint_service', None)
+        else:
+            object.__setattr__(self, '_bedrock_service', None)
+            object.__setattr__(self, '_endpoint_service', endpoint_service)
     
     def __getstate__(self):
-        """Custom pickling to preserve bedrock service."""
+        """Custom pickling to preserve services."""
         state = self.__dict__.copy()
-        # Ensure bedrock_service is preserved
+        # Ensure services are preserved
         if hasattr(self, '_bedrock_service'):
             state['_bedrock_service'] = self._bedrock_service
+        if hasattr(self, '_endpoint_service'):
+            state['_endpoint_service'] = self._endpoint_service
         return state
     
     def __setstate__(self, state):
-        """Custom unpickling to restore bedrock service."""
+        """Custom unpickling to restore services."""
         self.__dict__.update(state)
-        # Recreate bedrock service if not present
-        if '_bedrock_service' not in state or state['_bedrock_service'] is None:
+        # Recreate services if not present
+        if ('_bedrock_service' not in state or state['_bedrock_service'] is None) and ('_endpoint_service' not in state or state['_endpoint_service'] is None):
             from .bedrock_service import BedrockEmbeddingService
             object.__setattr__(self, '_bedrock_service', BedrockEmbeddingService())
+            object.__setattr__(self, '_endpoint_service', None)
     
     def _get_query_embedding(self, query: str) -> List[float]:
         """Get embedding for query."""
-        if not hasattr(self, '_bedrock_service') or self._bedrock_service is None:
-            from .bedrock_service import BedrockEmbeddingService
-            object.__setattr__(self, '_bedrock_service', BedrockEmbeddingService())
-        
         if not query or len(query.strip()) == 0:
             logger.warning("Empty query provided for embedding")
             return [0.0] * 1024
         
         try:
-            embedding = self._bedrock_service.get_embedding(query)
+            if hasattr(self, '_endpoint_service') and self._endpoint_service is not None:
+                # Use endpoint service for embeddings
+                embedding = self._endpoint_service.get_embedding(query)
+            elif hasattr(self, '_bedrock_service') and self._bedrock_service is not None:
+                # Use bedrock service for embeddings
+                embedding = self._bedrock_service.get_embedding(query)
+            else:
+                # Fallback: recreate bedrock service
+                from .bedrock_service import BedrockEmbeddingService
+                object.__setattr__(self, '_bedrock_service', BedrockEmbeddingService())
+                embedding = self._bedrock_service.get_embedding(query)
+            
             if not embedding or len(embedding) == 0:
                 logger.warning("Empty embedding returned from service")
                 return [0.0] * 1024
@@ -80,17 +96,24 @@ class CustomBedrockEmbedding(BaseEmbedding):
     
     def _get_text_embedding(self, text: str) -> List[float]:
         """Get embedding for text."""
-        if not hasattr(self, '_bedrock_service') or self._bedrock_service is None:
-            from .bedrock_service import BedrockEmbeddingService
-            object.__setattr__(self, '_bedrock_service', BedrockEmbeddingService())
-        
         if not text or len(text.strip()) == 0:
             logger.warning("Empty text provided for embedding")
             # Return a zero vector instead of failing
             return [0.0] * 1024  # Match the vector size
         
         try:
-            embedding = self._bedrock_service.get_embedding(text)
+            if hasattr(self, '_endpoint_service') and self._endpoint_service is not None:
+                # Use endpoint service for embeddings
+                embedding = self._endpoint_service.get_embedding(text)
+            elif hasattr(self, '_bedrock_service') and self._bedrock_service is not None:
+                # Use bedrock service for embeddings
+                embedding = self._bedrock_service.get_embedding(text)
+            else:
+                # Fallback: recreate bedrock service
+                from .bedrock_service import BedrockEmbeddingService
+                object.__setattr__(self, '_bedrock_service', BedrockEmbeddingService())
+                embedding = self._bedrock_service.get_embedding(text)
+            
             if not embedding or len(embedding) == 0:
                 logger.warning("Empty embedding returned from service")
                 return [0.0] * 1024
@@ -109,16 +132,28 @@ class CustomBedrockEmbedding(BaseEmbedding):
 
 
 class CustomBedrockLLM(LLM):
-    """Custom LLM wrapper for inference profile ARNs."""
+    """Custom LLM wrapper for inference profile ARNs and endpoint services."""
     
-    def __init__(self, bedrock_service: 'BedrockLLMService', **kwargs):
+    def __init__(self, bedrock_service=None, endpoint_service=None, **kwargs):
         # Store the service before calling super() to avoid Pydantic validation issues
-        self._bedrock_service = bedrock_service
+        if bedrock_service is None and endpoint_service is None:
+            raise ValueError("Either bedrock_service or endpoint_service must be provided")
+        
+        if bedrock_service:
+            self._bedrock_service = bedrock_service
+            self._endpoint_service = None
+        else:
+            self._bedrock_service = None
+            self._endpoint_service = endpoint_service
+        
         super().__init__(**kwargs)
     
     def complete(self, prompt: str, **kwargs) -> str:
         """Complete a prompt."""
-        return self._bedrock_service.generate_text(prompt, **kwargs)
+        if self._endpoint_service:
+            return self._endpoint_service.generate_text(prompt, **kwargs)
+        else:
+            return self._bedrock_service.generate_text(prompt, **kwargs)
     
     def stream_complete(self, prompt: str, **kwargs):
         """Stream complete - not implemented for simplicity."""
@@ -181,8 +216,24 @@ class LlamaIndexVectorService:
         
         # Initialize content processor and bedrock services
         self.content_processor = ContentProcessor()
-        self.bedrock_embedding = BedrockEmbeddingService()
-        self.bedrock_llm = BedrockLLMService()
+        
+        # Initialize services based on LLM provider
+        if settings.llm_provider.provider.lower() == "bedrock_endpoint":
+            # Use endpoint services
+            endpoint_url = getattr(settings, 'bedrock_endpoint_url', None)
+            if not endpoint_url:
+                raise ValueError("Bedrock endpoint URL not configured for endpoint provider")
+            
+            self.bedrock_endpoint_embedding = BedrockEndpointEmbeddingService(endpoint_url)
+            self.bedrock_endpoint_llm = BedrockEndpointLLMWrapper(endpoint_url)
+            self.bedrock_embedding = None
+            self.bedrock_llm = None
+        else:
+            # Use traditional bedrock services
+            self.bedrock_embedding = BedrockEmbeddingService()
+            self.bedrock_llm = BedrockLLMService()
+            self.bedrock_endpoint_embedding = None
+            self.bedrock_endpoint_llm = None
         
         # Initialize LlamaIndex components
         self._setup_llamaindex()
@@ -284,11 +335,14 @@ class LlamaIndexVectorService:
     def _setup_llamaindex(self) -> None:
         """Setup LlamaIndex global settings using bedrock services."""
         try:
-            # Configure embedding model - always use Bedrock for embeddings
-            # Check if we're using inference profile ARNs
-            if _is_inference_profile_arn(settings.aws.embedding_model):
+            # Configure embedding model based on provider
+            if settings.llm_provider.provider.lower() == "bedrock_endpoint":
+                # Use endpoint service for embeddings
+                embed_model = CustomBedrockEmbedding(endpoint_service=self.bedrock_endpoint_embedding)
+                logger.info("Using custom embedding wrapper for Bedrock endpoint")
+            elif _is_inference_profile_arn(settings.aws.embedding_model):
                 # Use custom embedding wrapper for inference profiles
-                embed_model = CustomBedrockEmbedding(self.bedrock_embedding)
+                embed_model = CustomBedrockEmbedding(bedrock_service=self.bedrock_embedding)
                 logger.info("Using custom embedding wrapper for inference profile ARN")
             elif settings.aws.use_profile and settings.aws.profile_name:
                 # Use AWS profile for embeddings
@@ -307,13 +361,17 @@ class LlamaIndexVectorService:
                     aws_session_token=settings.aws.session_token
                 )
             
-            # Configure LLM - only use Bedrock for LlamaIndex if using Bedrock provider
+            # Configure LLM based on provider
             llm = None
-            if settings.is_using_bedrock():
+            if settings.llm_provider.provider.lower() == "bedrock_endpoint":
+                # Use endpoint service for LLM
+                llm = CustomBedrockLLM(endpoint_service=self.bedrock_endpoint_llm)
+                logger.info("Using custom LLM wrapper for Bedrock endpoint")
+            elif settings.is_using_bedrock():
                 # Check if we're using inference profile ARNs for LLM
                 if _is_inference_profile_arn(settings.aws.llm_model):
                     # Use custom LLM wrapper for inference profiles
-                    llm = CustomBedrockLLM(self.bedrock_llm)
+                    llm = CustomBedrockLLM(bedrock_service=self.bedrock_llm)
                     logger.info("Using custom LLM wrapper for inference profile ARN")
                 elif settings.aws.use_profile and settings.aws.profile_name:
                     # Use AWS profile for LLM
