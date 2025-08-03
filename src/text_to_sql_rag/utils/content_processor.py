@@ -1133,16 +1133,14 @@ ORDER BY count DESC;
         """
         if document_type == DocumentType.DDL:
             return self._create_ddl_chunks(content)
-        elif document_type == DocumentType.BUSINESS_DESC:
-            return self._create_business_desc_chunks(content)
-        elif document_type == DocumentType.BUSINESS_RULES:
-            return self._create_business_rules_chunks(content)
         elif document_type == DocumentType.COLUMN_DETAILS:
             return self._create_column_details_chunks(content)
         elif document_type == DocumentType.LOOKUP_METADATA:
             # Reuse existing lookup processing
             data = json.loads(content)
             return self._create_lookup_semantic_chunks(data)
+        elif document_type == DocumentType.REPORT:
+            return self._create_report_chunks(content)
         else:
             # Fallback for legacy types
             logger.warning(f"Using legacy processing for document type: {document_type}")
@@ -1257,36 +1255,69 @@ ORDER BY count DESC;
             return [{"content": json_content, "metadata": {"chunk_type": "business_rules", "error": str(e)}}]
     
     def _create_column_details_chunks(self, json_content: str) -> List[Dict[str, Any]]:
-        """Create chunks for column details files - one chunk per table."""
+        """Create chunks for enhanced column details files with business domain info."""
         try:
             data = json.loads(json_content)
-            table_name = data.get("table", "unknown")
+            
+            # Extract enhanced metadata
+            table_name = data.get("table_name", data.get("table", "unknown"))
+            business_domain = data.get("business_domain", "unknown")
+            entity_type = data.get("entity_type", "unknown")
+            core_table = data.get("core_table", False)
+            description = data.get("description", "")
+            business_terms = data.get("business_terms", [])
+            relationships = data.get("relationships", [])
             columns = data.get("columns", {})
             
-            # Create comprehensive content for the table columns
+            # Create comprehensive content with business context
             content_parts = []
             content_parts.append(f"Table: {table_name}")
-            content_parts.append("")
-            content_parts.append("Columns:")
+            content_parts.append(f"Business Domain: {business_domain}")
+            content_parts.append(f"Entity Type: {entity_type}")
+            content_parts.append(f"Core Business Table: {'Yes' if core_table else 'No'}")
+            content_parts.append(f"Description: {description}")
+            
+            if business_terms:
+                content_parts.append(f"Business Terms: {', '.join(business_terms)}")
+            
+            if relationships:
+                content_parts.append("\nRelationships:")
+                for rel in relationships:
+                    content_parts.append(f"- {rel}")
+            
+            content_parts.append("\nKey Columns:")
+            
+            # Focus on important columns for better RAG performance
+            important_cols = []
+            regular_cols = []
             
             for col_name, col_info in columns.items():
-                content_parts.append(f"- {col_name}:")
+                significance = col_info.get('business_significance', 'business_attribute')
+                
+                if significance in ['primary_key', 'foreign_key', 'financial_metric', 'lifecycle_status']:
+                    important_cols.append((col_name, col_info))
+                else:
+                    regular_cols.append((col_name, col_info))
+            
+            # Add important columns first
+            for col_name, col_info in important_cols:
+                content_parts.append(f"- {col_name} ({col_info.get('business_significance', 'unknown')}):")
                 content_parts.append(f"  Type: {col_info.get('type', 'unknown')}")
                 content_parts.append(f"  Description: {col_info.get('description', 'No description')}")
                 
-                if col_info.get('nullable') is not None:
-                    content_parts.append(f"  Nullable: {col_info['nullable']}")
+                if col_info.get('relationship_hint'):
+                    content_parts.append(f"  Relationship: {col_info['relationship_hint']}")
                 
-                if col_info.get('constraint'):
-                    content_parts.append(f"  Constraint: {col_info['constraint']}")
-                
-                if col_info.get('example_values'):
-                    content_parts.append(f"  Example values: {', '.join(map(str, col_info['example_values']))}")
-                
-                if col_info.get('join_hint'):
-                    content_parts.append(f"  Join hint: {col_info['join_hint']}")
+                if col_info.get('financial_context'):
+                    content_parts.append(f"  Financial Context: {col_info['financial_context']}")
                 
                 content_parts.append("")
+            
+            # Add selected regular columns if space allows
+            if len(regular_cols) <= 10:  # Only include if manageable number
+                content_parts.append("Other Columns:")
+                for col_name, col_info in regular_cols[:10]:
+                    content_parts.append(f"- {col_name}: {col_info.get('description', 'No description')}")
             
             content = "\n".join(content_parts)
             
@@ -1295,14 +1326,78 @@ ORDER BY count DESC;
                 "metadata": {
                     "chunk_type": "column_details",
                     "table_name": table_name.upper(),
+                    "business_domain": business_domain,
+                    "entity_type": entity_type,
+                    "core_table": core_table,
+                    "business_terms": business_terms,
                     "column_count": len(columns),
-                    "columns": list(columns.keys())
+                    "key_columns": [name for name, _ in important_cols]
                 }
             }]
             
         except Exception as e:
-            logger.error(f"Failed to process column details: {e}")
+            logger.error(f"Failed to process enhanced column details: {e}")
             return [{"content": json_content, "metadata": {"chunk_type": "column_details", "error": str(e)}}]
+    
+    def _create_report_chunks(self, report_content: str) -> List[Dict[str, Any]]:
+        """Create chunks for business context reports."""
+        try:
+            # Split report into logical sections
+            sections = report_content.split("##")
+            chunks = []
+            
+            for i, section in enumerate(sections):
+                section = section.strip()
+                if not section:
+                    continue
+                
+                # Extract section title
+                lines = section.split('\n')
+                title = lines[0].strip() if lines else f"Section {i+1}"
+                
+                # Determine chunk type based on content
+                chunk_type = "business_context"
+                if "query" in title.lower() or "sql" in section.lower():
+                    chunk_type = "query_patterns"
+                elif "relationship" in title.lower() or "hierarchy" in title.lower():
+                    chunk_type = "entity_relationships"
+                elif "table" in title.lower():
+                    chunk_type = "table_overview"
+                
+                chunks.append({
+                    "content": section,
+                    "metadata": {
+                        "chunk_type": chunk_type,
+                        "section_title": title,
+                        "section_index": i,
+                        "has_sql": "```sql" in section.lower() or "select" in section.lower(),
+                        "business_terms": self._extract_business_terms_from_text(section)
+                    }
+                })
+            
+            return chunks if chunks else [{"content": report_content, "metadata": {"chunk_type": "business_context"}}]
+            
+        except Exception as e:
+            logger.error(f"Failed to process report content: {e}")
+            return [{"content": report_content, "metadata": {"chunk_type": "business_context", "error": str(e)}}]
+    
+    def _extract_business_terms_from_text(self, text: str) -> List[str]:
+        """Extract business terms from report text."""
+        text_lower = text.lower()
+        terms = []
+        
+        # Fixed income specific terms
+        financial_terms = [
+            "issuer", "deal", "tranche", "bond", "syndicate", "order", "allocation", "investor",
+            "ioi", "indication", "reoffer", "conditional", "pricing", "yield", "spread",
+            "maturity", "rating", "status", "lookup"
+        ]
+        
+        for term in financial_terms:
+            if term in text_lower:
+                terms.append(term)
+        
+        return terms
     
     def create_individual_documents_LEGACY(self, json_content: str, document_type: DocumentType) -> List[Dict[str, Any]]:
         """LEGACY: Create individual documents for each model/view/relationship in schema metadata.

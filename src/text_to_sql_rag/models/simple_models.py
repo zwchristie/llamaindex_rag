@@ -7,17 +7,16 @@ from pydantic import BaseModel, Field
 
 
 class DocumentType(str, Enum):
-    """Supported document types for tiered metadata architecture."""
+    """Supported document types for 4-tier metadata architecture."""
     # Legacy types (being phased out)
     SCHEMA = "schema"  # Old monolithic schema files
-    REPORT = "report"
+    REPORT = "report"  # Report documentation and examples
     
-    # New tiered types
+    # New 4-tier types
     DDL = "ddl"                          # Core table/view structure (.sql files)
-    BUSINESS_DESC = "business_desc"       # Table descriptions by domain (.json)
-    BUSINESS_RULES = "business_rules"     # Edge cases and special rules (.json)
-    COLUMN_DETAILS = "column_details"     # Detailed column metadata (.json)
+    COLUMN_DETAILS = "column_details"     # Detailed column metadata (.json) 
     LOOKUP_METADATA = "lookup_metadata"   # ID-name lookup mappings (.json)
+    # REPORTS reused for query examples and business context
 
 
 class DocumentMetadata(BaseModel):

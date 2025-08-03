@@ -99,26 +99,26 @@ class HierarchicalContextService:
             tiers.append(ddl_tier)
             remaining_tokens -= ddl_tier.tokens_estimate
         
-        # Tier 2: Lookup Metadata (if query involves lookups)
-        if self._query_needs_lookups(query):
-            lookup_tier = self._build_lookup_tier(query, remaining_tokens)
-            if lookup_tier:
-                tiers.append(lookup_tier)
-                remaining_tokens -= lookup_tier.tokens_estimate
+        # Tier 2: Business Context from Reports (includes query patterns and rules)
+        if remaining_tokens > 1000:
+            reports_tier = self._build_reports_tier(query, remaining_tokens)
+            if reports_tier:
+                tiers.append(reports_tier)
+                remaining_tokens -= reports_tier.tokens_estimate
         
-        # Tier 3: Business Rules (conditional)
-        if include_advanced_rules or (include_advanced_rules is None and self._query_needs_rules(query)):
-            rules_tier = self._build_rules_tier(query, remaining_tokens)
-            if rules_tier:
-                tiers.append(rules_tier)
-                remaining_tokens -= rules_tier.tokens_estimate
-        
-        # Tier 4: Column Details (only for complex queries with remaining tokens)
+        # Tier 3: Column Details (for complex queries requiring detailed metadata)
         if remaining_tokens > 2000 and self._query_needs_column_details(query, selected_tables):
             column_tier = self._build_column_details_tier(selected_tables, remaining_tokens)
             if column_tier:
                 tiers.append(column_tier)
                 remaining_tokens -= column_tier.tokens_estimate
+        
+        # Tier 4: Lookup Metadata (if query involves status lookups or reference data)
+        if self._query_needs_lookups(query) and remaining_tokens > 500:
+            lookup_tier = self._build_lookup_tier(query, remaining_tokens)
+            if lookup_tier:
+                tiers.append(lookup_tier)
+                remaining_tokens -= lookup_tier.tokens_estimate
         
         retrieval_time = (time.time() - start_time) * 1000
         total_tokens = sum(tier.tokens_estimate for tier in tiers)
@@ -142,51 +142,45 @@ class HierarchicalContextService:
         return context
     
     def _select_relevant_tables(self, query: str, debug: bool = False) -> List[str]:
-        """Phase 1: Fast table selection using business descriptions + LLM reasoning."""
+        """Phase 1: Fast table selection using Reports + DDL + LLM reasoning."""
         
-        # Search business descriptions for relevant domains
-        business_results = self.vector_service.search_similar(
+        # Step 1: Search business context reports for domain understanding
+        reports_results = self.vector_service.search_similar(
             query=query,
             retriever_type="hybrid",
-            similarity_top_k=8,
-            document_type=DocumentType.BUSINESS_DESC.value
+            similarity_top_k=5,
+            document_type=DocumentType.REPORT.value
         )
         
-        if not business_results:
-            logger.warning("No business descriptions found, falling back to DDL search")
-            # Fallback: search DDL directly
-            ddl_results = self.vector_service.search_similar(
-                query=query,
-                retriever_type="hybrid", 
-                similarity_top_k=15,
-                document_type=DocumentType.DDL.value
-            )
-            return [result.metadata.get("table_name", result.metadata.get("file_path", "").split("/")[-1].replace(".sql", "")) 
-                   for result in ddl_results[:10]]
+        # Step 2: Search DDL files directly for table relevance  
+        ddl_results = self.vector_service.search_similar(
+            query=query,
+            retriever_type="hybrid",
+            similarity_top_k=20,
+            document_type=DocumentType.DDL.value
+        )
         
-        # Extract table names from business descriptions
+        # Extract candidate tables from DDL results
         candidate_tables = []
-        business_context = []
+        for result in ddl_results:
+            metadata = result.get("metadata", {}) if isinstance(result, dict) else getattr(result, 'metadata', {})
+            
+            # Try multiple ways to extract table name
+            table_name = (
+                metadata.get("table_name") or
+                metadata.get("view_name") or  
+                metadata.get("entity_name") or
+                metadata.get("file_path", "").split("/")[-1].replace(".sql", "").upper()
+            )
+            
+            if table_name and table_name not in candidate_tables:
+                candidate_tables.append(table_name)
         
-        for result in business_results:
-            try:
-                # Parse business description content
-                if hasattr(result, 'text'):
-                    content = result.text
-                else:
-                    content = str(result)
-                    
-                business_context.append(content)
-                
-                # Extract table names from content (assuming JSON format)
-                if content.strip().startswith('{'):
-                    data = json.loads(content)
-                    if "tables" in data:
-                        candidate_tables.extend(data["tables"].keys())
-                        
-            except Exception as e:
-                logger.warning("Failed to parse business description", error=str(e))
-                continue
+        # Step 3: Get business context from reports for LLM reasoning
+        business_context = ""
+        for result in reports_results:
+            content = result.get("content", "") if isinstance(result, dict) else getattr(result, 'text', str(result))
+            business_context += content + "\n\n"
         
         # Use LLM to select most relevant tables
         if candidate_tables:
@@ -198,13 +192,13 @@ class HierarchicalContextService:
                            tables=selected_tables)
             return selected_tables
         
-        logger.warning("No candidate tables found from business descriptions")
+        logger.warning("No candidate tables found from DDL search")
         return []
     
-    def _llm_select_tables(self, query: str, candidate_tables: List[str], business_context: List[str]) -> List[str]:
+    def _llm_select_tables(self, query: str, candidate_tables: List[str], business_context: str) -> List[str]:
         """Use LLM to intelligently select relevant tables from candidates."""
         
-        context = "\n\n".join(business_context)
+        context = business_context
         
         prompt = f"""Given the user query and available table descriptions, select the 3-7 most relevant tables for generating a SQL query.
 
@@ -285,6 +279,88 @@ Selected Tables:"""
             confidence=1.0
         )
     
+    def _build_reports_tier(self, query: str, max_tokens: int) -> Optional[ContextTier]:
+        """Build business context tier from Reports documents."""
+        
+        if max_tokens < 500:
+            return None
+        
+        # Search for relevant business context in reports
+        reports_results = self.vector_service.search_similar(
+            query=query,
+            retriever_type="hybrid",
+            similarity_top_k=3,
+            document_type=DocumentType.REPORT.value
+        )
+        
+        if not reports_results:
+            return None
+        
+        content_parts = []
+        sources = []
+        
+        for result in reports_results:
+            content = result.get("content", "") if isinstance(result, dict) else getattr(result, 'text', str(result))
+            if content:
+                # Extract relevant sections based on query
+                relevant_section = self._extract_relevant_report_section(content, query)
+                if relevant_section:
+                    content_parts.append(relevant_section)
+                    metadata = result.get("metadata", {}) if isinstance(result, dict) else getattr(result, 'metadata', {})
+                    source = metadata.get("document_id", "business_context")
+                    sources.append(source)
+        
+        if not content_parts:
+            return None
+        
+        content = "\n\n".join(content_parts)
+        tokens_estimate = len(content) // 4
+        
+        # Truncate if too long
+        if tokens_estimate > max_tokens - 100:
+            content = content[:max_tokens * 4]
+            tokens_estimate = max_tokens - 100
+        
+        return ContextTier(
+            name="Business Context & Query Patterns",
+            tokens_estimate=tokens_estimate,
+            content=content,
+            sources=sources,
+            confidence=0.8
+        )
+    
+    def _extract_relevant_report_section(self, content: str, query: str) -> str:
+        """Extract the most relevant section from a business report."""
+        
+        # Split content into sections
+        sections = content.split("##")
+        
+        # Find sections that mention key terms from the query
+        query_terms = query.lower().split()
+        relevant_sections = []
+        
+        for section in sections:
+            section_lower = section.lower()
+            relevance_score = sum(1 for term in query_terms if term in section_lower)
+            
+            if relevance_score > 0:
+                relevant_sections.append((section, relevance_score))
+        
+        # Sort by relevance and return top sections
+        relevant_sections.sort(key=lambda x: x[1], reverse=True)
+        
+        if relevant_sections:
+            # Return top 2 most relevant sections
+            selected_content = []
+            for section, _ in relevant_sections[:2]:
+                if section.strip():
+                    selected_content.append(section.strip())
+            
+            return "\n\n".join(selected_content)
+        
+        # Fallback: return first part of content
+        return content[:2000] if len(content) > 2000 else content
+    
     def _build_lookup_tier(self, query: str, max_tokens: int) -> Optional[ContextTier]:
         """Build lookup metadata tier for status/category mappings."""
         
@@ -323,43 +399,6 @@ Selected Tables:"""
             confidence=0.9
         )
     
-    def _build_rules_tier(self, query: str, max_tokens: int) -> Optional[ContextTier]:
-        """Build business rules tier for edge cases and special handling."""
-        
-        if max_tokens < 200:
-            return None
-        
-        rules_results = self.vector_service.search_similar(
-            query=query,
-            retriever_type="hybrid",
-            similarity_top_k=3,
-            document_type=DocumentType.BUSINESS_RULES.value
-        )
-        
-        if not rules_results:
-            return None
-        
-        rules_content = []
-        sources = []
-        
-        for result in rules_results:
-            rules_content.append(result.text)
-            sources.append(result.metadata.get('file_path', 'unknown'))
-        
-        content = "\n\n".join(rules_content)
-        tokens_estimate = len(content) // 4
-        
-        if tokens_estimate > max_tokens - 100:
-            content = content[:max_tokens * 4]
-            tokens_estimate = max_tokens - 100
-        
-        return ContextTier(
-            name="Business Rules",
-            tokens_estimate=tokens_estimate,
-            content=content,
-            sources=sources,
-            confidence=0.8
-        )
     
     def _build_column_details_tier(self, selected_tables: List[str], max_tokens: int) -> Optional[ContextTier]:
         """Build detailed column metadata tier (only for complex queries)."""
@@ -372,15 +411,21 @@ Selected Tables:"""
         
         for table_name in selected_tables[:3]:  # Limit to top 3 tables
             column_results = self.vector_service.search_similar(
-                query=f"columns {table_name}",
-                retriever_type="keyword",
+                query=f"table {table_name} columns metadata",
+                retriever_type="hybrid",
                 similarity_top_k=1,
                 document_type=DocumentType.COLUMN_DETAILS.value
             )
             
             if column_results:
-                column_content.append(column_results[0].text)
-                sources.append(f"{table_name}_columns.json")
+                result = column_results[0]
+                content = result.get("content", "") if isinstance(result, dict) else getattr(result, 'text', str(result))
+                
+                # For enhanced column metadata, format it nicely
+                formatted_content = self._format_column_metadata(content, table_name)
+                if formatted_content:
+                    column_content.append(formatted_content)
+                    sources.append(f"{table_name.lower()}.json")
         
         if not column_content:
             return None
@@ -400,6 +445,46 @@ Selected Tables:"""
             confidence=0.7
         )
     
+    def _format_column_metadata(self, content: str, table_name: str) -> str:
+        """Format enhanced column metadata for better readability."""
+        
+        try:
+            # Parse JSON content
+            if content.strip().startswith('{'):
+                data = json.loads(content)
+                
+                # Extract key information
+                table_info = {
+                    "table_name": data.get("table_name", table_name),
+                    "business_domain": data.get("business_domain", "unknown"),
+                    "description": data.get("description", ""),
+                    "core_table": data.get("core_table", False),
+                    "columns": data.get("columns", {})
+                }
+                
+                # Format as readable text
+                formatted = f"Table: {table_info['table_name']}\n"
+                formatted += f"Domain: {table_info['business_domain']}\n"
+                formatted += f"Type: {'Core Business Table' if table_info['core_table'] else 'Supporting Table'}\n"
+                formatted += f"Description: {table_info['description']}\n\n"
+                
+                # Add key columns only (primary keys, foreign keys, financial metrics)
+                formatted += "Key Columns:\n"
+                for col_name, col_info in table_info['columns'].items():
+                    significance = col_info.get("business_significance", "")
+                    if significance in ["primary_key", "foreign_key", "financial_metric", "lifecycle_status"]:
+                        formatted += f"- {col_name}: {col_info.get('description', '')}\n"
+                        if col_info.get("relationship_hint"):
+                            formatted += f"  → {col_info['relationship_hint']}\n"
+                
+                return formatted
+                
+        except Exception as e:
+            logger.warning("Failed to parse column metadata", error=str(e))
+        
+        # Fallback: return raw content truncated
+        return content[:1000] if len(content) > 1000 else content
+    
     def _query_needs_lookups(self, query: str) -> bool:
         """Determine if query likely needs lookup metadata."""
         lookup_keywords = [
@@ -409,14 +494,6 @@ Selected Tables:"""
         query_lower = query.lower()
         return any(keyword in query_lower for keyword in lookup_keywords)
     
-    def _query_needs_rules(self, query: str) -> bool:
-        """Determine if query likely needs business rules."""
-        rule_keywords = [
-            "date", "time", "between", "range", "before", "after",
-            "month", "year", "day", "week", "timestamp"
-        ]
-        query_lower = query.lower()
-        return any(keyword in query_lower for keyword in rule_keywords)
     
     def _query_needs_column_details(self, query: str, selected_tables: List[str]) -> bool:
         """Determine if query needs detailed column information."""

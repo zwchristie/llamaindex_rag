@@ -218,20 +218,6 @@ class DocumentSyncService:
                     # Legacy schema files: /catalog/schema/main_schema_metadata.json
                     document_type = DocumentType.SCHEMA
                     schema_name = file_path.stem.replace('_metadata', '')
-            elif len(parts) >= 3 and parts[1] == "descriptions":
-                # Business descriptions: /catalog/descriptions/domain.json
-                if file_path.suffix.lower() == '.json':
-                    document_type = DocumentType.BUSINESS_DESC
-                    schema_name = file_path.stem  # domain name
-                else:
-                    return None, None, None
-            elif len(parts) >= 3 and parts[1] == "business_rules":
-                # Business rules: /catalog/business_rules/area.json
-                if file_path.suffix.lower() == '.json':
-                    document_type = DocumentType.BUSINESS_RULES
-                    schema_name = file_path.stem  # rule area name
-                else:
-                    return None, None, None
             elif len(parts) >= 3 and parts[1] == "columns":
                 # Column details: /catalog/columns/table_name.json
                 if file_path.suffix.lower() == '.json':
@@ -293,15 +279,6 @@ class DocumentSyncService:
                     "file_type": "sql"
                 }
             
-            elif document_type == DocumentType.BUSINESS_DESC:
-                # Business description JSON files
-                data = json.loads(content)
-                return data
-            
-            elif document_type == DocumentType.BUSINESS_RULES:
-                # Business rules JSON files
-                data = json.loads(content)
-                return data
             
             elif document_type == DocumentType.COLUMN_DETAILS:
                 # Column details JSON files
