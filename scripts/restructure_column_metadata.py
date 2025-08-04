@@ -646,9 +646,10 @@ WHERE TRUNC(trade_date) = DATE '2023-01-15'
         logger.info(f"Starting to process {total_views} views...")
         
         for i, view in enumerate(metadata.get("views", [])):
-            view_name = view.get("view_name")
+            # Handle different naming conventions for view name
+            view_name = view.get("view_name") or view.get("name")
             if not view_name:
-                logger.warning(f"View {i} missing view_name. Keys: {list(view.keys())}")
+                logger.warning(f"View {i} missing view_name/name. Keys: {list(view.keys())}")
                 views_failed += 1
                 continue
                 
@@ -664,7 +665,14 @@ WHERE TRUNC(trade_date) = DATE '2023-01-15'
                     views_failed += 1
                     continue
                 
-                col_metadata = self.create_column_metadata_file(view, view_name)
+                # Add root-level catalog and schema to view data
+                view_with_context = view.copy()
+                if "catalog" not in view_with_context:
+                    view_with_context["catalog"] = metadata.get("catalog", "unknown")
+                if "schema" not in view_with_context:
+                    view_with_context["schema"] = metadata.get("schema", "unknown")
+                
+                col_metadata = self.create_column_metadata_file(view_with_context, view_name)
                 
                 if not col_metadata:
                     logger.error(f"❌ Failed to create column metadata for {view_name} - returned None")
