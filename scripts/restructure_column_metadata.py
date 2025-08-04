@@ -8,7 +8,7 @@ Uses: DDL, COLUMN_DETAILS, LOOKUP_METADATA, REPORTS (no BUSINESS_DESC/BUSINESS_R
 import json
 import os
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import logging
 
 # Configure logging
@@ -152,11 +152,39 @@ class ColumnMetadataRestructurer:
                 "business_terms": ["supporting", "data", "auxiliary"]
             }
     
-    def create_column_metadata_file(self, table_data: Dict[str, Any], table_name: str) -> Dict[str, Any]:
+    def create_column_metadata_file(self, table_data: Dict[str, Any], table_name: str) -> Optional[Dict[str, Any]]:
         """Create enhanced column metadata with business domain classification."""
         
-        # Get business domain classification
-        domain_info = self.classify_business_domain(table_name)
+        try:
+            logger.info(f"Processing {table_name} - Input data structure check")
+            
+            # Detailed input validation and logging
+            if not table_data:
+                logger.error(f"Empty table_data for {table_name}")
+                return None
+                
+            if not isinstance(table_data, dict):
+                logger.error(f"Invalid table_data type for {table_name}: {type(table_data)}")
+                return None
+            
+            columns = table_data.get("columns", [])
+            if not columns:
+                logger.error(f"No columns found for {table_name}. Available keys: {list(table_data.keys())}")
+                return None
+                
+            if not isinstance(columns, list):
+                logger.error(f"Invalid columns type for {table_name}: {type(columns)}")
+                return None
+            
+            logger.info(f"✓ {table_name}: {len(columns)} columns found. Keys: {list(table_data.keys())}")
+            
+            # Get business domain classification
+            domain_info = self.classify_business_domain(table_name)
+            logger.info(f"✓ {table_name}: Business domain = {domain_info['business_domain']}")
+            
+        except Exception as e:
+            logger.error(f"❌ Failed during initial setup for {table_name}: {e}", exc_info=True)
+            return None
         
         column_metadata = {
             "table_name": table_name.upper(),
@@ -172,18 +200,46 @@ class ColumnMetadataRestructurer:
         }
         
         # Process columns with enhanced metadata
-        for column in table_data.get("columns", []):
-            col_name = column.get("name")
-            if not col_name:
+        columns_processed = 0
+        columns_failed = 0
+        
+        logger.info(f"Processing {len(columns)} columns for {table_name}...")
+        
+        for i, column in enumerate(columns):
+            if not isinstance(column, dict):
+                logger.error(f"Column {i} in {table_name} is not a dict: {type(column)}")
+                columns_failed += 1
                 continue
                 
-            col_info = {
-                "name": col_name,
-                "type": column.get("type", "UNKNOWN"),
-                "nullable": column.get("nullable", True),
-                "description": self._generate_enhanced_column_description(col_name, column, domain_info),
-                "business_significance": self._determine_business_significance(col_name, domain_info)
-            }
+            col_name = column.get("name")
+            if not col_name:
+                logger.warning(f"Column {i} in {table_name} missing name. Keys: {list(column.keys())}")
+                columns_failed += 1
+                continue
+                
+            try:
+                logger.debug(f"Processing column {col_name} in {table_name}")
+                
+                col_info = {
+                    "name": col_name,
+                    "type": column.get("type", "UNKNOWN"),
+                    "nullable": column.get("nullable", True),
+                    "description": self._generate_enhanced_column_description(col_name, column, domain_info),
+                    "business_significance": self._determine_business_significance(col_name, domain_info)
+                }
+                columns_processed += 1
+                
+            except Exception as e:
+                logger.error(f"❌ Failed to process column {col_name} in {table_name}: {e}", exc_info=True)
+                columns_failed += 1
+                # Create minimal column info as fallback
+                col_info = {
+                    "name": col_name,
+                    "type": column.get("type", "UNKNOWN"),
+                    "nullable": column.get("nullable", True),
+                    "description": f"Column {col_name} (processing failed)",
+                    "business_significance": "business_attribute"
+                }
             
             # Add key information if present
             if column.get("key"):
@@ -207,6 +263,12 @@ class ColumnMetadataRestructurer:
             
             column_metadata["columns"][col_name] = col_info
         
+        logger.info(f"✓ Completed {table_name}: {columns_processed} columns processed, {columns_failed} failed")
+        
+        if columns_processed == 0:
+            logger.error(f"❌ No columns successfully processed for {table_name}")
+            return None
+            
         return column_metadata
     
     def _analyze_relationships(self, table_data: Dict[str, Any], table_name: str) -> List[str]:
@@ -478,30 +540,132 @@ WHERE TRUNC(trade_date) = DATE '2023-01-15'
         logger.info("Starting 4-tier metadata restructuring...")
         
         # Load existing metadata
-        metadata = self.load_existing_metadata()
+        try:
+            metadata = self.load_existing_metadata()
+            models_count = len(metadata.get("models", []))
+            views_count = len(metadata.get("views", []))
+            relationships_count = len(metadata.get("relationships", []))
+            logger.info(f"Successfully loaded metadata: {models_count} models, {views_count} views, {relationships_count} relationships")
+        except Exception as e:
+            logger.error(f"Failed to load metadata: {str(e)}")
+            raise
         
         # 1. Create enhanced column metadata files (COLUMN_DETAILS document type)
         logger.info("Creating enhanced column metadata files...")
         
+        models_processed = 0
+        models_failed = 0
+        
         # Process tables
-        for model in metadata.get("models", []):
+        total_models = len(metadata.get("models", []))
+        logger.info(f"Starting to process {total_models} models...")
+        
+        for i, model in enumerate(metadata.get("models", [])):
             table_name = model.get("table_name")
-            if table_name:
+            if not table_name:
+                logger.warning(f"Model {i} missing table_name. Keys: {list(model.keys())}")
+                models_failed += 1
+                continue
+                
+            try:
+                logger.info(f"📋 Processing model {i+1}/{total_models}: {table_name}")
+                
+                # Debug the model structure
+                logger.debug(f"Model keys for {table_name}: {list(model.keys())}")
+                if "columns" in model:
+                    logger.debug(f"Columns count for {table_name}: {len(model['columns'])}")
+                else:
+                    logger.error(f"❌ No 'columns' key found in model {table_name}")
+                    models_failed += 1
+                    continue
+                
                 col_metadata = self.create_column_metadata_file(model, table_name)
+                
+                if not col_metadata:
+                    logger.error(f"❌ Failed to create column metadata for {table_name} - returned None")
+                    models_failed += 1
+                    continue
+                
+                # Validate metadata before writing
+                if not isinstance(col_metadata, dict) or not col_metadata.get("columns"):
+                    logger.error(f"❌ Invalid metadata structure for {table_name}")
+                    models_failed += 1
+                    continue
+                
                 output_file = self.output_dir / f"{table_name.lower()}.json"
                 with open(output_file, 'w', encoding='utf-8') as f:
                     json.dump(col_metadata, f, indent=2, ensure_ascii=False)
-                logger.info(f"Created column metadata: {output_file}")
+                logger.info(f"✅ Created column metadata: {output_file}")
+                models_processed += 1
+                
+            except Exception as e:
+                logger.error(f"❌ Failed to process model {table_name}: {e}", exc_info=True)
+                models_failed += 1
+                continue
+        
+        logger.info(f"📊 Models processing complete: {models_processed} succeeded, {models_failed} failed")
+        
+        if models_failed > 0:
+            logger.warning(f"⚠️ {models_failed} models failed processing")
+        if models_processed == 0:
+            logger.error(f"❌ No models were successfully processed!")
+        
+        views_processed = 0
+        views_failed = 0
         
         # Process views
-        for view in metadata.get("views", []):
+        total_views = len(metadata.get("views", []))
+        logger.info(f"Starting to process {total_views} views...")
+        
+        for i, view in enumerate(metadata.get("views", [])):
             view_name = view.get("view_name")
-            if view_name:
+            if not view_name:
+                logger.warning(f"View {i} missing view_name. Keys: {list(view.keys())}")
+                views_failed += 1
+                continue
+                
+            try:
+                logger.info(f"👁️ Processing view {i+1}/{total_views}: {view_name}")
+                
+                # Debug the view structure
+                logger.debug(f"View keys for {view_name}: {list(view.keys())}")
+                if "columns" in view:
+                    logger.debug(f"Columns count for {view_name}: {len(view['columns'])}")
+                else:
+                    logger.error(f"❌ No 'columns' key found in view {view_name}")
+                    views_failed += 1
+                    continue
+                
                 col_metadata = self.create_column_metadata_file(view, view_name)
+                
+                if not col_metadata:
+                    logger.error(f"❌ Failed to create column metadata for {view_name} - returned None")
+                    views_failed += 1
+                    continue
+                
+                # Validate metadata before writing
+                if not isinstance(col_metadata, dict) or not col_metadata.get("columns"):
+                    logger.error(f"❌ Invalid metadata structure for {view_name}")
+                    views_failed += 1
+                    continue
+                
                 output_file = self.output_dir / f"{view_name.lower()}.json"
                 with open(output_file, 'w', encoding='utf-8') as f:
                     json.dump(col_metadata, f, indent=2, ensure_ascii=False)
-                logger.info(f"Created view metadata: {output_file}")
+                logger.info(f"✅ Created view metadata: {output_file}")
+                views_processed += 1
+                
+            except Exception as e:
+                logger.error(f"❌ Failed to process view {view_name}: {e}", exc_info=True)
+                views_failed += 1
+                continue
+        
+        logger.info(f"📊 Views processing complete: {views_processed} succeeded, {views_failed} failed")
+        
+        if views_failed > 0:
+            logger.warning(f"⚠️ {views_failed} views failed processing")
+        if views_processed == 0 and total_views > 0:
+            logger.error(f"❌ No views were successfully processed!")
         
         # 2. Create business context report (REPORTS document type)
         logger.info("Creating business context report...")
