@@ -167,9 +167,17 @@ class ColumnMetadataRestructurer:
                 logger.error(f"Invalid table_data type for {table_name}: {type(table_data)}")
                 return None
             
+            # Handle different data structures - columns might be directly on table_data or in properties
             columns = table_data.get("columns", [])
+            if not columns and "properties" in table_data:
+                # Try to get columns from properties wrapper
+                properties = table_data.get("properties", {})
+                columns = properties.get("columns", [])
+            
             if not columns:
                 logger.error(f"No columns found for {table_name}. Available keys: {list(table_data.keys())}")
+                if "properties" in table_data:
+                    logger.error(f"Properties keys: {list(table_data.get('properties', {}).keys())}")
                 return None
                 
             if not isinstance(columns, list):
@@ -186,10 +194,17 @@ class ColumnMetadataRestructurer:
             logger.error(f"❌ Failed during initial setup for {table_name}: {e}", exc_info=True)
             return None
         
+        # Extract catalog and schema from metadata root level
+        catalog = table_data.get("catalog", "unknown")
+        schema = table_data.get("schema", "unknown")
+        
+        # If not found at root level, they might be in the parent metadata
+        # We'll pass these from the parent call in restructure_all
+        
         column_metadata = {
             "table_name": table_name.upper(),
-            "catalog": table_data.get("catalog", "unknown"),
-            "schema": table_data.get("schema", "unknown"),
+            "catalog": catalog,
+            "schema": schema,
             "business_domain": domain_info["business_domain"],
             "entity_type": domain_info["entity_type"],
             "core_table": domain_info["core_table"],
@@ -275,7 +290,12 @@ class ColumnMetadataRestructurer:
         """Analyze potential relationships for this table."""
         relationships = []
         
-        for column in table_data.get("columns", []):
+        # Get columns from either direct location or properties wrapper
+        columns = table_data.get("columns", [])
+        if not columns and "properties" in table_data:
+            columns = table_data.get("properties", {}).get("columns", [])
+        
+        for column in columns:
             col_name = column.get("name", "").lower()
             
             # Foreign key detection
@@ -561,9 +581,10 @@ WHERE TRUNC(trade_date) = DATE '2023-01-15'
         logger.info(f"Starting to process {total_models} models...")
         
         for i, model in enumerate(metadata.get("models", [])):
-            table_name = model.get("table_name")
+            # Handle different naming conventions for table name
+            table_name = model.get("table_name") or model.get("name")
             if not table_name:
-                logger.warning(f"Model {i} missing table_name. Keys: {list(model.keys())}")
+                logger.warning(f"Model {i} missing table_name/name. Keys: {list(model.keys())}")
                 models_failed += 1
                 continue
                 
@@ -579,7 +600,14 @@ WHERE TRUNC(trade_date) = DATE '2023-01-15'
                     models_failed += 1
                     continue
                 
-                col_metadata = self.create_column_metadata_file(model, table_name)
+                # Add root-level catalog and schema to model data
+                model_with_context = model.copy()
+                if "catalog" not in model_with_context:
+                    model_with_context["catalog"] = metadata.get("catalog", "unknown")
+                if "schema" not in model_with_context:
+                    model_with_context["schema"] = metadata.get("schema", "unknown")
+                
+                col_metadata = self.create_column_metadata_file(model_with_context, table_name)
                 
                 if not col_metadata:
                     logger.error(f"❌ Failed to create column metadata for {table_name} - returned None")
