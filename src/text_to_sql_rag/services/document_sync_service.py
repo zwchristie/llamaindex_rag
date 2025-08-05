@@ -11,8 +11,11 @@ import structlog
 
 from .mongodb_service import MongoDBService
 from .vector_service import LlamaIndexVectorService
+from ..models.simple_models import (
+    DocumentType, BusinessDomainMetadata, CoreViewMetadata, 
+    SupportingViewMetadata, ReportMetadata
+)
 from ..models.meta_document import (
-    DocumentType, SchemaMetadata, ReportMetadata, 
     DocumentSyncResult, SyncSummary
 )
 from ..utils.content_processor import ContentProcessor
@@ -205,37 +208,80 @@ class DocumentSyncService:
             
             catalog = parts[0]
             
-            # Determine document type from directory structure (new tiered architecture)
+            # Determine document type from directory structure (business domain-first architecture)
             if len(parts) >= 3 and parts[1] == "schema":
                 if len(parts) >= 4 and parts[2] == "ddl":
-                    # New DDL files: /catalog/schema/ddl/table_name.sql
+                    # DDL files: /catalog/schema/ddl/view_name.sql
                     if file_path.suffix.lower() == '.sql':
                         document_type = DocumentType.DDL
-                        schema_name = file_path.stem  # table/view name
+                        schema_name = file_path.stem  # view name
                     else:
                         return None, None, None
                 else:
                     # Legacy schema files: /catalog/schema/main_schema_metadata.json
                     document_type = DocumentType.SCHEMA
                     schema_name = file_path.stem.replace('_metadata', '')
+            
+            # New business domain-first structure
+            elif len(parts) >= 4 and parts[1] == "processed_views":
+                if parts[2] == "core_views":
+                    # Core views: /catalog/processed_views/core_views/view_name.json
+                    if file_path.suffix.lower() == '.json':
+                        document_type = DocumentType.CORE_VIEW
+                        schema_name = file_path.stem
+                    else:
+                        return None, None, None
+                elif parts[2] == "supporting_views":
+                    # Supporting views: /catalog/processed_views/supporting_views/view_name.json
+                    if file_path.suffix.lower() == '.json':
+                        document_type = DocumentType.SUPPORTING_VIEW
+                        schema_name = file_path.stem
+                    else:
+                        return None, None, None
+                else:
+                    return None, None, None
+            
+            elif len(parts) >= 4 and parts[1] == "processed_reports":
+                if parts[2] == "processed_reports":
+                    # Processed reports: /catalog/processed_reports/processed_reports/report_name.json
+                    if file_path.suffix.lower() == '.json':
+                        document_type = DocumentType.REPORT
+                        schema_name = file_path.stem
+                    else:
+                        return None, None, None
+                else:
+                    return None, None, None
+            
+            elif len(parts) >= 4 and parts[1] == "processed_domains":
+                if parts[2] == "business_domains":
+                    # Business domains: /catalog/processed_domains/business_domains/domain_name.json
+                    if file_path.suffix.lower() == '.json':
+                        document_type = DocumentType.BUSINESS_DOMAIN
+                        schema_name = file_path.stem
+                    else:
+                        return None, None, None
+                else:
+                    return None, None, None
+            
+            # Legacy paths
             elif len(parts) >= 3 and parts[1] == "columns":
-                # Column details: /catalog/columns/table_name.json
+                # Legacy column details: /catalog/columns/table_name.json
                 if file_path.suffix.lower() == '.json':
                     document_type = DocumentType.COLUMN_DETAILS
-                    schema_name = file_path.stem  # table name
+                    schema_name = file_path.stem
                 else:
                     return None, None, None
             elif len(parts) >= 3 and parts[1] == "lookups":
                 # Lookup metadata: /catalog/lookups/lookup_name.json
                 if file_path.suffix.lower() == '.json':
                     document_type = DocumentType.LOOKUP_METADATA
-                    schema_name = "lookups"  # Lookups use "lookups" as schema name
+                    schema_name = "lookups"
                 else:
                     return None, None, None
             elif len(parts) >= 3 and parts[1] == "reports":
-                # Reports: /catalog/reports/report_name.txt
+                # Legacy reports: /catalog/reports/report_name.txt/.md
                 document_type = DocumentType.REPORT
-                schema_name = "reports"  # Reports don't have schema, use "reports" as default
+                schema_name = "reports"
             else:
                 # Legacy fallback - try to infer from file content or name
                 if file_path.suffix.lower() == '.json':
@@ -270,18 +316,33 @@ class DocumentSyncService:
                 # Parse text report document
                 return self._parse_report_content(content, catalog)
             
-            # New tiered types - use simple dict parsing for flexibility
+            # New business domain-first types
+            elif document_type == DocumentType.BUSINESS_DOMAIN:
+                # Business domain JSON files
+                data = json.loads(content)
+                return data
+            
+            elif document_type == DocumentType.CORE_VIEW:
+                # Core view JSON files
+                data = json.loads(content)
+                return data
+            
+            elif document_type == DocumentType.SUPPORTING_VIEW:
+                # Supporting view JSON files
+                data = json.loads(content)
+                return data
+            
+            # Legacy and supporting types
             elif document_type == DocumentType.DDL:
                 # DDL files are plain SQL - return as simple metadata
                 return {
-                    "table_name": schema_name,
+                    "view_name": schema_name,
                     "ddl_content": content,
                     "file_type": "sql"
                 }
             
-            
             elif document_type == DocumentType.COLUMN_DETAILS:
-                # Column details JSON files
+                # Legacy column details JSON files
                 data = json.loads(content)
                 return data
             
