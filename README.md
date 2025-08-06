@@ -22,7 +22,7 @@ A comprehensive text-to-SQL system using LlamaIndex for Retrieval-Augmented Gene
 - **Dual ID System**: Separate conversation IDs (thread tracking) and request IDs (individual fulfillment)
 - **Vector Search**: Hybrid retrieval using OpenSearch vector store with 5 document types (DDL, Business Descriptions, Business Rules, Column Details, Lookups)
 - **Multiple LLM Providers**: Seamless switching between AWS Bedrock and custom LLM APIs
-- **Local Development Support**: AWS profile-based authentication for local development
+- **Endpoint-Based Integration**: Secure Bedrock access via HTTP endpoint (no direct AWS credentials required)
 - **Document Processing**: Specialized chunking for each metadata tier with optimized content formats
 - **Error Recovery**: Intelligent retry mechanisms with context injection
 - **RESTful API**: Comprehensive API endpoints with FastAPI and enhanced conversation management
@@ -100,20 +100,18 @@ pip install -e .
 
 The system supports multiple deployment configurations. Choose the appropriate configuration for your environment:
 
-#### Local Development with AWS Profile (Recommended)
-Copy `.env.local.example` to `.env` for local development:
+#### Development with Bedrock Endpoint (Recommended)
+Copy `.env.bedrock_endpoint.example` to `.env` for endpoint-based development:
 
 ```env
 # Application Configuration
 APP_DEBUG=true
 SECRET_KEY=your-local-secret-key-here
-LLM_PROVIDER=bedrock
+LLM_PROVIDER=bedrock_endpoint
 
-# AWS Bedrock Configuration (Local Profile)
-AWS_REGION=us-east-1
-AWS_USE_PROFILE=true
-AWS_PROFILE=your-profile-name  # e.g., "adfs" for corporate profiles
-AWS_LLM_MODEL=anthropic.claude-3-sonnet-20240229-v1:0
+# Bedrock Endpoint Configuration
+BEDROCK_ENDPOINT_URL=https://your-bedrock-endpoint.com
+AWS_LLM_MODEL=us.anthropic.claude-3-haiku-20240307-v1:0
 AWS_EMBEDDING_MODEL=amazon.titan-embed-text-v1
 
 # OpenSearch Configuration
@@ -144,21 +142,21 @@ CUSTOM_LLM_DEPLOYMENT_ID=your-deployment-id
 CUSTOM_LLM_MODEL_NAME=your-preferred-model
 CUSTOM_LLM_TIMEOUT=30
 
-# OpenSearch for vectors (still need AWS for some embeddings)
+# OpenSearch for vectors with Bedrock endpoint for embeddings
 OPENSEARCH_HOST=localhost
-AWS_USE_PROFILE=true
-AWS_PROFILE=your-profile-name
+BEDROCK_ENDPOINT_URL=https://your-bedrock-endpoint.com
+AWS_EMBEDDING_MODEL=amazon.titan-embed-text-v1
 ```
 
 #### Production Configuration
-Copy `.env.production.example` to `.env` for production deployment:
+Copy `.env.bedrock_endpoint.example` to `.env` for production deployment:
 
 ```env
-# Production settings with explicit credentials
-LLM_PROVIDER=bedrock
-AWS_USE_PROFILE=false
-AWS_ACCESS_KEY_ID=your_production_access_key
-AWS_SECRET_ACCESS_KEY=your_production_secret_key
+# Production settings with endpoint access
+LLM_PROVIDER=bedrock_endpoint
+BEDROCK_ENDPOINT_URL=https://your-production-bedrock-endpoint.com
+AWS_LLM_MODEL=us.anthropic.claude-3-haiku-20240307-v1:0
+AWS_EMBEDDING_MODEL=amazon.titan-embed-text-v1
 ```
 
 ### 4. Start Infrastructure Services
@@ -349,11 +347,11 @@ Use Cases:
    - Processes documents from meta_documents directory
    - Handles document parsing and validation
 
-5. **Bedrock Service** (`services/bedrock_service.py`)
-   - AWS Bedrock integration for LLMs and embeddings
+5. **Bedrock Endpoint Service** (`services/bedrock_endpoint_service.py`)
+   - HTTP endpoint integration for AWS Bedrock models
    - Supports multiple model families (Claude, Titan, Llama)
-   - Profile-based and credential-based authentication
-   - Error handling and fallback mechanisms
+   - Secure endpoint-based authentication
+   - Error handling and embedding fallback mechanisms
 
 6. **Custom LLM Service** (`services/custom_llm_service.py`)
    - Integration with internal LLM APIs
@@ -505,7 +503,7 @@ curl -X GET "http://localhost:8000/conversations/conv_abc123/status"
 The application uses Pydantic settings with environment variable support:
 
 - `AppSettings`: General application configuration
-- `AWSSettings`: Bedrock service configuration
+- `BedrockEndpointSettings`: Bedrock endpoint service configuration
 - `OpenSearchSettings`: Vector database configuration
 - `MongoDBSettings`: Document storage configuration
 - `SecuritySettings`: Authentication and security

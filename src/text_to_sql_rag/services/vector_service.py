@@ -26,7 +26,6 @@ import ssl
 
 from ..config.settings import settings
 from ..utils.content_processor import ContentProcessor
-from .bedrock_service import BedrockEmbeddingService, BedrockLLMService
 from .bedrock_endpoint_service import BedrockEndpointEmbeddingService, BedrockEndpointLLMWrapper
 
 logger = structlog.get_logger(__name__)
@@ -217,23 +216,13 @@ class LlamaIndexVectorService:
         # Initialize content processor and bedrock services
         self.content_processor = ContentProcessor()
         
-        # Initialize services based on LLM provider
-        if settings.llm_provider.provider.lower() == "bedrock_endpoint":
-            # Use endpoint services
-            endpoint_url = getattr(settings, 'bedrock_endpoint_url', None)
-            if not endpoint_url:
-                raise ValueError("Bedrock endpoint URL not configured for endpoint provider")
-            
-            self.bedrock_endpoint_embedding = BedrockEndpointEmbeddingService(endpoint_url)
-            self.bedrock_endpoint_llm = BedrockEndpointLLMWrapper(endpoint_url)
-            self.bedrock_embedding = None
-            self.bedrock_llm = None
-        else:
-            # Use traditional bedrock services
-            self.bedrock_embedding = BedrockEmbeddingService()
-            self.bedrock_llm = BedrockLLMService()
-            self.bedrock_endpoint_embedding = None
-            self.bedrock_endpoint_llm = None
+        # Initialize Bedrock endpoint services (only endpoint approach)
+        endpoint_url = getattr(settings, 'bedrock_endpoint_url', None)
+        if not endpoint_url:
+            raise ValueError("Bedrock endpoint URL not configured - only endpoint approach is supported")
+        
+        self.bedrock_endpoint_embedding = BedrockEndpointEmbeddingService(endpoint_url)
+        self.bedrock_endpoint_llm = BedrockEndpointLLMWrapper(endpoint_url)
         
         # Initialize LlamaIndex components
         self._setup_llamaindex()
@@ -335,71 +324,13 @@ class LlamaIndexVectorService:
     def _setup_llamaindex(self) -> None:
         """Setup LlamaIndex global settings using bedrock services."""
         try:
-            # Configure embedding model based on provider
-            if settings.llm_provider.provider.lower() == "bedrock_endpoint":
-                # Use endpoint service for embeddings
-                embed_model = CustomBedrockEmbedding(endpoint_service=self.bedrock_endpoint_embedding)
-                logger.info("Using custom embedding wrapper for Bedrock endpoint")
-            elif _is_inference_profile_arn(settings.aws.embedding_model):
-                # Use custom embedding wrapper for inference profiles
-                embed_model = CustomBedrockEmbedding(bedrock_service=self.bedrock_embedding)
-                logger.info("Using custom embedding wrapper for inference profile ARN")
-            elif settings.aws.use_profile and settings.aws.profile_name:
-                # Use AWS profile for embeddings
-                embed_model = BedrockEmbedding(
-                    model_name=settings.aws.embedding_model,
-                    region_name=settings.aws.region,
-                    profile_name=settings.aws.profile_name
-                )
-            else:
-                # Use explicit credentials or default chain
-                embed_model = BedrockEmbedding(
-                    model_name=settings.aws.embedding_model,
-                    region_name=settings.aws.region,
-                    aws_access_key_id=settings.aws.access_key_id,
-                    aws_secret_access_key=settings.aws.secret_access_key,
-                    aws_session_token=settings.aws.session_token
-                )
+            # Use endpoint service for embeddings (only supported approach)
+            embed_model = CustomBedrockEmbedding(endpoint_service=self.bedrock_endpoint_embedding)
+            logger.info("Using custom embedding wrapper for Bedrock endpoint")
             
-            # Configure LLM based on provider
-            llm = None
-            if settings.llm_provider.provider.lower() == "bedrock_endpoint":
-                # Use endpoint service for LLM
-                llm = CustomBedrockLLM(endpoint_service=self.bedrock_endpoint_llm)
-                logger.info("Using custom LLM wrapper for Bedrock endpoint")
-            elif settings.is_using_bedrock():
-                # Check if we're using inference profile ARNs for LLM
-                if _is_inference_profile_arn(settings.aws.llm_model):
-                    # Use custom LLM wrapper for inference profiles
-                    llm = CustomBedrockLLM(bedrock_service=self.bedrock_llm)
-                    logger.info("Using custom LLM wrapper for inference profile ARN")
-                elif settings.aws.use_profile and settings.aws.profile_name:
-                    # Use AWS profile for LLM
-                    llm = Bedrock(
-                        model=settings.aws.llm_model,
-                        region_name=settings.aws.region,
-                        profile_name=settings.aws.profile_name,
-                        temperature=0.1,
-                        max_tokens=2048,
-                        context_size=200000
-                    )
-                else:
-                    # Use explicit credentials or default chain
-                    llm = Bedrock(
-                        model=settings.aws.llm_model,
-                        region_name=settings.aws.region,
-                        aws_access_key_id=settings.aws.access_key_id,
-                        aws_secret_access_key=settings.aws.secret_access_key,
-                        aws_session_token=settings.aws.session_token,
-                        temperature=0.1,
-                        max_tokens=2048,
-                        context_size=200000
-                    )
-            else:
-                # For custom LLM provider, use a simple OpenAI-like wrapper or None
-                # LlamaIndex will fall back to default behavior
-                logger.info("Using custom LLM provider, LlamaIndex LLM set to None")
-                llm = None
+            # Use endpoint service for LLM (only supported approach)
+            llm = CustomBedrockLLM(endpoint_service=self.bedrock_endpoint_llm)
+            logger.info("Using custom LLM wrapper for Bedrock endpoint")
             
             # Set global settings
             Settings.embed_model = embed_model

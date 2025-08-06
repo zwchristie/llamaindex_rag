@@ -4,7 +4,7 @@ from typing import Union, Optional, Dict, Any, List
 import structlog
 
 from ..config.settings import settings
-from .bedrock_service import BedrockLLMService
+# Direct AWS Bedrock service removed - using only endpoint approach
 from .bedrock_endpoint_service import BedrockEndpointLLMWrapper
 from .custom_llm_service import CustomLLMService
 
@@ -27,36 +27,32 @@ class LLMProviderFactory:
         provider_name = settings.llm_provider.provider.lower()
         
         try:
-            if provider_name == "bedrock":
-                self._current_provider = self._get_bedrock_service()
-                logger.info("Initialized Bedrock LLM provider")
-            elif provider_name == "bedrock_endpoint":
+            if provider_name == "bedrock_endpoint":
                 self._current_provider = self._get_bedrock_endpoint_service()
                 logger.info("Initialized Bedrock Endpoint LLM provider")
             elif provider_name == "custom":
                 self._current_provider = self._get_custom_service()
                 logger.info("Initialized Custom LLM provider")
             else:
-                raise ValueError(f"Unknown LLM provider: {provider_name}")
+                # Default to bedrock_endpoint if provider not specified or invalid
+                logger.warning(f"Unknown provider '{provider_name}', defaulting to bedrock_endpoint")
+                self._current_provider = self._get_bedrock_endpoint_service()
+                logger.info("Initialized Bedrock Endpoint LLM provider (default)")
                 
         except Exception as e:
             logger.error("Failed to initialize LLM provider", provider=provider_name, error=str(e))
-            # Fall back to Bedrock if custom provider fails
+            # Fall back to Bedrock endpoint if custom provider fails
             if provider_name == "custom":
-                logger.warning("Falling back to Bedrock LLM provider")
+                logger.warning("Falling back to Bedrock Endpoint LLM provider")
                 try:
-                    self._current_provider = self._get_bedrock_service()
+                    self._current_provider = self._get_bedrock_endpoint_service()
                 except Exception as bedrock_error:
-                    logger.error("Failed to initialize fallback Bedrock provider", error=str(bedrock_error))
+                    logger.error("Failed to initialize fallback Bedrock Endpoint provider", error=str(bedrock_error))
                     raise bedrock_error
             else:
                 raise e
     
-    def _get_bedrock_service(self) -> BedrockLLMService:
-        """Get or create Bedrock LLM service."""
-        if self._bedrock_service is None:
-            self._bedrock_service = BedrockLLMService()
-        return self._bedrock_service
+    # Direct Bedrock service removed - using only endpoint approach
     
     def _get_bedrock_endpoint_service(self) -> BedrockEndpointLLMWrapper:
         """Get or create Bedrock endpoint LLM service."""
@@ -78,7 +74,7 @@ class LLMProviderFactory:
             self._custom_service = CustomLLMService()
         return self._custom_service
     
-    def get_current_provider(self) -> Union[BedrockLLMService, BedrockEndpointLLMWrapper, CustomLLMService]:
+    def get_current_provider(self) -> Union[BedrockEndpointLLMWrapper, CustomLLMService]:
         """Get the current LLM provider."""
         if self._current_provider is None:
             raise RuntimeError("No LLM provider initialized")
@@ -89,11 +85,7 @@ class LLMProviderFactory:
         try:
             provider_name = provider_name.lower()
             
-            if provider_name == "bedrock":
-                self._current_provider = self._get_bedrock_service()
-                logger.info("Switched to Bedrock LLM provider")
-                return True
-            elif provider_name == "bedrock_endpoint":
+            if provider_name == "bedrock_endpoint":
                 self._current_provider = self._get_bedrock_endpoint_service()
                 logger.info("Switched to Bedrock Endpoint LLM provider")
                 return True
@@ -111,15 +103,7 @@ class LLMProviderFactory:
     
     def get_provider_info(self) -> Dict[str, Any]:
         """Get information about the current provider."""
-        if isinstance(self._current_provider, BedrockLLMService):
-            return {
-                "provider": "bedrock",
-                "model": settings.aws.llm_model,
-                "region": settings.aws.region,
-                "using_profile": settings.aws.use_profile,
-                "profile_name": settings.aws.profile_name if settings.aws.use_profile else None
-            }
-        elif isinstance(self._current_provider, BedrockEndpointLLMWrapper):
+        if isinstance(self._current_provider, BedrockEndpointLLMWrapper):
             return {
                 "provider": "bedrock_endpoint",
                 "model": self._current_provider.model_id,
@@ -165,9 +149,6 @@ class LLMProviderFactory:
         
         if isinstance(provider, CustomLLMService):
             return provider.generate_text(prompt, conversation_id=conversation_id, **kwargs)
-        elif isinstance(provider, BedrockLLMService):
-            # BedrockLLMService has different parameter names
-            return provider.generate_text(prompt, **kwargs)
         elif isinstance(provider, BedrockEndpointLLMWrapper):
             # BedrockEndpointLLMWrapper uses generate_response method
             return provider.generate_response(prompt, **kwargs)
@@ -191,12 +172,6 @@ class LLMProviderFactory:
                 example_queries=example_queries,
                 conversation_id=conversation_id
             )
-        elif isinstance(provider, BedrockLLMService):
-            return provider.generate_sql_query(
-                natural_language_query=natural_language_query,
-                schema_context=schema_context,
-                example_queries=example_queries
-            )
         elif isinstance(provider, BedrockEndpointLLMWrapper):
             # BedrockEndpointLLMWrapper doesn't have generate_sql_query, use generate_response
             # This would need to be implemented based on your SQL generation needs
@@ -218,10 +193,6 @@ class LLMProviderFactory:
         
         if isinstance(provider, CustomLLMService):
             return provider.continue_conversation(message, conversation_id, **kwargs)
-        elif isinstance(provider, BedrockLLMService):
-            # Bedrock doesn't have conversation continuation, so just generate new text
-            logger.warning("Conversation continuation not supported with Bedrock, using generate_text")
-            return provider.generate_text(message, **kwargs)
         elif isinstance(provider, BedrockEndpointLLMWrapper):
             # Endpoint wrapper doesn't have conversation continuation, use generate_response
             logger.warning("Conversation continuation not supported with Bedrock endpoint, using generate_response")
@@ -239,10 +210,6 @@ class LLMProviderFactory:
         
         if isinstance(provider, CustomLLMService):
             return provider.get_conversation_messages(conversation_id, **kwargs)
-        elif isinstance(provider, BedrockLLMService):
-            # Bedrock doesn't support conversation retrieval
-            logger.warning("Conversation message retrieval not supported with Bedrock")
-            return []
         elif isinstance(provider, BedrockEndpointLLMWrapper):
             # Endpoint wrapper doesn't support conversation retrieval
             logger.warning("Conversation message retrieval not supported with Bedrock endpoint")

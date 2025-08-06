@@ -213,23 +213,10 @@ class BedrockEndpointEmbeddingService:
         return self.get_embeddings([text])[0]
     
     def _get_embeddings_via_bedrock(self, texts: List[str]) -> List[List[float]]:
-        """Fallback to traditional Bedrock service for embeddings."""
-        try:
-            from .bedrock_service import BedrockEmbeddingService
-            bedrock_embedding = BedrockEmbeddingService()
-            
-            embeddings = []
-            for text in texts:
-                embedding = bedrock_embedding.get_embedding(text)
-                embeddings.append(embedding)
-            
-            logger.info("Successfully generated embeddings via Bedrock fallback", num_texts=len(texts))
-            return embeddings
-            
-        except Exception as e:
-            logger.error("Bedrock embedding fallback also failed", error=str(e))
-            # Ultimate fallback: return zero vectors
-            return [[0.0] * 1536 for _ in texts]
+        """Fallback for embeddings - return zero vectors since direct Bedrock removed."""
+        logger.warning("Direct Bedrock service removed, using zero vectors as fallback", num_texts=len(texts))
+        # Return zero vectors as fallback
+        return [[0.0] * 1536 for _ in texts]
 
 
 class BedrockEndpointLLMWrapper:
