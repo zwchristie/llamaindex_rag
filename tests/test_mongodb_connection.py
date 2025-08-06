@@ -216,7 +216,7 @@ class MongoDBConnectionTest:
             # Test document insertion
             test_doc = {
                 "test_document": True,
-                "timestamp": datetime.utcnow(),
+                "timestamp": datetime.now(timezone.utc),
                 "test_data": "MongoDB connection test",
                 "test_id": "mongodb_test_001"
             }
@@ -237,7 +237,7 @@ class MongoDBConnectionTest:
             # Test document update
             update_result = self.test_collection.update_one(
                 {"test_id": "mongodb_test_001"},
-                {"$set": {"updated": True, "update_timestamp": datetime.utcnow()}}
+                {"$set": {"updated": True, "update_timestamp": datetime.now(timezone.utc)}}
             )
             
             if update_result.modified_count != 1:

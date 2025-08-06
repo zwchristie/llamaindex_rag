@@ -88,7 +88,7 @@ class MongoDBService:
     
     def is_connected(self) -> bool:
         """Check if MongoDB connection is active."""
-        if not self.client:
+        if self.client is None:
             return False
         
         try:
@@ -281,7 +281,7 @@ class MongoDBService:
     def health_check(self) -> Dict[str, Any]:
         """Perform health check on MongoDB connection."""
         try:
-            if not self.client:
+            if self.client is None:
                 return {
                     "status": "disconnected",
                     "message": "MongoDB client not initialized"
@@ -309,6 +309,6 @@ class MongoDBService:
     
     def close_connection(self) -> None:
         """Close MongoDB connection."""
-        if self.client:
+        if self.client is not None:
             self.client.close()
             logger.info("Closed MongoDB connection")
