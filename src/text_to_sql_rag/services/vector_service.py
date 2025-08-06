@@ -186,8 +186,10 @@ class LlamaIndexVectorService:
         if not endpoint_url:
             raise ValueError("Bedrock endpoint URL not configured - only endpoint approach is supported")
         
-        self.bedrock_endpoint_embedding = BedrockEndpointEmbeddingService(endpoint_url)
-        self.bedrock_endpoint_llm = BedrockEndpointLLMWrapper(endpoint_url)
+        from .bedrock_endpoint_service import BedrockEndpointService
+        endpoint_service = BedrockEndpointService(endpoint_url)
+        self.bedrock_endpoint_embedding = BedrockEndpointEmbeddingService(endpoint_service)
+        self.bedrock_endpoint_llm = BedrockEndpointLLMWrapper(endpoint_service)
         
         # Initialize LlamaIndex components
         self._setup_llamaindex()

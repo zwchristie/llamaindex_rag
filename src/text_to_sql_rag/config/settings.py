@@ -38,14 +38,9 @@ class OpenSearchSettings(BaseSettings):
 
 
 class AWSSettings(BaseSettings):
-    """AWS Bedrock configuration."""
+    """AWS Bedrock configuration (endpoint-only, no direct AWS SDK)."""
     
     region: str = Field(default="us-east-1", env="AWS_REGION")
-    profile_name: Optional[str] = Field(default=None, env="AWS_PROFILE")
-    access_key_id: Optional[str] = Field(default=None, env="AWS_ACCESS_KEY_ID")
-    secret_access_key: Optional[str] = Field(default=None, env="AWS_SECRET_ACCESS_KEY")
-    session_token: Optional[str] = Field(default=None, env="AWS_SESSION_TOKEN")
-    use_profile: bool = Field(default=False, env="AWS_USE_PROFILE")
     
     # Model configurations
     embedding_model: str = Field(default="amazon.titan-embed-text-v2:0", env="AWS_EMBEDDING_MODEL")

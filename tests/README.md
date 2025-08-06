@@ -20,15 +20,15 @@ This directory contains comprehensive connection tests for the text-to-SQL RAG a
    - Vector/KNN search capabilities
    - SSL/authentication validation
 
-3. **`test_bedrock_llm.py`** - Tests AWS Bedrock LLM connectivity
-   - AWS credentials validation
-   - Bedrock service access
+3. **`test_bedrock_llm.py`** - Tests Bedrock endpoint LLM connectivity
+   - Bedrock endpoint configuration validation
+   - Endpoint connectivity testing
    - Text generation with various prompts
    - Custom endpoint service testing
    - LLM factory service integration
 
-4. **`test_bedrock_embedding.py`** - Tests AWS Bedrock embedding model connectivity
-   - Embedding generation with various text inputs
+4. **`test_bedrock_embedding.py`** - Tests Bedrock endpoint embedding model connectivity
+   - Endpoint embedding generation with various text inputs
    - Vector similarity calculations
    - Dimension consistency validation
    - Custom endpoint service testing
@@ -96,16 +96,12 @@ export OPENSEARCH_PASSWORD="admin"
 export OPENSEARCH_VECTOR_SIZE="1024"
 ```
 
-### AWS Bedrock
+### Bedrock Endpoint
 ```bash
-export AWS_REGION="us-east-1"
-export AWS_ACCESS_KEY_ID="your_access_key"
-export AWS_SECRET_ACCESS_KEY="your_secret_key"
+export BEDROCK_ENDPOINT_URL="https://your-endpoint.com/invokeBedrock/"
 export AWS_LLM_MODEL="anthropic.claude-3-5-sonnet-20241022-v2:0"
 export AWS_EMBEDDING_MODEL="amazon.titan-embed-text-v2:0"
-
-# For custom Bedrock endpoints
-export BEDROCK_ENDPOINT_URL="https://your-endpoint.com/invokeBedrock/"
+export LLM_PROVIDER="bedrock"
 ```
 
 ## Test Output Examples
@@ -145,8 +141,7 @@ export BEDROCK_ENDPOINT_URL="https://your-endpoint.com/invokeBedrock/"
 The test scripts require the following packages:
 - `pymongo` - MongoDB connectivity
 - `opensearch-py` - OpenSearch connectivity  
-- `boto3` - AWS Bedrock connectivity
-- `requests` - HTTP requests
+- `requests` - HTTP requests (for Bedrock endpoint connectivity)
 - `numpy` - Vector operations
 
 ## Troubleshooting

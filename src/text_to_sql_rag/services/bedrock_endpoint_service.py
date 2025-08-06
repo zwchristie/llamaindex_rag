@@ -154,14 +154,10 @@ class BedrockEndpointService:
 class BedrockEndpointEmbeddingService:
     """Service for generating embeddings through Bedrock endpoint."""
     
-    def __init__(self, endpoint_base_url: str):
-        """Initialize embedding service with endpoint."""
-        self.bedrock_service = BedrockEndpointService(endpoint_base_url)
-        self.embedding_model = "amazon.titan-embed-text-v1"  # Default embedding model
-        
-        # Note: Many Bedrock endpoints may not support embeddings
-        # In that case, we should fall back to the traditional Bedrock service for embeddings
-        self._should_fallback_to_bedrock = False
+    def __init__(self, endpoint_service: BedrockEndpointService):
+        """Initialize embedding service with endpoint service."""
+        self.bedrock_service = endpoint_service
+        self.embedding_model = settings.aws.embedding_model
     
     def get_embeddings(self, texts: List[str]) -> List[List[float]]:
         """
@@ -173,15 +169,11 @@ class BedrockEndpointEmbeddingService:
         Returns:
             List of embedding vectors
         """
-        # If endpoint doesn't support embeddings, fall back to Bedrock service
-        if self._should_fallback_to_bedrock:
-            return self._get_embeddings_via_bedrock(texts)
-        
         embeddings = []
         
         for text in texts:
             try:
-                # Try to use endpoint for embeddings first
+                # Use endpoint for embeddings
                 response = self.bedrock_service.invoke_model(
                     model_id=self.embedding_model,
                     query=text,
@@ -193,39 +185,33 @@ class BedrockEndpointEmbeddingService:
                     embeddings.append(response['embedding'])
                 elif isinstance(response, dict) and 'embeddings' in response:
                     embeddings.append(response['embeddings'])
+                elif isinstance(response, dict) and 'vector' in response:
+                    embeddings.append(response['vector'])
                 else:
-                    logger.warning("Unexpected embedding response format from endpoint, falling back to Bedrock", 
-                                 response_keys=list(response.keys()) if isinstance(response, dict) else "non-dict")
-                    # Set fallback flag and use Bedrock for embeddings
-                    self._should_fallback_to_bedrock = True
-                    return self._get_embeddings_via_bedrock(texts)
+                    logger.error("Unexpected embedding response format from endpoint", 
+                                response_keys=list(response.keys()) if isinstance(response, dict) else "non-dict")
+                    # Return zero vector as fallback
+                    embeddings.append([0.0] * settings.opensearch.vector_size)
                     
             except Exception as e:
-                logger.warning("Endpoint embedding failed, falling back to Bedrock", error=str(e))
-                # Set fallback flag and use Bedrock for embeddings
-                self._should_fallback_to_bedrock = True
-                return self._get_embeddings_via_bedrock(texts)
+                logger.error("Endpoint embedding failed", error=str(e))
+                # Return zero vector as fallback
+                embeddings.append([0.0] * settings.opensearch.vector_size)
         
         return embeddings
     
     def get_embedding(self, text: str) -> List[float]:
         """Generate embedding for a single text."""
         return self.get_embeddings([text])[0]
-    
-    def _get_embeddings_via_bedrock(self, texts: List[str]) -> List[List[float]]:
-        """Fallback for embeddings - return zero vectors since direct Bedrock removed."""
-        logger.warning("Direct Bedrock service removed, using zero vectors as fallback", num_texts=len(texts))
-        # Return zero vectors as fallback
-        return [[0.0] * 1536 for _ in texts]
 
 
 class BedrockEndpointLLMWrapper:
     """LLM wrapper compatible with existing LLM interfaces."""
     
-    def __init__(self, endpoint_base_url: str, model_id: str = "us.anthropic.claude-3-haiku-20240307-v1:0"):
+    def __init__(self, endpoint_service: BedrockEndpointService, model_id: Optional[str] = None):
         """Initialize LLM wrapper."""
-        self.bedrock_service = BedrockEndpointService(endpoint_base_url)
-        self.model_id = model_id
+        self.bedrock_service = endpoint_service
+        self.model_id = model_id or settings.aws.llm_model
     
     def complete(
         self,
