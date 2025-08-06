@@ -73,6 +73,7 @@ class MasterTestRunner:
         print(f"   MongoDB:     {settings.mongodb.url}")
         print(f"   OpenSearch:  {settings.opensearch.host}:{settings.opensearch.port} (SSL: {settings.opensearch.use_ssl})")
         print(f"   Bedrock Endpoint: {settings.bedrock_endpoint_url or 'Not configured'}")
+        print(f"   Bedrock SSL Verify: {settings.bedrock_endpoint_verify_ssl}")
         print(f"   LLM Model:   {settings.aws.llm_model}")
         print(f"   Embed Model: {settings.aws.embedding_model}")
         print(f"   LLM Provider: {settings.llm_provider.provider}")
@@ -266,11 +267,13 @@ class MasterTestRunner:
                 "title": "Bedrock Endpoint LLM Configuration",
                 "env_vars": [
                     "BEDROCK_ENDPOINT_URL=https://your-endpoint.com/invokeBedrock/",
+                    "BEDROCK_ENDPOINT_VERIFY_SSL=true",
                     "AWS_LLM_MODEL=anthropic.claude-3-5-sonnet-20241022-v2:0",
                     "LLM_PROVIDER=bedrock"
                 ],
                 "notes": [
                     "Ensure BEDROCK_ENDPOINT_URL is configured for your endpoint",
+                    "Set BEDROCK_ENDPOINT_VERIFY_SSL=false to disable SSL verification if needed",
                     "Verify endpoint has proper authentication and permissions",
                     "Check if the LLM model is supported by your endpoint",
                     "Endpoint must support the expected request/response format"
@@ -280,11 +283,13 @@ class MasterTestRunner:
                 "title": "Bedrock Endpoint Embedding Configuration",
                 "env_vars": [
                     "BEDROCK_ENDPOINT_URL=https://your-endpoint.com/invokeBedrock/",
+                    "BEDROCK_ENDPOINT_VERIFY_SSL=true",
                     "AWS_EMBEDDING_MODEL=amazon.titan-embed-text-v2:0",
                     "OPENSEARCH_VECTOR_SIZE=1024"
                 ],
                 "notes": [
                     "Ensure BEDROCK_ENDPOINT_URL is configured for your endpoint",
+                    "Set BEDROCK_ENDPOINT_VERIFY_SSL=false to disable SSL verification if needed",
                     "Verify endpoint has proper authentication and permissions",
                     "Check if the embedding model is supported by your endpoint",
                     "Ensure vector size matches the embedding model dimensions"
@@ -324,6 +329,7 @@ class MasterTestRunner:
                 "opensearch_host": settings.opensearch.host,
                 "opensearch_port": settings.opensearch.port,
                 "bedrock_endpoint_url": settings.bedrock_endpoint_url,
+                "bedrock_endpoint_verify_ssl": settings.bedrock_endpoint_verify_ssl,
                 "llm_model": settings.aws.llm_model,
                 "embedding_model": settings.aws.embedding_model,
                 "llm_provider": settings.llm_provider.provider

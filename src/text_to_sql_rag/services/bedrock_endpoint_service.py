@@ -24,13 +24,23 @@ class BedrockEndpointService:
         self.invoke_url = f"{self.endpoint_base_url}/invokeBedrock/"
         self.session = requests.Session()
         
+        # Configure SSL verification based on settings
+        self.verify_ssl = settings.bedrock_endpoint_verify_ssl
+        if not self.verify_ssl:
+            # Disable SSL warnings when verification is disabled
+            import urllib3
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+            logger.warning("SSL verification disabled for Bedrock endpoint", endpoint=self.invoke_url)
+        
         # Set default headers
         self.session.headers.update({
             'Content-Type': 'application/json',
             'Accept': 'application/json'
         })
         
-        logger.info("Initialized Bedrock endpoint service", endpoint=self.invoke_url)
+        logger.info("Initialized Bedrock endpoint service", 
+                   endpoint=self.invoke_url, 
+                   verify_ssl=self.verify_ssl)
     
     def invoke_model(
         self,
@@ -69,7 +79,8 @@ class BedrockEndpointService:
                 "top_k": top_k,
                 "top_p": top_p,
                 "stop_sequences": stop_sequences
-            }
+            },
+            "invoke_type": "llm"
         }
         
         try:
@@ -81,7 +92,8 @@ class BedrockEndpointService:
             response = self.session.post(
                 self.invoke_url,
                 json=payload,
-                timeout=60  # 60 second timeout
+                timeout=60,  # 60 second timeout
+                verify=self.verify_ssl  # Use SSL verification setting
             )
             
             response.raise_for_status()
@@ -102,6 +114,62 @@ class BedrockEndpointService:
             raise
         except json.JSONDecodeError as e:
             logger.error("Failed to decode Bedrock endpoint response",
+                        error=str(e),
+                        response_text=response.text[:500] if 'response' in locals() else "N/A")
+            raise
+    
+    def invoke_embedding(
+        self,
+        model_id: str,
+        query: str
+    ) -> Dict[str, Any]:
+        """
+        Invoke a Bedrock embedding model through the HTTP endpoint.
+        
+        Args:
+            model_id: Bedrock embedding model ID (e.g., "amazon.titan-embed-text-v2:0")
+            query: Input text to embed
+            
+        Returns:
+            Dictionary with embedding response
+        """
+        payload = {
+            "model_id": model_id,
+            "query": query,
+            "invoke_type": "embedding"
+        }
+        
+        try:
+            logger.debug("Invoking Bedrock embedding via endpoint", 
+                        model_id=model_id,
+                        query_length=len(query),
+                        endpoint=self.invoke_url)
+            
+            response = self.session.post(
+                self.invoke_url,
+                json=payload,
+                timeout=60,  # 60 second timeout
+                verify=self.verify_ssl  # Use SSL verification setting
+            )
+            
+            response.raise_for_status()
+            result = response.json()
+            
+            logger.debug("Bedrock embedding endpoint response received",
+                        model_id=model_id,
+                        status_code=response.status_code,
+                        response_keys=list(result.keys()) if isinstance(result, dict) else "non-dict")
+            
+            return result
+            
+        except requests.exceptions.RequestException as e:
+            logger.error("Bedrock embedding endpoint request failed",
+                        error=str(e),
+                        model_id=model_id,
+                        endpoint=self.invoke_url)
+            raise
+        except json.JSONDecodeError as e:
+            logger.error("Failed to decode Bedrock embedding endpoint response",
                         error=str(e),
                         response_text=response.text[:500] if 'response' in locals() else "N/A")
             raise
@@ -173,11 +241,10 @@ class BedrockEndpointEmbeddingService:
         
         for text in texts:
             try:
-                # Use endpoint for embeddings
-                response = self.bedrock_service.invoke_model(
+                # Use endpoint for embeddings with dedicated embedding method
+                response = self.bedrock_service.invoke_embedding(
                     model_id=self.embedding_model,
-                    query=text,
-                    max_tokens=1  # Embeddings don't generate tokens
+                    query=text
                 )
                 
                 # Extract embedding from response - adjust based on actual format
@@ -189,12 +256,13 @@ class BedrockEndpointEmbeddingService:
                     embeddings.append(response['vector'])
                 else:
                     logger.error("Unexpected embedding response format from endpoint", 
-                                response_keys=list(response.keys()) if isinstance(response, dict) else "non-dict")
+                                response_keys=list(response.keys()) if isinstance(response, dict) else "non-dict",
+                                response_sample=str(response)[:200])
                     # Return zero vector as fallback
                     embeddings.append([0.0] * settings.opensearch.vector_size)
                     
             except Exception as e:
-                logger.error("Endpoint embedding failed", error=str(e))
+                logger.error("Endpoint embedding failed", error=str(e), text_length=len(text))
                 # Return zero vector as fallback
                 embeddings.append([0.0] * settings.opensearch.vector_size)
         

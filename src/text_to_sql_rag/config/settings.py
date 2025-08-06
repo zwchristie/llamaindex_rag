@@ -154,6 +154,7 @@ class Settings:
         
         # Bedrock endpoint URL (for HTTP-based Bedrock access)
         self.bedrock_endpoint_url = os.getenv("BEDROCK_ENDPOINT_URL")
+        self.bedrock_endpoint_verify_ssl = os.getenv("BEDROCK_ENDPOINT_VERIFY_SSL", "true").lower() == "true"
         
         # Only load custom LLM settings if needed
         if self._should_load_custom_llm():

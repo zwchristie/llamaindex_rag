@@ -118,6 +118,10 @@ class BedrockLLMConnectionTest:
             # Import requests for basic connectivity test
             try:
                 import requests
+                # Disable SSL warnings if SSL verification is disabled
+                if not settings.bedrock_endpoint_verify_ssl:
+                    import urllib3
+                    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
             except ImportError:
                 self.log_result(
                     "Endpoint Connectivity", 
@@ -130,10 +134,12 @@ class BedrockLLMConnectionTest:
             try:
                 start_time = time.time()
                 # Just test connectivity, not actual inference
+                verify_ssl = settings.bedrock_endpoint_verify_ssl
                 response = requests.get(
                     endpoint_url.rstrip('/'), 
                     timeout=10,
-                    allow_redirects=False
+                    allow_redirects=False,
+                    verify=verify_ssl
                 )
                 connection_time = time.time() - start_time
                 
@@ -429,6 +435,7 @@ def main():
     print()
     print("   To configure Bedrock Endpoint:")
     print("   - Set BEDROCK_ENDPOINT_URL for your Bedrock endpoint")
+    print("   - Set BEDROCK_ENDPOINT_VERIFY_SSL=false to disable SSL verification if needed")
     print("   - Set AWS_LLM_MODEL for specific model (optional)")
     print("   - Set AWS_EMBEDDING_MODEL for specific embedding model (optional)")
     print("   - Set LLM_PROVIDER=bedrock")

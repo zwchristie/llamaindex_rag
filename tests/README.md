@@ -99,6 +99,7 @@ export OPENSEARCH_VECTOR_SIZE="1024"
 ### Bedrock Endpoint
 ```bash
 export BEDROCK_ENDPOINT_URL="https://your-endpoint.com/invokeBedrock/"
+export BEDROCK_ENDPOINT_VERIFY_SSL="true"  # Set to "false" to disable SSL verification
 export AWS_LLM_MODEL="anthropic.claude-3-5-sonnet-20241022-v2:0"
 export AWS_EMBEDDING_MODEL="amazon.titan-embed-text-v2:0"
 export LLM_PROVIDER="bedrock"
