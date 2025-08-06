@@ -205,8 +205,8 @@ class BedrockEndpointService:
         
         # Extract text from response - adjust based on actual response format
         if isinstance(response, dict):
-            # Common response formats to try
-            for key in ['text', 'content', 'response', 'output', 'completion']:
+            # Common response formats to try (including 'result' from your endpoint)
+            for key in ['result', 'text', 'content', 'response', 'output', 'completion']:
                 if key in response:
                     return str(response[key])
             
@@ -248,15 +248,23 @@ class BedrockEndpointEmbeddingService:
                 )
                 
                 # Extract embedding from response - adjust based on actual format
-                if isinstance(response, dict) and 'embedding' in response:
-                    embeddings.append(response['embedding'])
-                elif isinstance(response, dict) and 'embeddings' in response:
-                    embeddings.append(response['embeddings'])
-                elif isinstance(response, dict) and 'vector' in response:
-                    embeddings.append(response['vector'])
+                if isinstance(response, dict):
+                    # Try common embedding response formats (including 'result' from your endpoint)
+                    for key in ['result', 'embedding', 'embeddings', 'vector']:
+                        if key in response:
+                            embedding_data = response[key]
+                            if isinstance(embedding_data, list) and len(embedding_data) > 0:
+                                embeddings.append(embedding_data)
+                                break
+                    else:
+                        logger.error("Unexpected embedding response format from endpoint", 
+                                    response_keys=list(response.keys()) if isinstance(response, dict) else "non-dict",
+                                    response_sample=str(response)[:200])
+                        # Return zero vector as fallback
+                        embeddings.append([0.0] * settings.opensearch.vector_size)
                 else:
-                    logger.error("Unexpected embedding response format from endpoint", 
-                                response_keys=list(response.keys()) if isinstance(response, dict) else "non-dict",
+                    logger.error("Non-dict embedding response from endpoint", 
+                                response_type=type(response).__name__,
                                 response_sample=str(response)[:200])
                     # Return zero vector as fallback
                     embeddings.append([0.0] * settings.opensearch.vector_size)

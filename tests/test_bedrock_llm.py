@@ -10,7 +10,7 @@ import os
 import sys
 import time
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional, List
 
 # Add src to path to import our modules
@@ -49,7 +49,7 @@ class BedrockLLMConnectionTest:
             "success": success,
             "message": message,
             "details": details or {},
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
         self.results.append(result)
         print(f"{status}: {test_name} - {message}")

@@ -12,7 +12,7 @@ import sys
 import subprocess
 import time
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
 
 # Add current directory to path for importing test modules
@@ -319,7 +319,7 @@ class MasterTestRunner:
         # Prepare results for JSON serialization
         json_results = {
             "test_run_info": {
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "total_duration": self.end_time - self.start_time if self.end_time and self.start_time else 0,
                 "total_tests": len(self.results),
                 "passed_tests": sum(1 for r in self.results.values() if r["success"])
