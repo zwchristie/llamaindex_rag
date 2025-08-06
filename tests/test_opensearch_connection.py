@@ -124,7 +124,6 @@ class OpenSearchConnectionTest:
                 'hosts': [{'host': host, 'port': port}],
                 'use_ssl': use_ssl,
                 'verify_certs': verify_certs,
-                'connection_class': RequestsHttpConnection,
                 'timeout': 10,
                 'max_retries': 1,
                 'retry_on_timeout': False
@@ -136,23 +135,37 @@ class OpenSearchConnectionTest:
             
             # Additional SSL settings
             if use_ssl:
+                # Import SSL and urllib3 for configuration
+                import ssl
+                import urllib3
+                
                 if not verify_certs:
+                    # Disable SSL warnings
+                    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+                    
+                    # Configure client parameters for no SSL verification
                     client_params['ssl_show_warn'] = False
                     client_params['ssl_assert_hostname'] = False
-                    # Disable SSL warnings
-                    import urllib3
-                    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-                
-                # Add SSL context configuration to handle SSL handshake issues
-                import ssl
-                ssl_context = ssl.create_default_context()
-                if not verify_certs:
+                    
+                    # Create SSL context that doesn't verify certificates
+                    ssl_context = ssl.create_default_context()
                     ssl_context.check_hostname = False
                     ssl_context.verify_mode = ssl.CERT_NONE
-                
-                # Configure SSL context for OpenSearch compatibility
-                ssl_context.set_ciphers('HIGH:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!MD5:!PSK:!SRP:!CAMELLIA')
-                client_params['ssl_context'] = ssl_context
+                    
+                    # Configure SSL context for OpenSearch compatibility
+                    try:
+                        ssl_context.set_ciphers('HIGH:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!MD5:!PSK:!SRP:!CAMELLIA')
+                    except ssl.SSLError:
+                        # If the cipher string fails, try a more basic one
+                        ssl_context.set_ciphers('DEFAULT')
+                    
+                    client_params['ssl_context'] = ssl_context
+            
+            # Debug: Print connection parameters (without passwords)
+            debug_params = client_params.copy()
+            if 'http_auth' in debug_params:
+                debug_params['http_auth'] = f"({debug_params['http_auth'][0]}, ***)"
+            print(f"Debug: OpenSearch client params: {debug_params}")
             
             self.client = OpenSearch(**client_params)
             

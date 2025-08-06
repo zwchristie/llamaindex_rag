@@ -254,21 +254,26 @@ class LlamaIndexVectorService:
             # Configure SSL settings
             if settings.opensearch.use_ssl:
                 opensearch_client_kwargs['use_ssl'] = True
+                opensearch_client_kwargs['verify_certs'] = settings.opensearch.verify_certs
+                
                 if not settings.opensearch.verify_certs:
-                    opensearch_client_kwargs['verify_certs'] = False
                     opensearch_client_kwargs['ssl_show_warn'] = False
                     opensearch_client_kwargs['ssl_assert_hostname'] = False
-                
-                # Add SSL context configuration to handle SSL handshake issues
-                import ssl
-                ssl_context = ssl.create_default_context()
-                if not settings.opensearch.verify_certs:
+                    
+                    # Add SSL context configuration to handle SSL handshake issues
+                    import ssl
+                    ssl_context = ssl.create_default_context()
                     ssl_context.check_hostname = False
                     ssl_context.verify_mode = ssl.CERT_NONE
-                
-                # Configure SSL context for OpenSearch compatibility
-                ssl_context.set_ciphers('HIGH:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!MD5:!PSK:!SRP:!CAMELLIA')
-                opensearch_client_kwargs['ssl_context'] = ssl_context
+                    
+                    # Configure SSL context for OpenSearch compatibility
+                    try:
+                        ssl_context.set_ciphers('HIGH:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!MD5:!PSK:!SRP:!CAMELLIA')
+                    except ssl.SSLError:
+                        # If the cipher string fails, try a more basic one
+                        ssl_context.set_ciphers('DEFAULT')
+                    
+                    opensearch_client_kwargs['ssl_context'] = ssl_context
             
             # Combine all kwargs
             client_kwargs = {**llamaindex_kwargs, **opensearch_client_kwargs}
