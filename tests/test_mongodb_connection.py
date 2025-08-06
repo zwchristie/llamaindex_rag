@@ -10,7 +10,7 @@ import os
 import sys
 import time
 import hashlib
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 
 # Add src to path to import our modules
@@ -52,7 +52,7 @@ class MongoDBConnectionTest:
             "success": success,
             "message": message,
             "details": details or {},
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
         self.results.append(result)
         print(f"{status}: {test_name} - {message}")
@@ -159,7 +159,7 @@ class MongoDBConnectionTest:
     
     def test_database_access(self):
         """Test database access and permissions."""
-        if not self.client:
+        if self.client is None:
             self.log_result("Database Access", False, "No client connection available")
             return False
         
@@ -201,7 +201,7 @@ class MongoDBConnectionTest:
     
     def test_collection_operations(self):
         """Test collection creation and basic operations."""
-        if not self.db:
+        if self.db is None:
             self.log_result("Collection Operations", False, "No database connection available")
             return False
         
@@ -270,7 +270,7 @@ class MongoDBConnectionTest:
     
     def test_indexes(self):
         """Test index creation and management."""
-        if not self.test_collection:
+        if self.test_collection is None:
             self.log_result("Index Operations", False, "No test collection available")
             return False
         
@@ -363,7 +363,7 @@ class MongoDBConnectionTest:
     def cleanup(self):
         """Clean up test data and connections."""
         try:
-            if self.test_collection:
+            if self.test_collection is not None:
                 # Remove test documents
                 self.test_collection.delete_many({"test_document": True})
                 
@@ -373,7 +373,7 @@ class MongoDBConnectionTest:
                 except:
                     pass  # Index might not exist
             
-            if self.client:
+            if self.client is not None:
                 self.client.close()
                 
             self.log_result("Cleanup", True, "Test cleanup completed successfully")
