@@ -64,7 +64,7 @@ class MongoDBService:
     
     def _create_indexes(self) -> None:
         """Create database indexes for efficient querying."""
-        if not self.documents_collection:
+        if self.documents_collection is None:
             return
         
         try:
@@ -103,7 +103,7 @@ class MongoDBService:
     
     def get_document_by_path(self, file_path: str) -> Optional[Dict[str, Any]]:
         """Get document by file path."""
-        if not self.documents_collection:
+        if self.documents_collection is None:
             return None
         
         try:
@@ -123,7 +123,7 @@ class MongoDBService:
         metadata: Optional[Dict[str, Any]] = None
     ) -> bool:
         """Insert or update document in MongoDB."""
-        if not self.documents_collection:
+        if self.documents_collection is None:
             logger.warning("MongoDB not connected, skipping document upsert")
             return False
         
@@ -167,7 +167,7 @@ class MongoDBService:
         document_type: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """Get all documents for a specific catalog and schema."""
-        if not self.documents_collection:
+        if self.documents_collection is None:
             return []
         
         try:
@@ -199,7 +199,7 @@ class MongoDBService:
     
     def get_all_documents(self) -> List[Dict[str, Any]]:
         """Get all documents from MongoDB."""
-        if not self.documents_collection:
+        if self.documents_collection is None:
             return []
         
         try:
@@ -230,7 +230,7 @@ class MongoDBService:
     
     def delete_document(self, file_path: str) -> bool:
         """Delete document by file path."""
-        if not self.documents_collection:
+        if self.documents_collection is None:
             return False
         
         try:
@@ -249,7 +249,7 @@ class MongoDBService:
     
     def get_collection_stats(self) -> Dict[str, Any]:
         """Get collection statistics."""
-        if not self.documents_collection:
+        if self.documents_collection is None:
             return {"error": "MongoDB not connected"}
         
         try:
