@@ -44,7 +44,7 @@ app = FastAPI(
     version=settings.app.version,
     debug=settings.app.debug
 )
-
+#poke
 # Add CORS middleware
 # Configure CORS - update for production
 allowed_origins = ["http://localhost:3000", "http://localhost:8080"]  # Add your frontend URLs
