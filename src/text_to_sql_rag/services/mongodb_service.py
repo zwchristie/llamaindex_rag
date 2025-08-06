@@ -296,7 +296,7 @@ class MongoDBService:
             return {
                 "status": "healthy",
                 "connected": True,
-                "database": self.db.name if self.db else None,
+                "database": self.db.name if self.db is not None else None,
                 "collection_stats": stats
             }
             
