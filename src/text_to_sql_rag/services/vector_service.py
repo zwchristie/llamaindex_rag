@@ -258,6 +258,17 @@ class LlamaIndexVectorService:
                     opensearch_client_kwargs['verify_certs'] = False
                     opensearch_client_kwargs['ssl_show_warn'] = False
                     opensearch_client_kwargs['ssl_assert_hostname'] = False
+                
+                # Add SSL context configuration to handle SSL handshake issues
+                import ssl
+                ssl_context = ssl.create_default_context()
+                if not settings.opensearch.verify_certs:
+                    ssl_context.check_hostname = False
+                    ssl_context.verify_mode = ssl.CERT_NONE
+                
+                # Configure SSL context for OpenSearch compatibility
+                ssl_context.set_ciphers('HIGH:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!MD5:!PSK:!SRP:!CAMELLIA')
+                opensearch_client_kwargs['ssl_context'] = ssl_context
             
             # Combine all kwargs
             client_kwargs = {**llamaindex_kwargs, **opensearch_client_kwargs}

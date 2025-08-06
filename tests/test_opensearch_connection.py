@@ -93,6 +93,7 @@ class OpenSearchConnectionTest:
                 {
                     "endpoint": endpoint,
                     "use_ssl": use_ssl,
+                    "verify_certs": verify_certs,
                     "has_auth": bool(username and password),
                     "index_name": settings.opensearch.index_name,
                     "vector_size": settings.opensearch.vector_size
@@ -134,9 +135,24 @@ class OpenSearchConnectionTest:
                 client_params['http_auth'] = (username, password)
             
             # Additional SSL settings
-            if use_ssl and not verify_certs:
-                client_params['ssl_show_warn'] = False
-                client_params['ssl_assert_hostname'] = False
+            if use_ssl:
+                if not verify_certs:
+                    client_params['ssl_show_warn'] = False
+                    client_params['ssl_assert_hostname'] = False
+                    # Disable SSL warnings
+                    import urllib3
+                    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+                
+                # Add SSL context configuration to handle SSL handshake issues
+                import ssl
+                ssl_context = ssl.create_default_context()
+                if not verify_certs:
+                    ssl_context.check_hostname = False
+                    ssl_context.verify_mode = ssl.CERT_NONE
+                
+                # Configure SSL context for OpenSearch compatibility
+                ssl_context.set_ciphers('HIGH:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!MD5:!PSK:!SRP:!CAMELLIA')
+                client_params['ssl_context'] = ssl_context
             
             self.client = OpenSearch(**client_params)
             
