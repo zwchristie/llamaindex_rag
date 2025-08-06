@@ -34,25 +34,18 @@ logger = structlog.get_logger(__name__)
 class CustomBedrockEmbedding(BaseEmbedding):
     """Custom embedding wrapper for inference profile ARNs and endpoint services."""
     
-    def __init__(self, bedrock_service=None, endpoint_service=None, **kwargs):
-        # Store the service before calling super() to avoid Pydantic validation issues
-        if bedrock_service is None and endpoint_service is None:
-            raise ValueError("Either bedrock_service or endpoint_service must be provided")
+    def __init__(self, endpoint_service=None, **kwargs):
+        # Store the endpoint service before calling super() to avoid Pydantic validation issues
+        if endpoint_service is None:
+            raise ValueError("endpoint_service must be provided")
         super().__init__(**kwargs)
         # Set this after super() to ensure it's not lost during Pydantic validation
-        if bedrock_service:
-            object.__setattr__(self, '_bedrock_service', bedrock_service)
-            object.__setattr__(self, '_endpoint_service', None)
-        else:
-            object.__setattr__(self, '_bedrock_service', None)
-            object.__setattr__(self, '_endpoint_service', endpoint_service)
+        object.__setattr__(self, '_endpoint_service', endpoint_service)
     
     def __getstate__(self):
         """Custom pickling to preserve services."""
         state = self.__dict__.copy()
-        # Ensure services are preserved
-        if hasattr(self, '_bedrock_service'):
-            state['_bedrock_service'] = self._bedrock_service
+        # Ensure endpoint service is preserved
         if hasattr(self, '_endpoint_service'):
             state['_endpoint_service'] = self._endpoint_service
         return state
@@ -60,11 +53,9 @@ class CustomBedrockEmbedding(BaseEmbedding):
     def __setstate__(self, state):
         """Custom unpickling to restore services."""
         self.__dict__.update(state)
-        # Recreate services if not present
-        if ('_bedrock_service' not in state or state['_bedrock_service'] is None) and ('_endpoint_service' not in state or state['_endpoint_service'] is None):
-            from .bedrock_service import BedrockEmbeddingService
-            object.__setattr__(self, '_bedrock_service', BedrockEmbeddingService())
-            object.__setattr__(self, '_endpoint_service', None)
+        # Endpoint service should be preserved in state - if not, something went wrong
+        if '_endpoint_service' not in state or state['_endpoint_service'] is None:
+            raise RuntimeError("Endpoint service not preserved during pickling - cannot restore embedding service")
     
     def _get_query_embedding(self, query: str) -> List[float]:
         """Get embedding for query."""
@@ -73,17 +64,8 @@ class CustomBedrockEmbedding(BaseEmbedding):
             return [0.0] * 1024
         
         try:
-            if hasattr(self, '_endpoint_service') and self._endpoint_service is not None:
-                # Use endpoint service for embeddings
-                embedding = self._endpoint_service.get_embedding(query)
-            elif hasattr(self, '_bedrock_service') and self._bedrock_service is not None:
-                # Use bedrock service for embeddings
-                embedding = self._bedrock_service.get_embedding(query)
-            else:
-                # Fallback: recreate bedrock service
-                from .bedrock_service import BedrockEmbeddingService
-                object.__setattr__(self, '_bedrock_service', BedrockEmbeddingService())
-                embedding = self._bedrock_service.get_embedding(query)
+            # Use endpoint service for embeddings (only supported approach)
+            embedding = self._endpoint_service.get_embedding(query)
             
             if not embedding or len(embedding) == 0:
                 logger.warning("Empty embedding returned from service")
@@ -101,17 +83,8 @@ class CustomBedrockEmbedding(BaseEmbedding):
             return [0.0] * 1024  # Match the vector size
         
         try:
-            if hasattr(self, '_endpoint_service') and self._endpoint_service is not None:
-                # Use endpoint service for embeddings
-                embedding = self._endpoint_service.get_embedding(text)
-            elif hasattr(self, '_bedrock_service') and self._bedrock_service is not None:
-                # Use bedrock service for embeddings
-                embedding = self._bedrock_service.get_embedding(text)
-            else:
-                # Fallback: recreate bedrock service
-                from .bedrock_service import BedrockEmbeddingService
-                object.__setattr__(self, '_bedrock_service', BedrockEmbeddingService())
-                embedding = self._bedrock_service.get_embedding(text)
+            # Use endpoint service for embeddings (only supported approach)
+            embedding = self._endpoint_service.get_embedding(text)
             
             if not embedding or len(embedding) == 0:
                 logger.warning("Empty embedding returned from service")
@@ -133,26 +106,18 @@ class CustomBedrockEmbedding(BaseEmbedding):
 class CustomBedrockLLM(LLM):
     """Custom LLM wrapper for inference profile ARNs and endpoint services."""
     
-    def __init__(self, bedrock_service=None, endpoint_service=None, **kwargs):
-        # Store the service before calling super() to avoid Pydantic validation issues
-        if bedrock_service is None and endpoint_service is None:
-            raise ValueError("Either bedrock_service or endpoint_service must be provided")
+    def __init__(self, endpoint_service=None, **kwargs):
+        # Store the endpoint service before calling super() to avoid Pydantic validation issues
+        if endpoint_service is None:
+            raise ValueError("endpoint_service must be provided")
         
-        if bedrock_service:
-            self._bedrock_service = bedrock_service
-            self._endpoint_service = None
-        else:
-            self._bedrock_service = None
-            self._endpoint_service = endpoint_service
+        self._endpoint_service = endpoint_service
         
         super().__init__(**kwargs)
     
     def complete(self, prompt: str, **kwargs) -> str:
         """Complete a prompt."""
-        if self._endpoint_service:
-            return self._endpoint_service.generate_text(prompt, **kwargs)
-        else:
-            return self._bedrock_service.generate_text(prompt, **kwargs)
+        return self._endpoint_service.generate_response(prompt, **kwargs)
     
     def stream_complete(self, prompt: str, **kwargs):
         """Stream complete - not implemented for simplicity."""

@@ -15,7 +15,6 @@ class LLMProviderFactory:
     """Factory for creating and managing LLM providers."""
     
     def __init__(self):
-        self._bedrock_service = None
         self._custom_service = None
         self._current_provider = None
         
