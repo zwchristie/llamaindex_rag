@@ -9,6 +9,7 @@ import json
 
 from .vector_service import LlamaIndexVectorService
 from .llm_service import LLMService
+from .view_metadata_service import ViewMetadataService
 from ..models.simple_models import DocumentType, ViewContext, DomainContext
 
 logger = structlog.get_logger(__name__)
@@ -20,7 +21,8 @@ class ViewSelectionService:
     def __init__(
         self,
         vector_service: LlamaIndexVectorService,
-        llm_service: LLMService
+        llm_service: LLMService,
+        view_metadata_service: Optional[ViewMetadataService] = None
     ):
         """
         Initialize view selection service.
@@ -28,37 +30,24 @@ class ViewSelectionService:
         Args:
             vector_service: Vector search service for view retrieval
             llm_service: LLM service for intelligent view selection
+            view_metadata_service: Service for loading view metadata from MongoDB
         """
         self.vector_service = vector_service
         self.llm_service = llm_service
+        self.view_metadata_service = view_metadata_service or ViewMetadataService()
         
-        # Assumed view-to-domain mappings based on user's business entities
-        # These will be auto-generated from actual view metadata when available
-        self.view_domain_mappings = {
-            # Core Views
-            "V_USER_METRICS": ["USER", "SYSTEM"],
-            "V_DEAL_SUMMARY": ["DEAL", "ISSUER"],
-            "V_TRANCHE_METRICS": ["TRANCHE", "DEAL"],
-            "V_TRANCHE_PRICING": ["TRANCHE", "DEAL"],
-            "V_ORDER_ALLOCATION": ["ORDER", "INVESTOR", "TRANCHE"],
-            "V_SYNDICATE_PARTICIPATION": ["SYNDICATE", "TRANCHE"],
-            "V_INVESTOR_PORTFOLIO": ["INVESTOR", "ORDER"],
-            "V_TRADE_EXECUTION": ["TRADES", "ORDER", "INVESTOR"],
-            
-            # Supporting Views (often span multiple domains)
-            "V_TRANCHE_INSTRUMENTS": ["TRANCHE", "DEAL", "SYNDICATE"],
-            "V_ORDER_DETAILS": ["ORDER", "INVESTOR", "TRANCHE"],
-            "V_ALLOCATION_SUMMARY": ["ORDER", "SYNDICATE", "INVESTOR"],
-            "V_TRADE_SETTLEMENT": ["TRADES", "ORDER", "SYNDICATE"]
-        }
+        # Load view domain mappings from MongoDB (with fallback to hardcoded)
+        self.view_domain_mappings = self._load_view_domain_mappings()
         
-        # View dependencies (supporting views that enhance core views)
-        self.view_dependencies = {
-            "V_TRANCHE_METRICS": ["V_TRANCHE_INSTRUMENTS", "V_TRANCHE_PRICING"],
-            "V_ORDER_ALLOCATION": ["V_ORDER_DETAILS", "V_ALLOCATION_SUMMARY"],
-            "V_TRADE_EXECUTION": ["V_TRADE_SETTLEMENT", "V_ORDER_DETAILS"],
-            "V_DEAL_SUMMARY": ["V_TRANCHE_METRICS", "V_SYNDICATE_PARTICIPATION"]
-        }
+        # Load view priorities for ranking
+        self.view_priorities = self._load_view_priorities()
+        
+        # Load view dependencies from MongoDB (with fallback to hardcoded)
+        self.view_dependencies = self._load_view_dependencies()
+        
+        logger.info("ViewSelectionService initialized", 
+                   mappings_count=len(self.view_domain_mappings),
+                   dependencies_count=len(self.view_dependencies))
     
     def select_domain_views(
         self, 
@@ -275,17 +264,26 @@ Core Views: {', '.join(core_views)}
 Supporting Views: {', '.join(supporting_views)}
 
 View Descriptions:
+- V_TERMSHEET: Primary deal and tranche master data (core business entities)
 - Views with "METRICS" or "SUMMARY": High-level aggregated data
 - Views with "ALLOCATION": Order and investment allocation data  
 - Views with "PRICING": Financial pricing and yield information
 - Views with "DETAILS" or "INSTRUMENTS": Detailed supporting data
 - Views with "EXECUTION" or "SETTLEMENT": Trade execution data
+- V_DEALER_TRADES: Trading execution and dealer activity data
+
+View Priority Guidelines:
+- For deal/tranche structural queries: prioritize V_TERMSHEET over V_DEALER_TRADES
+- V_TERMSHEET contains core deal and tranche master data and relationships
+- V_DEALER_TRADES contains trading execution details, use for trading analysis only
+- For queries about "deal names", "tranche information", "announced status": prefer V_TERMSHEET
 
 Instructions:
 1. Select 3-5 most relevant CORE views that directly answer the query
 2. Select 2-5 SUPPORTING views that provide necessary detail
-3. Prioritize views that match the business context
-4. Avoid views that don't contribute to answering the query
+3. Prioritize views that match the business context and query intent
+4. For deal/tranche queries, prefer V_TERMSHEET over trading-focused views
+5. Avoid views that don't contribute to answering the query
 
 Return as JSON:
 {{"core": ["VIEW1", "VIEW2"], "supporting": ["VIEW3", "VIEW4"]}}
@@ -401,3 +399,94 @@ Refined Selection:"""
     def get_view_dependencies(self) -> Dict[str, List[str]]:
         """Get current view dependency mappings."""
         return self.view_dependencies
+    
+    def _load_view_domain_mappings(self) -> Dict[str, List[str]]:
+        """Load view domain mappings from MongoDB with fallback."""
+        try:
+            mappings = self.view_metadata_service.get_view_domain_mappings()
+            if mappings:
+                logger.info("Loaded view domain mappings from MongoDB", count=len(mappings))
+                return mappings
+            else:
+                logger.warning("No mappings found in MongoDB, using fallback")
+                return self._get_fallback_mappings()
+        except Exception as e:
+            logger.error("Failed to load view domain mappings", error=str(e))
+            return self._get_fallback_mappings()
+    
+    def _load_view_dependencies(self) -> Dict[str, List[str]]:
+        """Load view dependencies from MongoDB with fallback."""
+        try:
+            dependencies = self.view_metadata_service.get_view_dependencies()
+            if dependencies:
+                logger.info("Loaded view dependencies from MongoDB", count=len(dependencies))
+                return dependencies
+            else:
+                logger.info("No dependencies found in MongoDB, using fallback")
+                return self._get_fallback_dependencies()
+        except Exception as e:
+            logger.error("Failed to load view dependencies", error=str(e))
+            return self._get_fallback_dependencies()
+    
+    def _load_view_priorities(self) -> Dict[str, int]:
+        """Load view priorities from MongoDB."""
+        try:
+            priorities = self.view_metadata_service.get_view_priorities()
+            logger.info("Loaded view priorities from MongoDB", count=len(priorities))
+            return priorities
+        except Exception as e:
+            logger.error("Failed to load view priorities", error=str(e))
+            return {}
+    
+    def _get_fallback_mappings(self) -> Dict[str, List[str]]:
+        """Get hardcoded fallback mappings."""
+        return {
+            # Core Views - Primary business entity views
+            "V_USER_METRICS": ["USER", "SYSTEM"],
+            "V_DEAL_SUMMARY": ["DEAL", "ISSUER"],
+            "V_TERMSHEET": ["DEAL", "TRANCHE", "ISSUER"],  # Primary deal/tranche master data
+            "V_TRANCHE_METRICS": ["TRANCHE", "DEAL"],
+            "V_TRANCHE_PRICING": ["TRANCHE", "DEAL"],
+            "V_ORDER_ALLOCATION": ["ORDER", "INVESTOR", "TRANCHE"],
+            "V_SYNDICATE_PARTICIPATION": ["SYNDICATE", "TRANCHE"],
+            "V_INVESTOR_PORTFOLIO": ["INVESTOR", "ORDER"],
+            "V_TRADE_EXECUTION": ["TRADES", "ORDER", "INVESTOR"],
+            
+            # Supporting Views (often span multiple domains)
+            "V_TRANCHE_INSTRUMENTS": ["TRANCHE", "DEAL", "SYNDICATE"],
+            "V_ORDER_DETAILS": ["ORDER", "INVESTOR", "TRANCHE"],
+            "V_ALLOCATION_SUMMARY": ["ORDER", "SYNDICATE", "INVESTOR"],
+            "V_TRADE_SETTLEMENT": ["TRADES", "ORDER", "SYNDICATE"],
+            "V_DEALER_TRADES": ["TRADES", "ORDER"]  # Trading execution data
+        }
+    
+    def _get_fallback_dependencies(self) -> Dict[str, List[str]]:
+        """Get hardcoded fallback dependencies."""
+        return {
+            "V_TRANCHE_METRICS": ["V_TRANCHE_INSTRUMENTS", "V_TRANCHE_PRICING"],
+            "V_ORDER_ALLOCATION": ["V_ORDER_DETAILS", "V_ALLOCATION_SUMMARY"],
+            "V_TRADE_EXECUTION": ["V_TRADE_SETTLEMENT", "V_ORDER_DETAILS"],
+            "V_DEAL_SUMMARY": ["V_TRANCHE_METRICS", "V_SYNDICATE_PARTICIPATION"]
+        }
+    
+    def refresh_metadata(self):
+        """Refresh view metadata from MongoDB."""
+        logger.info("Refreshing view metadata from MongoDB")
+        self.view_metadata_service.refresh_cache()
+        self.view_domain_mappings = self._load_view_domain_mappings()
+        self.view_dependencies = self._load_view_dependencies()
+        self.view_priorities = self._load_view_priorities()
+        logger.info("View metadata refreshed", 
+                   mappings=len(self.view_domain_mappings),
+                   dependencies=len(self.view_dependencies))
+    
+    def update_view_usage_stats(self, view_name: str, success: bool, confidence: float = None,
+                               response_time_ms: float = None, query: str = None):
+        """Update usage statistics for a view."""
+        self.view_metadata_service.update_usage_stats(
+            view_name=view_name,
+            success=success, 
+            confidence=confidence,
+            response_time_ms=response_time_ms,
+            query=query
+        )

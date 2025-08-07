@@ -686,10 +686,17 @@ GUIDELINES:
             
             # Process each tier of hierarchical context
             for tier in hierarchical_context.tiers:
+                # Map tier type to proper entity information
+                entity_type = "domain_context" if "domain" in tier.name.lower() else "view_context"
+                entity_name = tier.name.replace("_", " ").title()
+                
                 tier_content = {
                     "content": tier.content,
                     "metadata": {
                         "tier_name": tier.name,
+                        "entity_type": entity_type,
+                        "view_name": entity_name if "view" in entity_type else None,
+                        "relationship_name": entity_name if "domain" in entity_type else None,
                         "tokens_estimate": tier.tokens_estimate,
                         "confidence": tier.confidence
                     },
@@ -797,6 +804,10 @@ Please fix the SQL query to address this error.
             
             # Build the full prompt
             context_text = '\n'.join(context_parts)
+            
+            # Get SQL rules and examples from content processor via vector service
+            sql_rules = self.vector_service.content_processor.get_sql_rules()
+            sql_examples = self.vector_service.content_processor.get_sql_examples()
             
             logger.info("Hierarchical context built",
                        selected_views=len(hierarchical_context.get_selected_views()),
