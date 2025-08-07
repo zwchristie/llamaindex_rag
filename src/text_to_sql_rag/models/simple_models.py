@@ -244,7 +244,7 @@ class DomainContext(BaseModel):
     enhanced_query: str = Field(..., description="Query enhanced with domain terminology")
     business_context: str = Field(..., description="Relevant business context")
     confidence: float = Field(..., description="Confidence in domain identification")
-    domain_relationships: Dict[str, List[str]] = Field(default_factory=dict, description="Domain hierarchy context")
+    domain_relationships: Dict[str, Dict[str, Any]] = Field(default_factory=dict, description="Domain hierarchy context")
 
 
 class ViewContext(BaseModel):
