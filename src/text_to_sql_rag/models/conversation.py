@@ -28,6 +28,7 @@ class ConversationStatus(str, Enum):
 class WorkflowStep(str, Enum):
     """Workflow steps in the agent."""
     CLASSIFY_REQUEST = "classify_request"
+    BUILD_CONTEXT = "build_context"
     GET_METADATA = "get_metadata"
     GET_LOOKUP_DATA = "get_lookup_data"
     ASSESS_CONFIDENCE = "assess_confidence"
@@ -109,6 +110,7 @@ class WorkflowState(BaseModel):
     
     # Context for resumption
     intermediate_data: Dict[str, Any] = Field(default_factory=dict)
+    hierarchical_context: Optional[Any] = None  # HierarchicalContext object from context service
     
     def serialize(self) -> Dict[str, Any]:
         """Serialize workflow state for storage."""
@@ -243,6 +245,14 @@ class ConversationState(BaseModel):
     @lookup_context.setter
     def lookup_context(self, value: List[Dict[str, Any]]):
         self.workflow_state.lookup_context = value
+    
+    @property
+    def hierarchical_context(self) -> Optional[Any]:
+        return self.workflow_state.hierarchical_context
+    
+    @hierarchical_context.setter
+    def hierarchical_context(self, value: Optional[Any]):
+        self.workflow_state.hierarchical_context = value
     
     @property
     def sources(self) -> List[str]:

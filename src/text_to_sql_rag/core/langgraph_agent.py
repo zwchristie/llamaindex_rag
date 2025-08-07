@@ -100,6 +100,7 @@ class TextToSQLAgent:
         
         # Add nodes (hierarchical context - removed old metadata nodes)
         workflow.add_node("classify_request", self._classify_request_node)
+        workflow.add_node("build_context", self._build_context_node)
         workflow.add_node("assess_confidence", self._assess_confidence_node)
         workflow.add_node("request_clarification", self._request_clarification_node)
         workflow.add_node("generate_sql", self._generate_sql_node)
@@ -116,11 +117,14 @@ class TextToSQLAgent:
             "classify_request",
             self._route_by_request_type,
             {
-                "assess_confidence": "assess_confidence",  # Skip to confidence assessment
+                "build_context": "build_context",  # Build context first
                 "describe_sql": "describe_sql",
                 "execute_sql": "execute_sql"
             }
         )
+        
+        # From build_context, go to assess_confidence
+        workflow.add_edge("build_context", "assess_confidence")
         
         # From assess_confidence, either clarify or generate SQL
         workflow.add_conditional_edges(
@@ -658,6 +662,75 @@ GUIDELINES:
                    workflow_paused=True)
         return state
     
+    def _build_context_node(self, state: ConversationState) -> ConversationState:
+        """Build hierarchical context for the request using the context service."""
+        logger.info("=== WORKFLOW NODE: BUILD CONTEXT ===")
+        logger.info("Building hierarchical context for confidence assessment", 
+                   request=state.current_request)
+        
+        state.workflow_step = WorkflowStep.BUILD_CONTEXT
+        
+        try:
+            # Build hierarchical context using the new service
+            logger.info("Building hierarchical context...")
+            hierarchical_context = self.hierarchical_context_service.build_context(
+                query=state.current_request,
+                debug=True
+            )
+            
+            # Extract context into state for confidence assessment
+            # Convert hierarchical context to the format expected by confidence assessment
+            state.schema_context = []
+            state.example_context = []
+            state.lookup_context = []
+            
+            # Process each tier of hierarchical context
+            for tier in hierarchical_context.tiers:
+                tier_content = {
+                    "content": tier.content,
+                    "metadata": {
+                        "tier_name": tier.name,
+                        "tokens_estimate": tier.tokens_estimate,
+                        "confidence": tier.confidence
+                    },
+                    "sources": tier.sources
+                }
+                
+                # Categorize tiers based on their name/type
+                tier_name = tier.name.lower()
+                
+                if any(keyword in tier_name for keyword in ['domain', 'ddl', 'view']):
+                    state.schema_context.append(tier_content)
+                elif any(keyword in tier_name for keyword in ['report', 'pattern']):
+                    state.example_context.append(tier_content)
+                elif any(keyword in tier_name for keyword in ['lookup']):
+                    state.lookup_context.append(tier_content)
+                else:
+                    # Default to schema context for unknown types
+                    state.schema_context.append(tier_content)
+            
+            # Store hierarchical context for later use in SQL generation
+            state.hierarchical_context = hierarchical_context
+            
+            logger.info("Context building completed",
+                       schema_docs=len(state.schema_context),
+                       example_docs=len(state.example_context),
+                       lookup_docs=len(state.lookup_context),
+                       selected_views=len(hierarchical_context.get_selected_views()),
+                       retrieval_time_ms=hierarchical_context.retrieval_time_ms)
+            
+        except Exception as e:
+            logger.error("Context building failed", 
+                        error=str(e), 
+                        request_id=state.request_id)
+            # Set empty contexts so workflow can continue
+            state.schema_context = []
+            state.example_context = []
+            state.lookup_context = []
+            state.hierarchical_context = None
+        
+        return state
+    
     def _generate_sql_node(self, state: ConversationState) -> ConversationState:
         """Generate SQL using hierarchical context service for efficient metadata retrieval."""
         logger.info("=== WORKFLOW NODE: GENERATE SQL (HIERARCHICAL) ===")
@@ -668,16 +741,25 @@ GUIDELINES:
         state.workflow_step = WorkflowStep.GENERATE_SQL
         
         try:
-            # Build hierarchical context using the new service
-            logger.info("Building hierarchical context...")
-            hierarchical_context = self.hierarchical_context_service.build_context(
-                query=state.current_request,
-                include_advanced_rules=state.retry_count > 0,  # Include rules if retrying
-                debug=True
-            )
-            
-            # Store context info in state for debugging
-            state.schema_context = [{"content": f"Selected tables: {', '.join(hierarchical_context.selected_tables)}"}]
+            # Use existing hierarchical context if available, otherwise build new one
+            if state.hierarchical_context is not None:
+                logger.info("Using existing hierarchical context from build_context step")
+                hierarchical_context = state.hierarchical_context
+                
+                # For retries, we may want to rebuild context
+                if state.retry_count > 0:
+                    logger.info("Rebuilding context for retry...")
+                    hierarchical_context = self.hierarchical_context_service.build_context(
+                        query=state.current_request,
+                        debug=True
+                    )
+            else:
+                # Fallback: build context if not available (shouldn't happen with new workflow)
+                logger.warning("No hierarchical context found, building fresh context")
+                hierarchical_context = self.hierarchical_context_service.build_context(
+                    query=state.current_request,
+                    debug=True
+                )
             
             # Build context prompt with hierarchical tiers
             context_parts = []
@@ -717,7 +799,7 @@ Please fix the SQL query to address this error.
             context_text = '\n'.join(context_parts)
             
             logger.info("Hierarchical context built",
-                       selected_tables=len(hierarchical_context.selected_tables),
+                       selected_views=len(hierarchical_context.get_selected_views()),
                        tiers_count=len(hierarchical_context.tiers),
                        total_tokens=hierarchical_context.total_tokens,
                        retrieval_time_ms=hierarchical_context.retrieval_time_ms)
@@ -990,8 +1072,8 @@ Format your response clearly and make it understandable for both technical and n
             return "execute_sql"
         else:
             # For GENERATE_NEW, EDIT_PREVIOUS, FOLLOW_UP, CLARIFICATION
-            # Skip to confidence assessment - hierarchical context happens in generate_sql
-            return "assess_confidence"
+            # Build context first before confidence assessment
+            return "build_context"
     
     def _should_request_clarification(self, state: ConversationState) -> str:
         """Determine if we should request clarification."""
