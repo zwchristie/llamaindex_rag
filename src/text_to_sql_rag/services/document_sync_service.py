@@ -155,13 +155,22 @@ class DocumentSyncService:
             metadata = self._parse_document_content(content, document_type, catalog, schema_name)
             
             # Upsert to MongoDB
+            # Handle both Pydantic models and plain dictionaries
+            if metadata:
+                if hasattr(metadata, 'model_dump'):
+                    metadata_dict = metadata.model_dump()
+                else:
+                    metadata_dict = metadata
+            else:
+                metadata_dict = {}
+                
             success = self.mongodb_service.upsert_document(
                 file_path=relative_path,
                 content=content,
                 document_type=document_type.value,
                 catalog=catalog,
                 schema_name=schema_name,
-                metadata=metadata.model_dump() if metadata else {}
+                metadata=metadata_dict
             )
             
             if success:
