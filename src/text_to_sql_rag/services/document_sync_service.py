@@ -16,7 +16,7 @@ from ..models.simple_models import (
     SupportingViewMetadata, ReportMetadata
 )
 from ..models.meta_document import (
-    DocumentSyncResult, SyncSummary
+    DocumentSyncResult, SyncSummary, SchemaMetadata
 )
 from ..utils.content_processor import ContentProcessor
 
@@ -161,7 +161,7 @@ class DocumentSyncService:
                 document_type=document_type.value,
                 catalog=catalog,
                 schema_name=schema_name,
-                metadata=metadata.dict() if metadata else {}
+                metadata=metadata.model_dump() if metadata else {}
             )
             
             if success:

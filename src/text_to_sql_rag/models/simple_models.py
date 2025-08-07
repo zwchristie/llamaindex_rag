@@ -11,6 +11,8 @@ class DocumentType(str, Enum):
     
     # Tier 1: Business Intelligence (Domain-First)
     BUSINESS_DOMAIN = "business_domain"      # Entity hierarchy & relationships
+    BUSINESS_DESC = "business_desc"          # Business descriptions
+    BUSINESS_RULES = "business_rules"        # Business rules and logic
     
     # Tier 2: Data Views (Domain-Filtered)
     CORE_VIEW = "core_view"                  # Primary business objects

@@ -5,7 +5,7 @@ import structlog
 
 from ..config.settings import settings
 # Direct AWS Bedrock service removed - using only endpoint approach
-from .bedrock_endpoint_service import BedrockEndpointLLMWrapper
+from .bedrock_endpoint_service import BedrockEndpointLLMWrapper, BedrockEndpointService
 from .custom_llm_service import CustomLLMService
 
 logger = structlog.get_logger(__name__)
@@ -62,7 +62,8 @@ class LLMProviderFactory:
                 raise ValueError("Bedrock endpoint URL not configured. Set BEDROCK_ENDPOINT_URL in settings.")
             
             model_id = getattr(settings.aws, 'llm_model', 'us.anthropic.claude-3-haiku-20240307-v1:0')
-            self._bedrock_endpoint_service = BedrockEndpointLLMWrapper(endpoint_url, model_id)
+            endpoint_service = BedrockEndpointService(endpoint_url)
+            self._bedrock_endpoint_service = BedrockEndpointLLMWrapper(endpoint_service, model_id)
         return self._bedrock_endpoint_service
     
     def _get_custom_service(self) -> CustomLLMService:

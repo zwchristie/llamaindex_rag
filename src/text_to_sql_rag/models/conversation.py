@@ -112,7 +112,7 @@ class WorkflowState(BaseModel):
     
     def serialize(self) -> Dict[str, Any]:
         """Serialize workflow state for storage."""
-        return self.dict()
+        return self.model_dump()
     
     @classmethod
     def deserialize(cls, data: Dict[str, Any]) -> "WorkflowState":
