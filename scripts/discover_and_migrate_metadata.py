@@ -962,6 +962,25 @@ def main():
     print(f"  📄 Views: {args.views_file}")
     print("  🏗️  Business Domains: Built-in definitions")
     print()
+    print("🔧 Testing MongoDB connection first...")
+    
+    # Test MongoDB connection before proceeding
+    try:
+        from text_to_sql_rag.config.settings import settings
+        from pymongo import MongoClient
+        
+        client = MongoClient(settings.mongodb.url)
+        client.admin.command('ismaster')
+        db = client[settings.mongodb.database]
+        print(f"✅ Connected to MongoDB: {settings.mongodb.url}")
+        print(f"✅ Database: {settings.mongodb.database}")
+        client.close()
+    except Exception as e:
+        print(f"❌ MongoDB connection failed: {e}")
+        print("Please check your .env file and ensure MongoDB is running.")
+        return
+    
+    print()
     
     if not args.dry_run:
         response = input("This will CLEAN MongoDB and rebuild from discovered data. Continue? (y/N): ")

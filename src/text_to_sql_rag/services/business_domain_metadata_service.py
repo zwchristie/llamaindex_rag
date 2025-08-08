@@ -26,8 +26,8 @@ class BusinessDomainMetadataService:
     
     def __init__(self, mongo_client: Optional[MongoClient] = None):
         """Initialize business domain metadata service."""
-        self.mongo_client = mongo_client or MongoClient(settings.mongodb.connection_string)
-        self.db = self.mongo_client[settings.mongodb.database_name]
+        self.mongo_client = mongo_client or MongoClient(settings.mongodb.url)
+        self.db = self.mongo_client[settings.mongodb.database]
         
         # Collections
         self.domains_collection = self.db.business_domains

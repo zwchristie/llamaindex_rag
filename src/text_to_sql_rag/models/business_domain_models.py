@@ -31,6 +31,7 @@ class BusinessDomainDefinition(BaseModel):
     # Metadata
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_by: str = Field("system", description="Who created this domain definition")
     is_active: bool = Field(True, description="Whether this domain is active")
     
     class Config:

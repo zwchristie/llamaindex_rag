@@ -31,8 +31,8 @@ class ViewMetadataService:
         Args:
             mongo_client: MongoDB client instance. If None, creates new client.
         """
-        self.mongo_client = mongo_client or MongoClient(settings.mongodb.connection_string)
-        self.db = self.mongo_client[settings.mongodb.database_name]
+        self.mongo_client = mongo_client or MongoClient(settings.mongodb.url)
+        self.db = self.mongo_client[settings.mongodb.database]
         
         # Collections
         self.view_mappings_collection = self.db.view_domain_mappings
