@@ -921,7 +921,7 @@ class DynamicMetadataDiscoverer:
         
         # List discovered views by type
         core_views = [name for name, domains in mappings.items() 
-                     if any(doc.view_type == "core" for doc in 
+                     if any(doc and doc.get("view_type") == "core" for doc in 
                            [self.metadata_service.view_mappings_collection.find_one({"view_name": name})]
                            if doc)]
         
