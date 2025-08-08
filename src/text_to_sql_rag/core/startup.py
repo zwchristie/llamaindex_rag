@@ -8,7 +8,6 @@ import structlog
 
 from ..services.mongodb_service import MongoDBService
 from ..services.vector_service import LlamaIndexVectorService
-from ..services.document_sync_service import DocumentSyncService
 from ..services.llm_provider_factory import llm_factory
 from ..config.settings import settings
 
@@ -26,7 +25,7 @@ class ApplicationStartup:
     async def initialize_services(self) -> bool:
         """Initialize all required services."""
         services_initialized = 0
-        total_services = 4  # MongoDB, Vector Store, LLM Provider, Sync Service
+        total_services = 3  # MongoDB, Vector Store, LLM Provider
         
         logger.info("Initializing application services")
         
@@ -76,22 +75,9 @@ class ApplicationStartup:
             logger.error("Failed to initialize LLM provider", error=str(e))
             logger.warning("LLM functionality may be limited")
         
-        # Initialize document sync service (depends on MongoDB and Vector store)
-        try:
-            if self.mongodb_service or self.vector_service:
-                meta_docs_path = settings.app.meta_documents_path
-                self.sync_service = DocumentSyncService(
-                    mongodb_service=self.mongodb_service,
-                    vector_service=self.vector_service,
-                    meta_documents_path=meta_docs_path
-                )
-                logger.info("Document sync service initialized successfully")
-                services_initialized += 1
-            else:
-                logger.warning("Skipping document sync service - no storage backends available")
-        except Exception as e:
-            logger.error("Failed to initialize document sync service", error=str(e))
-            self.sync_service = None
+        # Document sync service is no longer needed - we sync directly from MongoDB to Vector Store
+        self.sync_service = None
+        logger.info("Using direct MongoDB to Vector Store synchronization")
         
         logger.info(f"Service initialization completed: {services_initialized}/{total_services} services initialized")
         
@@ -99,56 +85,82 @@ class ApplicationStartup:
         return True
     
     async def sync_documents(self) -> bool:
-        """Perform document synchronization on startup."""
-        if self.sync_service is None:
-            logger.warning("Document sync service not available - skipping synchronization")
-            return True  # Not an error, just no sync service available
+        """Perform document synchronization on startup - MongoDB to Vector Store."""
+        if not self.mongodb_service or not self.vector_service:
+            logger.warning("MongoDB or Vector service not available - skipping document embedding")
+            return True  # Not an error, just no services available
         
         try:
-            logger.info("Starting document synchronization")
+            logger.info("Starting MongoDB to Vector Store synchronization")
             
-            # Check if meta_documents directory exists and has files
-            meta_docs_path = Path(self.sync_service.meta_documents_path)
-            if not meta_docs_path.exists():
-                logger.warning(
-                    "Meta documents directory does not exist", 
-                    path=str(meta_docs_path)
-                )
-                return True  # Not an error, just no documents to sync
+            # Get all documents from MongoDB
+            mongo_docs = self.mongodb_service.get_all_documents()
             
-            # Count files to sync
-            files_to_sync = [
-                f for f in meta_docs_path.rglob("*")
-                if f.is_file() and f.suffix.lower() in ['.json', '.txt']
-                and not f.name.lower().startswith('readme')
-            ]
-            
-            if not files_to_sync:
-                logger.info("No metadata documents found to synchronize")
+            if not mongo_docs:
+                logger.info("No documents found in MongoDB to embed")
                 return True
             
-            logger.info(f"Found {len(files_to_sync)} metadata documents to synchronize")
+            logger.info(f"Found {len(mongo_docs)} documents in MongoDB to process")
             
-            # Perform synchronization
-            sync_summary = self.sync_service.sync_all_documents()
+            # Embed documents that need it
+            embedded_count = 0
+            error_count = 0
             
-            # Log synchronization results
+            for mongo_doc in mongo_docs:
+                try:
+                    document_id = mongo_doc.get("schema_name", mongo_doc.get("file_path", "unknown"))
+                    
+                    # Check if document needs embedding (not already in vector store)
+                    doc_info = self.vector_service.get_document_info(document_id)
+                    
+                    # Only embed if document is not found or content has changed
+                    mongo_content_hash = mongo_doc.get("content_hash")
+                    vector_content_hash = doc_info.get("metadata", {}).get("content_hash")
+                    
+                    if (doc_info.get("status") == "not_found" or 
+                        mongo_content_hash != vector_content_hash):
+                        
+                        logger.info(f"Embedding document: {document_id}")
+                        
+                        # Prepare metadata for vector store
+                        vector_metadata = {
+                            **mongo_doc.get("metadata", {}),
+                            "content_hash": mongo_content_hash,
+                            "updated_at": mongo_doc.get("updated_at"),
+                            "file_path": mongo_doc.get("file_path"),
+                            "document_type": mongo_doc.get("document_type"),
+                            "catalog": mongo_doc.get("catalog"),
+                            "schema_name": mongo_doc.get("schema_name")
+                        }
+                        
+                        # Add document to vector store
+                        success = self.vector_service.add_document(
+                            document_id=document_id,
+                            content=mongo_doc["content"],
+                            metadata=vector_metadata,
+                            document_type=mongo_doc["document_type"]
+                        )
+                        
+                        if success:
+                            embedded_count += 1
+                        else:
+                            error_count += 1
+                            logger.error(f"Failed to embed document: {document_id}")
+                    else:
+                        logger.debug(f"Document up to date: {document_id}")
+                        
+                except Exception as e:
+                    error_count += 1
+                    logger.error(f"Error processing document", error=str(e))
+            
             logger.info(
-                "Document synchronization completed",
-                total_files=sync_summary.total_files_processed,
-                duration=sync_summary.duration_seconds,
-                mongodb_ops=sync_summary.mongodb_operations,
-                vector_ops=sync_summary.vector_store_operations,
-                errors_count=len(sync_summary.errors)
+                "MongoDB to Vector Store synchronization completed",
+                total_documents=len(mongo_docs),
+                embedded=embedded_count,
+                errors=error_count
             )
             
-            # Log errors if any
-            if sync_summary.errors:
-                for error in sync_summary.errors:
-                    logger.error("Sync error", error=error)
-                return False
-            
-            return True
+            return error_count == 0
             
         except Exception as e:
             logger.error("Document synchronization failed", error=str(e))
@@ -168,22 +180,27 @@ class ApplicationStartup:
             if not sync_ok:
                 logger.warning("Document synchronization had errors - continuing anyway")
             
-            # Get and log sync status if service is available
-            if self.sync_service:
-                try:
-                    status = self.sync_service.get_sync_status()
-                    logger.info("Startup sync status", status=status)
-                except Exception as e:
-                    logger.warning("Failed to get sync status", error=str(e))
-            
             # Log service availability summary
             available_services = []
             if self.mongodb_service and self.mongodb_service.is_connected():
                 available_services.append("MongoDB")
             if self.vector_service:
                 available_services.append("Vector Store")
-            if self.sync_service:
-                available_services.append("Document Sync")
+            
+            # Get status from individual services
+            if self.mongodb_service:
+                try:
+                    mongo_status = self.mongodb_service.health_check()
+                    logger.info("MongoDB status", status=mongo_status)
+                except Exception as e:
+                    logger.warning("Failed to get MongoDB status", error=str(e))
+            
+            if self.vector_service:
+                try:
+                    vector_status = self.vector_service.get_index_stats()
+                    logger.info("Vector Store status", status=vector_status)
+                except Exception as e:
+                    logger.warning("Failed to get Vector Store status", error=str(e))
             
             logger.info("Application startup completed", available_services=available_services)
             return True
@@ -196,7 +213,7 @@ class ApplicationStartup:
     
     def get_services(self) -> tuple:
         """Get initialized services."""
-        return self.mongodb_service, self.vector_service, self.sync_service
+        return self.mongodb_service, self.vector_service, None
 
 
 # Global startup instance

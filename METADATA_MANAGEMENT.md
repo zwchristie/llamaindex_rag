@@ -254,13 +254,27 @@ for view_name, stat in stats.items():
 ## System Architecture
 
 ```
-Query → Business Domain Detection → View Selection → Context Building → SQL Generation
-         ↓                        ↓                 ↓                    ↓
-    Domain Terminology      View Mappings      View Dependencies    Query Patterns  
-    Detection Rules         Priorities         Classifications      Usage Stats
-         ↓                        ↓                 ↓                    ↓
-                            MongoDB Collections (Single Source of Truth)
+Application Startup → MongoDB → Vector Store → Hierarchical Query Processing
+         ↓              ↓            ↓                      ↓
+    Load Metadata   Document     Embedding     Query → Domain Detection → View Selection → SQL
+         ↓          Storage      Process              ↓                    ↓              ↓
+    Domain Rules  Versioning   Content Hash    Domain Context    View Context    SQL Context
+         ↓              ↓            ↓                      ↓                    ↓              ↓
+                  MongoDB Collections (Single Source of Truth)        Vector Store (Search)
 ```
+
+### Key Changes in Architecture
+
+**Before (File-Based):**
+- Application reads local JSON/text files on startup
+- Files synced to MongoDB and Vector Store
+- Hierarchical processing uses vector store
+
+**After (MongoDB-First):**
+- MongoDB is populated using `discover_and_migrate_metadata.py`
+- Application reads directly from MongoDB on startup
+- Documents embedded to Vector Store from MongoDB
+- Hierarchical processing maintained with MongoDB metadata
 
 ## Best Practices
 
@@ -277,16 +291,70 @@ Query → Business Domain Detection → View Selection → Context Building → 
 All hardcoded fallbacks have been removed. The system will fail gracefully if MongoDB is unavailable rather than using stale hardcoded data. This ensures consistency and forces proper metadata management.
 
 ### Removed Components
-- ❌ Hardcoded view domain mappings
-- ❌ Hardcoded view dependencies  
-- ❌ Hardcoded business domain hierarchy
-- ❌ Hardcoded view classification patterns
-- ❌ Hardcoded domain detection rules
+- ❌ File-based document sync service
+- ❌ Local file dependency on startup  
+- ❌ DocumentSyncService initialization
+- ❌ Meta documents directory scanning
+- ❌ File-to-MongoDB-to-Vector sync chain
 
 ### New Components  
-- ✅ Dynamic MongoDB-based metadata loading
-- ✅ Automatic discovery from data files
-- ✅ Configurable rules and patterns
-- ✅ Usage tracking and analytics
-- ✅ Performance monitoring
-- ✅ Cache management
+- ✅ Direct MongoDB-to-Vector Store synchronization
+- ✅ MongoDB-first application startup
+- ✅ Simplified startup process (3 services instead of 4)
+- ✅ Content hash-based change detection
+- ✅ Streamlined embedding workflow
+- ✅ Better error handling for missing services
+
+## Testing and Validation
+
+Two testing scripts are available to validate the refactored system:
+
+### 1. MongoDB Document Sync Test
+```bash
+python scripts/test_mongodb_document_sync.py
+```
+
+This script validates:
+- MongoDB connection and document retrieval
+- Vector Store connection and embedding
+- Document synchronization process
+- Content hash-based change detection
+- Full startup simulation
+
+### 2. Hierarchical Access Pattern Test  
+```bash
+python scripts/test_metadata_hierarchy.py
+```
+
+This script validates:
+- ViewMetadataService MongoDB integration
+- BusinessDomainMetadataService functionality
+- Hierarchical query processing flow
+- Metadata consistency across services
+- Performance benchmarks
+
+## Migration Steps
+
+To migrate from the old file-based system to the new MongoDB-first system:
+
+1. **Populate MongoDB** (if not already done):
+   ```bash
+   python scripts/discover_and_migrate_metadata.py
+   ```
+
+2. **Test the new system**:
+   ```bash
+   python scripts/test_mongodb_document_sync.py
+   python scripts/test_metadata_hierarchy.py
+   ```
+
+3. **Start the application** - it will now:
+   - Load metadata directly from MongoDB
+   - Embed documents from MongoDB to Vector Store
+   - Maintain hierarchical processing patterns
+   - Skip local file scanning
+
+4. **Clean up old files** (optional):
+   - Old sync service dependencies are removed
+   - Unused processing scripts are deleted
+   - Local files are no longer required for operation

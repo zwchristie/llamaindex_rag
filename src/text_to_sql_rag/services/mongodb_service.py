@@ -307,6 +307,51 @@ class MongoDBService:
                 "error": str(e)
             }
     
+    def get_all_documents(self) -> List[Dict[str, Any]]:
+        """Get all documents from MongoDB."""
+        if not self.is_connected() or self.documents_collection is None:
+            logger.warning("MongoDB not connected - cannot retrieve documents")
+            return []
+        
+        try:
+            documents = list(self.documents_collection.find({}))
+            logger.info(f"Retrieved {len(documents)} documents from MongoDB")
+            return documents
+            
+        except Exception as e:
+            logger.error("Failed to retrieve documents from MongoDB", error=str(e))
+            return []
+    
+    def get_documents_by_type(self, document_type: str) -> List[Dict[str, Any]]:
+        """Get documents by type from MongoDB."""
+        if not self.is_connected() or self.documents_collection is None:
+            logger.warning("MongoDB not connected - cannot retrieve documents")
+            return []
+        
+        try:
+            documents = list(self.documents_collection.find({"document_type": document_type}))
+            logger.info(f"Retrieved {len(documents)} documents of type {document_type}")
+            return documents
+            
+        except Exception as e:
+            logger.error(f"Failed to retrieve documents of type {document_type}", error=str(e))
+            return []
+    
+    def get_documents_by_catalog(self, catalog: str) -> List[Dict[str, Any]]:
+        """Get documents by catalog from MongoDB."""
+        if not self.is_connected() or self.documents_collection is None:
+            logger.warning("MongoDB not connected - cannot retrieve documents")
+            return []
+        
+        try:
+            documents = list(self.documents_collection.find({"catalog": catalog}))
+            logger.info(f"Retrieved {len(documents)} documents for catalog {catalog}")
+            return documents
+            
+        except Exception as e:
+            logger.error(f"Failed to retrieve documents for catalog {catalog}", error=str(e))
+            return []
+
     def close_connection(self) -> None:
         """Close MongoDB connection."""
         if self.client is not None:

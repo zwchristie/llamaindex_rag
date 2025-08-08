@@ -75,7 +75,7 @@ async def startup_event():
     success = await run_startup_tasks()
     if success:
         # Get initialized services
-        mongodb_service, vector_service, sync_service = get_initialized_services()
+        mongodb_service, vector_service, _ = get_initialized_services()
         query_execution_service = QueryExecutionService()
         sql_agent = TextToSQLAgent(vector_service, query_execution_service)
         print("Application startup completed successfully")
@@ -106,10 +106,8 @@ async def health_check():
         mongo_health = mongodb_service.health_check()
         mongodb_status = mongo_health.get("status", "disconnected")
     
-    # Add document sync status
-    sync_status = {}
-    if sync_service:
-        sync_status = sync_service.get_sync_status()
+    # Add document sync status - now handled directly in startup
+    sync_status = {"status": "direct_mongodb_sync", "method": "mongodb_to_vector_store"}
     
     return {
         "status": status,
