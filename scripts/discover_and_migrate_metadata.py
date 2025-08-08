@@ -541,7 +541,7 @@ class DynamicMetadataDiscoverer:
                 
                 self.metadata_service.view_dependencies_collection.replace_one(
                     {"primary_view": primary_view},
-                    dependency.dict(),
+                    dependency.model_dump(),
                     upsert=True
                 )
                 
@@ -576,7 +576,7 @@ class DynamicMetadataDiscoverer:
                 
                 self.metadata_service.query_patterns_collection.replace_one(
                     {"view_name": view_data["view_name"]},
-                    pattern.dict(),
+                    pattern.model_dump(),
                     upsert=True
                 )
                 
@@ -868,7 +868,7 @@ class DynamicMetadataDiscoverer:
             
             self.metadata_service.metadata_config_collection.replace_one(
                 {"config_name": "production"},
-                config.dict(),
+                config.model_dump(),
                 upsert=True
             )
             

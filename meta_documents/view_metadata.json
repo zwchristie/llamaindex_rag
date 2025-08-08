@@ -1,0 +1,17 @@
+{
+  "CORE_VIEWS": [
+    {
+      "example_query": "SELECT * FROM SYND.V_USER_METRICS",
+      "view_sql": "CREATE OR REPLACE FORCE VIEW SYND.V_USER_METRICS\n(NAME, SEQ, USER_ID, APP_NAME, ACTION, \n METADATA, CREATED_TIMESTAMP, COMPLETED_TIMESTAMP",
+      "data_returned": "NAME: Full name of the user, constructed from the first and last name. \n",
+      "use_cases": "- Monitor the performance of user actions within applications by analyzing the time taken to complete actions. \n - Analyze user activities an",
+      "view_name": "V_USER_METRICS",
+      "view_type": "CORE",
+      "domains": ["USER", "SYSTEM"],
+      "entities": ["users", "system_metrics"],
+      "patterns": ["user", "metrics", "activity", "system"],
+      "description": "This view provides a detailed overview of user metrics, integrating information about user actions within applications. It combines data fr"
+    }
+  ],
+  "SUPPORTING_VIEWS": []
+}
