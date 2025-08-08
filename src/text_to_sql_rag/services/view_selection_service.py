@@ -254,6 +254,9 @@ class ViewSelectionService:
         if len(all_views) <= 8:  # If selection is reasonable, keep as is
             return {"core": core_views, "supporting": supporting_views}
         
+        # Generate dynamic view descriptions from MongoDB metadata
+        view_descriptions = self._generate_dynamic_view_descriptions(core_views + supporting_views)
+        
         prompt = f"""Analyze the user query and refine the view selection to focus on the most relevant views.
 
 Enhanced Query: {enhanced_query}
@@ -264,25 +267,13 @@ Core Views: {', '.join(core_views)}
 Supporting Views: {', '.join(supporting_views)}
 
 View Descriptions:
-- V_TERMSHEET: Primary deal and tranche master data (core business entities)
-- Views with "METRICS" or "SUMMARY": High-level aggregated data
-- Views with "ALLOCATION": Order and investment allocation data  
-- Views with "PRICING": Financial pricing and yield information
-- Views with "DETAILS" or "INSTRUMENTS": Detailed supporting data
-- Views with "EXECUTION" or "SETTLEMENT": Trade execution data
-- V_DEALER_TRADES: Trading execution and dealer activity data
-
-View Priority Guidelines:
-- For deal/tranche structural queries: prioritize V_TERMSHEET over V_DEALER_TRADES
-- V_TERMSHEET contains core deal and tranche master data and relationships
-- V_DEALER_TRADES contains trading execution details, use for trading analysis only
-- For queries about "deal names", "tranche information", "announced status": prefer V_TERMSHEET
+{view_descriptions}
 
 Instructions:
 1. Select 3-5 most relevant CORE views that directly answer the query
 2. Select 2-5 SUPPORTING views that provide necessary detail
-3. Prioritize views that match the business context and query intent
-4. For deal/tranche queries, prefer V_TERMSHEET over trading-focused views
+3. Prioritize views based on their priority scores and domain relevance
+4. Consider view descriptions to understand each view's purpose
 5. Avoid views that don't contribute to answering the query
 
 Return as JSON:
@@ -408,11 +399,12 @@ Refined Selection:"""
                 logger.info("Loaded view domain mappings from MongoDB", count=len(mappings))
                 return mappings
             else:
-                logger.warning("No mappings found in MongoDB, using fallback")
-                return self._get_fallback_mappings()
+                logger.error("No mappings found in MongoDB! Please run the discovery script.")
+                return {}
         except Exception as e:
             logger.error("Failed to load view domain mappings", error=str(e))
-            return self._get_fallback_mappings()
+            logger.error("MongoDB connection required for view metadata. Please check connection.")
+            return {}
     
     def _load_view_dependencies(self) -> Dict[str, List[str]]:
         """Load view dependencies from MongoDB with fallback."""
@@ -422,11 +414,12 @@ Refined Selection:"""
                 logger.info("Loaded view dependencies from MongoDB", count=len(dependencies))
                 return dependencies
             else:
-                logger.info("No dependencies found in MongoDB, using fallback")
-                return self._get_fallback_dependencies()
+                logger.info("No dependencies found in MongoDB - this is normal for new installations")
+                return {}
         except Exception as e:
             logger.error("Failed to load view dependencies", error=str(e))
-            return self._get_fallback_dependencies()
+            logger.warning("View dependencies unavailable, continuing without dependencies")
+            return {}
     
     def _load_view_priorities(self) -> Dict[str, int]:
         """Load view priorities from MongoDB."""
@@ -439,35 +432,14 @@ Refined Selection:"""
             return {}
     
     def _get_fallback_mappings(self) -> Dict[str, List[str]]:
-        """Get hardcoded fallback mappings."""
-        return {
-            # Core Views - Primary business entity views
-            "V_USER_METRICS": ["USER", "SYSTEM"],
-            "V_DEAL_SUMMARY": ["DEAL", "ISSUER"],
-            "V_TERMSHEET": ["DEAL", "TRANCHE", "ISSUER"],  # Primary deal/tranche master data
-            "V_TRANCHE_METRICS": ["TRANCHE", "DEAL"],
-            "V_TRANCHE_PRICING": ["TRANCHE", "DEAL"],
-            "V_ORDER_ALLOCATION": ["ORDER", "INVESTOR", "TRANCHE"],
-            "V_SYNDICATE_PARTICIPATION": ["SYNDICATE", "TRANCHE"],
-            "V_INVESTOR_PORTFOLIO": ["INVESTOR", "ORDER"],
-            "V_TRADE_EXECUTION": ["TRADES", "ORDER", "INVESTOR"],
-            
-            # Supporting Views (often span multiple domains)
-            "V_TRANCHE_INSTRUMENTS": ["TRANCHE", "DEAL", "SYNDICATE"],
-            "V_ORDER_DETAILS": ["ORDER", "INVESTOR", "TRANCHE"],
-            "V_ALLOCATION_SUMMARY": ["ORDER", "SYNDICATE", "INVESTOR"],
-            "V_TRADE_SETTLEMENT": ["TRADES", "ORDER", "SYNDICATE"],
-            "V_DEALER_TRADES": ["TRADES", "ORDER"]  # Trading execution data
-        }
+        """Fallback mappings removed - everything comes from MongoDB."""
+        logger.error("Fallback mappings called but removed. All metadata must come from MongoDB.")
+        return {}
     
     def _get_fallback_dependencies(self) -> Dict[str, List[str]]:
-        """Get hardcoded fallback dependencies."""
-        return {
-            "V_TRANCHE_METRICS": ["V_TRANCHE_INSTRUMENTS", "V_TRANCHE_PRICING"],
-            "V_ORDER_ALLOCATION": ["V_ORDER_DETAILS", "V_ALLOCATION_SUMMARY"],
-            "V_TRADE_EXECUTION": ["V_TRADE_SETTLEMENT", "V_ORDER_DETAILS"],
-            "V_DEAL_SUMMARY": ["V_TRANCHE_METRICS", "V_SYNDICATE_PARTICIPATION"]
-        }
+        """Fallback dependencies removed - everything comes from MongoDB."""
+        logger.error("Fallback dependencies called but removed. All metadata must come from MongoDB.")
+        return {}
     
     def refresh_metadata(self):
         """Refresh view metadata from MongoDB."""
@@ -490,3 +462,39 @@ Refined Selection:"""
             response_time_ms=response_time_ms,
             query=query
         )
+    
+    def _generate_dynamic_view_descriptions(self, view_names: List[str]) -> str:
+        """Generate dynamic view descriptions from MongoDB metadata."""
+        try:
+            descriptions = []
+            
+            # Get view metadata from MongoDB
+            for view_name in view_names[:20]:  # Limit to prevent huge prompts
+                try:
+                    view_doc = self.view_metadata_service.view_mappings_collection.find_one(
+                        {"view_name": view_name}
+                    )
+                    
+                    if view_doc:
+                        description = view_doc.get("description", "No description available")
+                        view_type = view_doc.get("view_type", "unknown")
+                        priority = view_doc.get("priority_score", 5)
+                        domains = view_doc.get("business_domains", [])
+                        
+                        desc_line = f"- {view_name} ({view_type}, priority {priority}): {description}"
+                        if domains:
+                            desc_line += f" [Domains: {', '.join(domains)}]"
+                        
+                        descriptions.append(desc_line)
+                    else:
+                        descriptions.append(f"- {view_name}: No metadata available")
+                        
+                except Exception as e:
+                    logger.warning(f"Error getting metadata for {view_name}: {e}")
+                    descriptions.append(f"- {view_name}: Metadata unavailable")
+            
+            return "\n".join(descriptions)
+            
+        except Exception as e:
+            logger.error(f"Error generating dynamic view descriptions: {e}")
+            return "View descriptions unavailable - using view names only"

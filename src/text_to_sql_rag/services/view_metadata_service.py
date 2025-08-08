@@ -47,23 +47,7 @@ class ViewMetadataService:
         self._pattern_cache: TTLCache = TTLCache(maxsize=200, ttl=1800)
         self._last_cache_refresh = None
         
-        # Fallback hardcoded mappings (your existing ones)
-        self._fallback_mappings = {
-            "V_USER_METRICS": ["USER", "SYSTEM"],
-            "V_DEAL_SUMMARY": ["DEAL", "ISSUER"],
-            "V_TERMSHEET": ["DEAL", "TRANCHE", "ISSUER"],
-            "V_TRANCHE_METRICS": ["TRANCHE", "DEAL"],
-            "V_TRANCHE_PRICING": ["TRANCHE", "DEAL"],
-            "V_ORDER_ALLOCATION": ["ORDER", "INVESTOR", "TRANCHE"],
-            "V_SYNDICATE_PARTICIPATION": ["SYNDICATE", "TRANCHE"],
-            "V_INVESTOR_PORTFOLIO": ["INVESTOR", "ORDER"],
-            "V_TRADE_EXECUTION": ["TRADES", "ORDER", "INVESTOR"],
-            "V_TRANCHE_INSTRUMENTS": ["TRANCHE", "DEAL", "SYNDICATE"],
-            "V_ORDER_DETAILS": ["ORDER", "INVESTOR", "TRANCHE"],
-            "V_ALLOCATION_SUMMARY": ["ORDER", "SYNDICATE", "INVESTOR"],
-            "V_TRADE_SETTLEMENT": ["TRADES", "ORDER", "SYNDICATE"],
-            "V_DEALER_TRADES": ["TRADES", "ORDER"]
-        }
+        # No hardcoded fallback mappings - everything comes from MongoDB
         
         # Initialize config
         self._config = self._get_or_create_config()
@@ -104,16 +88,13 @@ class ViewMetadataService:
                 logger.info("Retrieved view mappings from MongoDB", count=len(mappings))
                 return mappings
             else:
-                logger.warning("No view mappings found in MongoDB, using fallback")
-                return self._get_fallback_mappings()
+                logger.error("No view mappings found in MongoDB! Please run the discovery script.")
+                return {}
                 
         except Exception as e:
             logger.error("Failed to retrieve view mappings from MongoDB", error=str(e))
-            if self._config.fallback_to_hardcoded:
-                logger.info("Using fallback hardcoded mappings")
-                return self._get_fallback_mappings()
-            else:
-                raise
+            logger.error("MongoDB is required for view metadata. Please check your connection and run the discovery script.")
+            return {}
     
     def get_view_dependencies(self, view_name: str = None) -> Dict[str, List[str]]:
         """
@@ -358,8 +339,9 @@ class ViewMetadataService:
             return ViewMetadataConfig(config_name="default")
     
     def _get_fallback_mappings(self) -> Dict[str, List[str]]:
-        """Get hardcoded fallback mappings."""
-        return self._fallback_mappings.copy()
+        """Fallback mappings removed - everything must come from MongoDB."""
+        logger.error("Fallback mappings called but not available. Use MongoDB only.")
+        return {}
     
     def _is_cache_fresh(self) -> bool:
         """Check if cache is still fresh based on TTL."""
