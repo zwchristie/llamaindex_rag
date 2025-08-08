@@ -40,6 +40,7 @@ from text_to_sql_rag.models.business_domain_models import (
 )
 from text_to_sql_rag.services.view_metadata_service import ViewMetadataService
 from text_to_sql_rag.services.business_domain_metadata_service import BusinessDomainMetadataService
+from text_to_sql_rag.services.mongodb_service import MongoDBService
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -59,8 +60,10 @@ class DynamicMetadataDiscoverer:
         """
         self.reports_dir = Path(reports_dir) if reports_dir else Path("meta_documents/reports")
         self.views_file = Path(views_file) if views_file else Path("meta_documents/view_metadata.json")
+        self.lookups_dir = Path("meta_documents/lookups")  # Add lookups directory
         self.metadata_service = ViewMetadataService()
         self.domain_metadata_service = BusinessDomainMetadataService()
+        self.mongodb_service = MongoDBService()  # For embedding documents
         
         # Business domains - these are stable, defined in your system
         self.business_domains = [
@@ -343,6 +346,106 @@ class DynamicMetadataDiscoverer:
             logger.error(f"Error discovering report metadata: {e}")
             return []
     
+    def discover_lookup_metadata(self) -> List[Dict[str, Any]]:
+        """Discover lookup metadata from lookups directory."""
+        logger.info("Discovering lookup metadata...")
+        
+        if not self.lookups_dir.exists():
+            logger.warning(f"Lookups directory not found: {self.lookups_dir}")
+            return []
+        
+        discovered_lookups = []
+        
+        try:
+            for lookup_file in self.lookups_dir.glob("*.json"):
+                try:
+                    with open(lookup_file, 'r', encoding='utf-8') as f:
+                        lookup_data = json.load(f)
+                    
+                    processed_lookup = self._process_lookup_data(lookup_data, lookup_file.stem)
+                    if processed_lookup:
+                        discovered_lookups.append(processed_lookup)
+                        
+                except Exception as e:
+                    logger.warning(f"Error processing lookup {lookup_file}: {e}")
+                    continue
+            
+            logger.info(f"Discovered {len(discovered_lookups)} lookups")
+            return discovered_lookups
+            
+        except Exception as e:
+            logger.error(f"Error discovering lookup metadata: {e}")
+            return []
+    
+    def _process_lookup_data(self, lookup_data: Dict[str, Any], file_stem: str) -> Optional[Dict[str, Any]]:
+        """Process individual lookup data."""
+        
+        lookup_name = lookup_data.get("name", file_stem)
+        description = lookup_data.get("description", "")
+        values = lookup_data.get("values", [])
+        
+        # Infer domains from lookup name and values
+        inferred_domains = self._infer_domains_from_lookup(lookup_name, description, values)
+        
+        # Extract patterns from lookup data
+        patterns = self._extract_patterns_from_text(f"{lookup_name} {description}")
+        
+        # Add value-based patterns
+        for value in values[:5]:  # Look at first 5 values
+            if isinstance(value, dict):
+                for key, val in value.items():
+                    if isinstance(val, str) and len(val) > 2:
+                        patterns.append(val.lower())
+        
+        # Generate query examples for lookups
+        query_examples = [
+            f"What are the possible values for {lookup_name}?",
+            f"Show me {lookup_name} options",
+            f"List all {lookup_name}"
+        ]
+        
+        return {
+            "view_name": f"LOOKUP_{lookup_name.upper().replace(' ', '_')}",
+            "domains": inferred_domains,
+            "view_type": "supporting",
+            "priority": 3,  # Lower priority for lookups
+            "description": description,
+            "lookup_name": lookup_name,
+            "patterns": list(set(patterns)),
+            "query_examples": query_examples,
+            "use_cases": f"Reference data for {lookup_name} values and codes",
+            "data_returned": f"Available {lookup_name} with codes and descriptions",
+            "example_sql": f"-- Lookup data for {lookup_name}",
+            "values_count": len(values),
+            "values": values[:10]  # Store sample values
+        }
+    
+    def _infer_domains_from_lookup(self, lookup_name: str, description: str, values: List[Dict]) -> List[str]:
+        """Infer business domains from lookup data."""
+        text = f"{lookup_name} {description}".lower()
+        
+        # Domain inference rules
+        domain_keywords = {
+            "TRANCHE": ["tranche", "bond", "security", "instrument"],
+            "DEAL": ["deal", "transaction", "offering"],
+            "ORDER": ["order", "allocation", "limit"],
+            "INVESTOR": ["investor", "client", "account"],
+            "SYNDICATE": ["syndicate", "bank", "manager"],
+            "TRADE": ["trade", "execution", "settlement"],
+            "ISSUER": ["issuer", "company", "corporate"]
+        }
+        
+        inferred_domains = []
+        for domain, keywords in domain_keywords.items():
+            if any(keyword in text for keyword in keywords):
+                inferred_domains.append(domain)
+        
+        # Default to a broad domain if none found
+        if not inferred_domains:
+            inferred_domains = ["REFERENCE"]
+        
+        return inferred_domains
+    
     def _process_report_data(self, report_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Process individual report data."""
         
@@ -439,8 +542,11 @@ class DynamicMetadataDiscoverer:
             # Step 2: Discover report metadata  
             report_metadata = self.discover_report_metadata()
             
-            # Step 3: Combine all metadata
-            all_metadata = view_metadata + report_metadata
+            # Step 3: Discover lookup metadata
+            lookup_metadata = self.discover_lookup_metadata()
+            
+            # Step 4: Combine all metadata
+            all_metadata = view_metadata + report_metadata + lookup_metadata
             
             # Step 4: Migrate view domain mappings
             self._migrate_view_mappings(all_metadata)
@@ -464,7 +570,10 @@ class DynamicMetadataDiscoverer:
             # Step 9: Create indexes
             self._create_indexes()
             
-            # Step 10: Verify migration
+            # Step 10: Create embedding documents for vector store
+            self._create_embedding_documents(all_metadata)
+            
+            # Step 11: Verify migration
             self._verify_migration()
             
             logger.info("🎉 Dynamic metadata migration completed successfully!")
@@ -476,6 +585,8 @@ class DynamicMetadataDiscoverer:
         finally:
             self.metadata_service.close()
             self.domain_metadata_service.close()
+            if self.mongodb_service:
+                self.mongodb_service.close_connection()
     
     def _clean_mongodb_collections(self):
         """Clean all MongoDB collections before migration."""
@@ -491,7 +602,8 @@ class DynamicMetadataDiscoverer:
             self.domain_metadata_service.terminology_collection,
             self.domain_metadata_service.detection_rules_collection,
             self.domain_metadata_service.classification_rules_collection,
-            self.domain_metadata_service.context_config_collection
+            self.domain_metadata_service.context_config_collection,
+            self.mongodb_service.documents_collection  # Add documents collection for embeddings
         ]
         
         for collection in collections:
@@ -851,6 +963,197 @@ class DynamicMetadataDiscoverer:
         
         logger.info(f"Classification rules migration complete: {success_count}/{len(classification_rules)} successful")
     
+    def _create_embedding_documents(self, all_metadata: List[Dict[str, Any]]):
+        """Create documents in the documents collection for vector embedding."""
+        logger.info("Creating embedding documents in MongoDB...")
+        
+        if not self.mongodb_service.is_connected():
+            logger.warning("MongoDB not connected - skipping embedding document creation")
+            return
+        
+        success_count = 0
+        
+        # Create documents for each view/report
+        for metadata in all_metadata:
+            try:
+                view_name = metadata["view_name"]
+                content = self._generate_embedding_content(metadata)
+                
+                # Create document for the documents collection
+                document_data = {
+                    "file_path": f"metadata/{view_name}.json",
+                    "content": content,
+                    "document_type": metadata.get("view_type", "view"),
+                    "catalog": "metadata",
+                    "schema_name": view_name,
+                    "content_hash": self.mongodb_service.calculate_content_hash(content),
+                    "last_modified": datetime.utcnow(),
+                    "updated_at": datetime.utcnow().isoformat(),
+                    "metadata": {
+                        "view_name": view_name,
+                        "domains": metadata.get("domains", []),
+                        "view_type": metadata.get("view_type", "view"),
+                        "priority": metadata.get("priority", 5),
+                        "patterns": metadata.get("patterns", []),
+                        "description": metadata.get("description", ""),
+                        "source": "discover_and_migrate_metadata_script"
+                    }
+                }
+                
+                # Upsert to documents collection
+                success = self.mongodb_service.upsert_document(
+                    file_path=document_data["file_path"],
+                    content=document_data["content"],
+                    document_type=document_data["document_type"],
+                    catalog=document_data["catalog"],
+                    schema_name=document_data["schema_name"],
+                    metadata=document_data["metadata"]
+                )
+                
+                if success:
+                    success_count += 1
+                    logger.info(f"✅ Created embedding document for {view_name}")
+                else:
+                    logger.error(f"❌ Failed to create embedding document for {view_name}")
+                    
+            except Exception as e:
+                logger.error(f"❌ Error creating embedding document for {metadata.get('view_name', 'unknown')}: {e}")
+        
+        # Create documents for business domains
+        for domain_data in self.business_domains:
+            try:
+                domain_name = domain_data["title"]
+                content = self._generate_domain_embedding_content(domain_data)
+                
+                document_data = {
+                    "file_path": f"metadata/domain_{domain_data['id']}.json",
+                    "content": content,
+                    "document_type": "business_domain",
+                    "catalog": "metadata",
+                    "schema_name": domain_data["id"],
+                    "content_hash": self.mongodb_service.calculate_content_hash(content),
+                    "last_modified": datetime.utcnow(),
+                    "updated_at": datetime.utcnow().isoformat(),
+                    "metadata": {
+                        "domain_id": domain_data["id"],
+                        "domain_name": domain_name,
+                        "summary": domain_data["summary"],
+                        "source": "discover_and_migrate_metadata_script"
+                    }
+                }
+                
+                success = self.mongodb_service.upsert_document(
+                    file_path=document_data["file_path"],
+                    content=document_data["content"],
+                    document_type=document_data["document_type"],
+                    catalog=document_data["catalog"],
+                    schema_name=document_data["schema_name"],
+                    metadata=document_data["metadata"]
+                )
+                
+                if success:
+                    success_count += 1
+                    logger.info(f"✅ Created embedding document for domain {domain_name}")
+                    
+            except Exception as e:
+                logger.error(f"❌ Error creating domain embedding document for {domain_data.get('title', 'unknown')}: {e}")
+        
+        logger.info(f"Embedding documents creation complete: {success_count} documents created")
+    
+    def _generate_embedding_content(self, metadata: Dict[str, Any]) -> str:
+        """Generate rich content for vector embedding from view metadata."""
+        view_name = metadata["view_name"]
+        description = metadata.get("description", "")
+        domains = metadata.get("domains", [])
+        patterns = metadata.get("patterns", [])
+        use_cases = metadata.get("use_cases", "")
+        data_returned = metadata.get("data_returned", "")
+        example_sql = metadata.get("example_sql", "")
+        
+        content_parts = [
+            f"VIEW: {view_name}",
+            f"TYPE: {metadata.get('view_type', 'view').title()} View",
+            f"BUSINESS DOMAINS: {', '.join(domains)}"
+        ]
+        
+        if description:
+            content_parts.append(f"DESCRIPTION: {description}")
+        
+        if patterns:
+            content_parts.append(f"QUERY PATTERNS: {', '.join(patterns)}")
+        
+        if use_cases:
+            content_parts.append(f"USE CASES: {use_cases}")
+        
+        if data_returned:
+            content_parts.append(f"DATA RETURNED: {data_returned}")
+        
+        if example_sql:
+            content_parts.append(f"EXAMPLE QUERY: {example_sql}")
+        
+        # Add lookup-specific content
+        if "lookup_name" in metadata:
+            lookup_name = metadata["lookup_name"]
+            content_parts.append(f"LOOKUP NAME: {lookup_name}")
+            
+            if "values_count" in metadata:
+                content_parts.append(f"VALUES COUNT: {metadata['values_count']} available options")
+            
+            if "values" in metadata and metadata["values"]:
+                sample_values = metadata["values"][:3]  # Show first 3 values
+                values_text = []
+                for value in sample_values:
+                    if isinstance(value, dict):
+                        if "name" in value and "description" in value:
+                            values_text.append(f"{value['name']}: {value['description']}")
+                        elif "code" in value:
+                            values_text.append(f"{value.get('name', value['code'])}")
+                if values_text:
+                    content_parts.append(f"SAMPLE VALUES: {'; '.join(values_text)}")
+        
+        # Add domain context
+        domain_context = []
+        for domain in domains:
+            domain_info = self.domain_lookup.get(domain)
+            if domain_info:
+                domain_context.append(f"{domain}: {domain_info['summary']}")
+        
+        if domain_context:
+            content_parts.append(f"DOMAIN CONTEXT: {'; '.join(domain_context)}")
+        
+        return "\n\n".join(content_parts)
+    
+    def _generate_domain_embedding_content(self, domain_data: Dict[str, Any]) -> str:
+        """Generate rich content for vector embedding from domain metadata."""
+        domain_name = domain_data["title"]
+        summary = domain_data["summary"]
+        bullets = domain_data.get("bullets", [])
+        
+        content_parts = [
+            f"BUSINESS DOMAIN: {domain_name}",
+            f"SUMMARY: {summary}"
+        ]
+        
+        if bullets:
+            content_parts.append("KEY CHARACTERISTICS:")
+            for bullet in bullets:
+                content_parts.append(f"- {bullet}")
+        
+        # Add related domain context
+        related_domains = []
+        for other_domain in self.business_domains:
+            if other_domain["id"] != domain_data["id"]:
+                # Find relationships in the summary text
+                if domain_data["id"].lower() in other_domain["summary"].lower() or \
+                   other_domain["id"].lower() in domain_data["summary"].lower():
+                    related_domains.append(f"{other_domain['title']}: {other_domain['summary']}")
+        
+        if related_domains:
+            content_parts.append("RELATED DOMAINS:")
+            content_parts.extend(related_domains[:3])  # Limit to 3 most relevant
+        
+        return "\n\n".join(content_parts)
+    
     def _create_metadata_config(self):
         """Create metadata configuration."""
         logger.info("Creating metadata configuration...")
@@ -930,10 +1233,15 @@ class DynamicMetadataDiscoverer:
                                 [self.metadata_service.view_mappings_collection.find_one({"view_name": name})]
                                 if doc)]
         
+        # Check embedding documents
+        embedding_docs = self.mongodb_service.get_all_documents()
+        logger.info(f"✅ Verified {len(embedding_docs)} embedding documents")
+        
         logger.info(f"📊 Discovery Summary:")
         logger.info(f"  Core Views: {len([v for v in mappings if self._get_view_type(v) == 'core'])}")
         logger.info(f"  Supporting Views: {len([v for v in mappings if self._get_view_type(v) == 'supporting'])}")
         logger.info(f"  Total Domains Used: {len(set(domain for domains in mappings.values() for domain in domains))}")
+        logger.info(f"  Embedding Documents: {len(embedding_docs)}")
         
         logger.info("Migration verification complete")
     
@@ -1018,15 +1326,16 @@ def main():
             
             print("\n🎉 Migration Summary:")
             print("  ✅ Discovered metadata from actual data files")
-            print("  ✅ No hardcoded mappings - all dynamic!")
-            print("  ✅ MongoDB populated with discovered data")
+            print("  ✅ MongoDB populated with business logic collections")
+            print("  ✅ Created embedding documents for vector store")
             print("  ✅ View dependencies auto-generated")
             print("  ✅ Query patterns created from view data")
+            print("  ✅ Business domains and terminology migrated")
             print("\nNext steps:")
-            print("  1. Restart your application")
-            print("  2. All view metadata now comes from MongoDB")
-            print("  3. To add new views: just add them to your data files and re-run this script")
-            print("  4. No code changes needed for new views!")
+            print("  1. Test with: python scripts/test_mongodb_document_sync.py")
+            print("  2. Restart your application")
+            print("  3. Metadata will be embedded into OpenSearch on startup")
+            print("  4. To add new views: update data files and re-run this script")
         
     except Exception as e:
         print(f"\n❌ Migration failed: {e}")
