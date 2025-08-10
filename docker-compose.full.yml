@@ -102,7 +102,7 @@ services:
       - OPENSEARCH_VERIFY_CERTS=false
       - OPENSEARCH_INDEX_NAME=view_metadata
       - OPENSEARCH_VECTOR_FIELD=embedding
-      - OPENSEARCH_VECTOR_SIZE=1536
+      - OPENSEARCH_VECTOR_SIZE=1024
       
       # MongoDB Configuration
       - MONGODB_URL=mongodb://admin:password@mongodb:27017

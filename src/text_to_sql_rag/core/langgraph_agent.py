@@ -171,7 +171,7 @@ class TextToSQLAgent:
         
         return workflow.compile()
     
-    def _classify_request_node(self, state: ConversationState) -> ConversationState:
+    async def _classify_request_node(self, state: ConversationState) -> ConversationState:
         """Classify the type of user request using LLM to determine workflow routing.
         
         Uses advanced LLM-powered classification to analyze user requests and determine
@@ -264,7 +264,7 @@ Reasoning: [Brief explanation of why this classification was chosen]
 """
             
             # Get classification from LLM
-            response_text = llm_factory.generate_text(classification_prompt)
+            response_text = await llm_factory.generate_text(classification_prompt)
             
             # Parse the LLM response
             classification_result = self._parse_classification_response(response_text)
@@ -480,7 +480,7 @@ Reasoning: [Brief explanation of why this classification was chosen]
         
         return state
     
-    def _assess_confidence_node(self, state: ConversationState) -> ConversationState:
+    async def _assess_confidence_node(self, state: ConversationState) -> ConversationState:
         """Assess confidence in available metadata to answer the user's question."""
         logger.info("=== WORKFLOW NODE: ASSESS CONFIDENCE ===")
         logger.info("Starting confidence assessment", 
@@ -554,7 +554,7 @@ GUIDELINES:
             logger.debug("Confidence assessment prompt", prompt=assessment_prompt)
             
             # Get confidence assessment from LLM
-            response_text = llm_factory.generate_text(assessment_prompt)
+            response_text = await llm_factory.generate_text(assessment_prompt)
             
             # Log LLM assessment response
             logger.info("Received confidence assessment response",
@@ -738,7 +738,7 @@ GUIDELINES:
         
         return state
     
-    def _generate_sql_node(self, state: ConversationState) -> ConversationState:
+    async def _generate_sql_node(self, state: ConversationState) -> ConversationState:
         """Generate SQL using hierarchical context service for efficient metadata retrieval."""
         logger.info("=== WORKFLOW NODE: GENERATE SQL (HIERARCHICAL) ===")
         logger.info("Starting SQL generation with hierarchical context", 
@@ -864,7 +864,7 @@ Requirements:
             logger.debug("Full LLM prompt", prompt=prompt)
             
             # Generate SQL using the vector service's query engine
-            response_text = llm_factory.generate_text(prompt)
+            response_text = await llm_factory.generate_text(prompt)
             
             # Log LLM response
             logger.info("Received LLM response", 
@@ -901,7 +901,7 @@ Requirements:
         
         return state
     
-    def _describe_sql_node(self, state: ConversationState) -> ConversationState:
+    async def _describe_sql_node(self, state: ConversationState) -> ConversationState:
         """Describe and explain an SQL query."""
         logger.info("Describing SQL query")
         
@@ -934,7 +934,7 @@ Provide a comprehensive explanation including:
 Format your response clearly and make it understandable for both technical and non-technical users.
 """
                 
-                response_text = llm_factory.generate_text(description_prompt)
+                response_text = await llm_factory.generate_text(description_prompt)
                 
                 state.final_result = {
                     "response_type": "sql_description",
@@ -1520,7 +1520,7 @@ Format your response clearly and make it understandable for both technical and n
         
         # Run the workflow
         logger.info("Invoking LangGraph workflow", initial_state_ready=True)
-        final_state = self.graph.invoke(initial_state)
+        final_state = await self.graph.ainvoke(initial_state)
         
         # Return the final result - access from the state dict
         result = final_state.get("final_result")
@@ -1584,7 +1584,7 @@ Format your response clearly and make it understandable for both technical and n
         
         # Resume workflow execution - it will continue from get_metadata or generate_sql
         # depending on the workflow routing logic
-        final_state = self.graph.invoke(restored_state)
+        final_state = await self.graph.ainvoke(restored_state)
         
         # Clean up checkpoint after successful continuation
         if request_id in self._checkpoint_storage:
@@ -1625,7 +1625,7 @@ Format your response clearly and make it understandable for both technical and n
             conversation_state.clarification_request = None
         
         # Run the workflow from appropriate point
-        final_state = self.graph.invoke(conversation_state)
+        final_state = await self.graph.ainvoke(conversation_state)
         
         return final_state.final_result
     

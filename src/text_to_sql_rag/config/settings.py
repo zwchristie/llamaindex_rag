@@ -31,7 +31,7 @@ class OpenSearchSettings(BaseSettings):
     verify_certs: bool = Field(default=False, env="OPENSEARCH_VERIFY_CERTS")
     index_name: str = Field(default="documents", env="OPENSEARCH_INDEX_NAME")
     vector_field: str = Field(default="vector", env="OPENSEARCH_VECTOR_FIELD")
-    vector_size: int = Field(default=1536, env="OPENSEARCH_VECTOR_SIZE")
+    vector_size: int = Field(default=1024, env="OPENSEARCH_VECTOR_SIZE")
     
     class Config:
         env_prefix = "OPENSEARCH_"

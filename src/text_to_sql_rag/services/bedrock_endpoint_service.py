@@ -119,6 +119,44 @@ EXPLANATION: [brief explanation of what the query does]"""
             logger.error(f"Error generating SQL: {e}")
             raise
     
+    async def generate_text(self, prompt: str) -> str:
+        """Generate text response using LLM."""
+        try:
+            payload = {
+                "model_id": self.llm_model,
+                "invoke_type": "llm",
+                "query": prompt
+            }
+            
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(
+                    self.endpoint_url,
+                    json=payload,
+                    headers={"Content-Type": "application/json"}
+                )
+                response.raise_for_status()
+                
+                result = response.json()
+                
+                # Extract text from response
+                if "result" in result:
+                    return result["result"]
+                elif "text" in result:
+                    return result["text"]
+                elif "body" in result:
+                    body_data = json.loads(result["body"]) if isinstance(result["body"], str) else result["body"]
+                    return body_data.get("text", str(result))
+                else:
+                    logger.warning(f"Unexpected LLM response format: {result}")
+                    return str(result)
+                    
+        except httpx.HTTPError as e:
+            logger.error(f"HTTP error generating text: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Error generating text: {e}")
+            raise
+    
     def _parse_sql_response(self, response: str) -> Dict[str, str]:
         """Parse SQL and explanation from LLM response."""
         sql = ""
@@ -168,3 +206,35 @@ EXPLANATION: [brief explanation of what the query does]"""
             "sql": sql.strip(),
             "explanation": explanation.strip() if explanation else "Generated SQL query for the given requirements."
         }
+
+
+class BedrockEndpointLLMWrapper:
+    """Wrapper class for LLM provider factory compatibility."""
+    
+    def __init__(self, endpoint_service: BedrockEndpointService, model_id: str = None):
+        self.endpoint_service = endpoint_service
+        self.model_id = model_id or endpoint_service.llm_model
+    
+    async def generate_response(self, prompt: str, **kwargs) -> str:
+        """Generate text response using the endpoint service."""
+        return await self.endpoint_service.generate_text(prompt)
+    
+    async def complete(self, prompt: str, **kwargs) -> str:
+        """Complete method for LLM compatibility."""
+        return await self.endpoint_service.generate_text(prompt)
+    
+    def health_check(self) -> bool:
+        """Check if the service is healthy."""
+        try:
+            # Simple test to check if service is responsive
+            import asyncio
+            async def test_health():
+                try:
+                    result = await self.endpoint_service.generate_text("Test")
+                    return bool(result)
+                except:
+                    return False
+            
+            return asyncio.run(test_health())
+        except:
+            return False

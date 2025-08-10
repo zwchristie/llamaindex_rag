@@ -24,7 +24,7 @@ COPY pyproject.toml poetry.lock ./
 
 # Configure poetry and install dependencies
 RUN poetry config virtualenvs.create false \
-    && poetry install --only=main --no-interaction --no-ansi
+    && poetry install --only=main --no-interaction --no-ansi --no-root
 
 # Copy application code
 COPY . .
@@ -40,4 +40,4 @@ HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
 # Run the application
-CMD ["python", "-m", "uvicorn", "src.text_to_sql_rag.api.new_main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "-m", "uvicorn", "src.text_to_sql_rag.api.main:app", "--host", "0.0.0.0", "--port", "8000"]

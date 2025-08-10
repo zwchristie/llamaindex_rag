@@ -8,7 +8,10 @@
       "Bash(mkdir:*)",
       "Bash(find:*)",
       "Bash(poetry run:*)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Bash(poetry lock:*)",
+      "Bash(docker compose:*)",
+      "Bash(docker logs:*)"
     ],
     "deny": []
   }

@@ -5,7 +5,7 @@ import structlog
 
 from ..config.settings import settings
 # Direct AWS Bedrock service removed - using only endpoint approach
-from .bedrock_endpoint_service import BedrockEndpointLLMWrapper, BedrockEndpointService
+from .bedrock_endpoint_service import BedrockEndpointService, BedrockEndpointLLMWrapper
 from .custom_llm_service import CustomLLMService
 
 logger = structlog.get_logger(__name__)
@@ -62,7 +62,12 @@ class LLMProviderFactory:
                 raise ValueError("Bedrock endpoint URL not configured. Set BEDROCK_ENDPOINT_URL in settings.")
             
             model_id = getattr(settings.aws, 'llm_model', 'us.anthropic.claude-3-haiku-20240307-v1:0')
-            endpoint_service = BedrockEndpointService(endpoint_url)
+            embedding_model = getattr(settings.aws, 'embedding_model', 'amazon.titan-embed-text-v2:0')
+            endpoint_service = BedrockEndpointService(
+                endpoint_url=endpoint_url,
+                embedding_model=embedding_model,
+                llm_model=model_id
+            )
             self._bedrock_endpoint_service = BedrockEndpointLLMWrapper(endpoint_service, model_id)
         return self._bedrock_endpoint_service
     
@@ -107,8 +112,9 @@ class LLMProviderFactory:
             return {
                 "provider": "bedrock_endpoint",
                 "model": self._current_provider.model_id,
-                "endpoint_url": self._current_provider.bedrock_service.endpoint_base_url,
-                "invoke_url": self._current_provider.bedrock_service.invoke_url
+                "endpoint_url": getattr(self._current_provider.endpoint_service, 'endpoint_url', 'unknown'),
+                "llm_model": getattr(self._current_provider.endpoint_service, 'llm_model', 'unknown'),
+                "embedding_model": getattr(self._current_provider.endpoint_service, 'embedding_model', 'unknown')
             }
         elif isinstance(self._current_provider, CustomLLMService):
             return {
@@ -138,7 +144,7 @@ class LLMProviderFactory:
             return False
     
     # Proxy methods to the current provider
-    def generate_text(
+    async def generate_text(
         self,
         prompt: str,
         conversation_id: Optional[str] = None,
@@ -151,7 +157,7 @@ class LLMProviderFactory:
             return provider.generate_text(prompt, conversation_id=conversation_id, **kwargs)
         elif isinstance(provider, BedrockEndpointLLMWrapper):
             # BedrockEndpointLLMWrapper uses generate_response method
-            return provider.generate_response(prompt, **kwargs)
+            return await provider.generate_response(prompt, **kwargs)
         else:
             raise RuntimeError(f"Unknown provider type: {type(provider)}")
     

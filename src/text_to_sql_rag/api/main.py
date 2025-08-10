@@ -184,7 +184,7 @@ async def upload_document(
         content_text = content.decode('utf-8')
         
         # Generate unique document ID
-        document_id = int(str(uuid.uuid4().int)[:10])  # Use first 10 digits of UUID
+        document_id = str(uuid.uuid4().int)[:10]  # Use first 10 digits of UUID as string
         
         # Prepare metadata
         metadata = {
@@ -460,14 +460,14 @@ async def debug_list_all_documents():
 async def get_stats():
     """Get application statistics."""
     return {
-        "vector_store": vector_service.get_index_stats(),
+        "vector_store": vector_service.get_index_stats() if vector_service else {"status": "not_initialized"},
         "active_sessions": len(sessions),
         "active_conversations": len(conversations),
         "pending_clarifications": len([c for c in conversations.values() if c.get("status") == "waiting_for_clarification"]),
         "llm_provider": llm_factory.get_provider_info(),
         "services": {
-            "vector_store_healthy": vector_service.health_check(),
-            "execution_service_healthy": query_execution_service.health_check(),
+            "vector_store_healthy": vector_service.health_check() if vector_service else False,
+            "execution_service_healthy": query_execution_service.health_check() if query_execution_service else False,
             "llm_provider_healthy": llm_factory.health_check()
         }
     }
@@ -749,7 +749,7 @@ async def test_llm_provider():
     try:
         test_prompt = "Generate a simple SQL query to select all columns from a table named 'users'. Respond with just the SQL query."
         
-        response = llm_factory.generate_text(test_prompt)
+        response = await llm_factory.generate_text(test_prompt)
         
         return {
             "success": True,

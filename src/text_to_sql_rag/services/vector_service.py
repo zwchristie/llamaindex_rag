@@ -26,7 +26,7 @@ import ssl
 
 from ..config.settings import settings
 from ..utils.content_processor import ContentProcessor
-from .bedrock_endpoint_service import BedrockEndpointEmbeddingService, BedrockEndpointLLMWrapper
+from .bedrock_endpoint_service import BedrockEndpointService
 
 logger = structlog.get_logger(__name__)
 
@@ -65,7 +65,8 @@ class CustomBedrockEmbedding(BaseEmbedding):
         
         try:
             # Use endpoint service for embeddings (only supported approach)
-            embedding = self._endpoint_service.get_embedding(query)
+            import asyncio
+            embedding = asyncio.run(self._endpoint_service.get_embedding(query))
             
             if not embedding or len(embedding) == 0:
                 logger.warning("Empty embedding returned from service")
@@ -84,7 +85,8 @@ class CustomBedrockEmbedding(BaseEmbedding):
         
         try:
             # Use endpoint service for embeddings (only supported approach)
-            embedding = self._endpoint_service.get_embedding(text)
+            import asyncio
+            embedding = asyncio.run(self._endpoint_service.get_embedding(text))
             
             if not embedding or len(embedding) == 0:
                 logger.warning("Empty embedding returned from service")
@@ -187,9 +189,12 @@ class LlamaIndexVectorService:
             raise ValueError("Bedrock endpoint URL not configured - only endpoint approach is supported")
         
         from .bedrock_endpoint_service import BedrockEndpointService
-        endpoint_service = BedrockEndpointService(endpoint_url)
-        self.bedrock_endpoint_embedding = BedrockEndpointEmbeddingService(endpoint_service)
-        self.bedrock_endpoint_llm = BedrockEndpointLLMWrapper(endpoint_service)
+        endpoint_service = BedrockEndpointService(
+            endpoint_url=endpoint_url,
+            embedding_model=settings.aws.embedding_model,
+            llm_model=settings.aws.llm_model
+        )
+        self.bedrock_endpoint_service = endpoint_service
         
         # Initialize LlamaIndex components
         self._setup_llamaindex()
@@ -292,11 +297,11 @@ class LlamaIndexVectorService:
         """Setup LlamaIndex global settings using bedrock services."""
         try:
             # Use endpoint service for embeddings (only supported approach)
-            embed_model = CustomBedrockEmbedding(endpoint_service=self.bedrock_endpoint_embedding)
+            embed_model = CustomBedrockEmbedding(endpoint_service=self.bedrock_endpoint_service)
             logger.info("Using custom embedding wrapper for Bedrock endpoint")
             
             # Use endpoint service for LLM (only supported approach)
-            llm = CustomBedrockLLM(endpoint_service=self.bedrock_endpoint_llm)
+            llm = CustomBedrockLLM(endpoint_service=self.bedrock_endpoint_service)
             logger.info("Using custom LLM wrapper for Bedrock endpoint")
             
             # Set global settings
