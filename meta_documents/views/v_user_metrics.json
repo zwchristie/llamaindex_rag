@@ -1,16 +1,79 @@
 {
-    "example_query": "SELECT * FROM SYND.V_USER_METRICS",
-     "view_sql": "test sql to be created - fill in",
-    "data_returned": "test data return - fill in",
-    "use_cases": "test use cases - fill in",
     "view_name": "V_USER_METRICS",
     "view_type": "CORE",
-    "description": "test description - fill in",
+    "schema": "USR",
+    "description": "Comprehensive user engagement and activity metrics including login patterns, transaction counts, and user status information",
+    "business_domains": [3],
+    "use_cases": "Track user engagement levels, monitor login patterns, analyze user activity trends, identify active vs inactive users, measure platform adoption",
+    "data_returned": "User identification, activity counts, login metrics, engagement scores, and current user status",
     "columns": [
         {
-            "name": "id",
+            "name": "user_id",
             "type": "number",
-            "notNull": true
+            "notNull": true,
+            "description": "Unique identifier for the user"
+        },
+        {
+            "name": "user_name",
+            "type": "varchar",
+            "notNull": true,
+            "description": "Display name of the user"
+        },
+        {
+            "name": "email",
+            "type": "varchar",
+            "notNull": true,
+            "description": "User email address"
+        },
+        {
+            "name": "user_status_id",
+            "type": "number",
+            "notNull": true,
+            "description": "Current status of the user account",
+            "lookup_id": 6
+        },
+        {
+            "name": "user_role_id",
+            "type": "number",
+            "notNull": true,
+            "description": "Role assigned to the user",
+            "lookup_id": 7
+        },
+        {
+            "name": "last_login_date",
+            "type": "datetime",
+            "notNull": false,
+            "description": "Date and time of user's last login"
+        },
+        {
+            "name": "total_logins",
+            "type": "number",
+            "notNull": true,
+            "description": "Total number of logins by this user"
+        },
+        {
+            "name": "total_actions",
+            "type": "number",
+            "notNull": true,
+            "description": "Total number of actions performed by user"
+        },
+        {
+            "name": "is_active",
+            "type": "boolean",
+            "notNull": true,
+            "description": "Whether user is currently active (1) or inactive (0)"
+        },
+        {
+            "name": "engagement_score",
+            "type": "decimal",
+            "notNull": false,
+            "description": "Calculated engagement score based on activity"
         }
-    ]
+    ],
+    "sample_queries": [
+        "SELECT user_name, total_logins, last_login_date FROM V_USER_METRICS WHERE is_active = 1 ORDER BY total_logins DESC",
+        "SELECT COUNT(*) as active_users FROM V_USER_METRICS WHERE is_active = 1 AND last_login_date >= CURRENT_DATE - 7"
+    ],
+    "example_query": "SELECT * FROM USR.V_USER_METRICS WHERE user_status_id = 1 AND is_active = 1",
+    "view_sql": "CREATE VIEW V_USER_METRICS AS SELECT u.user_id, u.user_name, u.email, u.status_id as user_status_id, u.role_id as user_role_id, ul.last_login_date, ul.total_logins, ua.total_actions, CASE WHEN ul.last_login_date >= CURRENT_DATE - 30 THEN 1 ELSE 0 END as is_active, (ul.total_logins * 0.3 + ua.total_actions * 0.7) as engagement_score FROM users u LEFT JOIN user_logins ul ON u.user_id = ul.user_id LEFT JOIN user_activities ua ON u.user_id = ua.user_id"
 }

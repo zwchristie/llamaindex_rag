@@ -1,0 +1,24 @@
+{
+  "report_name": "Syndicate Performance Analysis Report",
+  "report_type": "STANDARD",
+  "view_name": "V_TRANCHE_SYNDICATES",
+  "business_domains": [2, 5],
+  "report_description": "Detailed analysis of syndicate performance including participant contributions, allocation efficiency, and role-based success metrics across deals and tranches",
+  "data_returned": "Syndicate participant performance metrics, allocation distributions, role effectiveness analysis, and comparative performance across different deal types",
+  "use_cases": "Syndicate team evaluation, participant selection for future deals, allocation strategy optimization, relationship management with key participants",
+  "related_views": ["V_TRANCHE_SYNDICATES", "V_SYNDICATE_ALLOCATIONS", "V_DEAL_OVERVIEW"],
+  "filters": [
+    "deal_date >= CURRENT_DATE - 365 -- Last 12 months",
+    "tranche_status_id IN (3,4) -- Active or settled tranches",
+    "allocation_amount > 0 -- Participants with actual allocations",
+    "syndicate_participant_role IN ('LEAD_MGR', 'CO_MGR', 'UNDERWRITER') -- Key roles"
+  ],
+  "example_sql": "SELECT sr.code as participant_role, COUNT(DISTINCT ts.deal_id) as deals_participated, COUNT(*) as total_tranches, AVG(ts.allocation_amount) as avg_allocation, SUM(ts.allocation_amount) as total_allocation FROM SYND.V_TRANCHE_SYNDICATES ts JOIN syndicate_roles sr ON ts.syndicate_participant_role = sr.code WHERE ts.deal_date >= CURRENT_DATE - 180 AND ts.tranche_status_id IN (3,4) GROUP BY sr.code ORDER BY total_allocation DESC",
+  "key_metrics": [
+    "Total Deals Participated",
+    "Average Allocation per Role",
+    "Participant Success Rate",
+    "Role Distribution",
+    "Market Share by Participant"
+  ]
+}

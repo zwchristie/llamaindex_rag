@@ -148,6 +148,112 @@ class SessionState(BaseModel):
         collection = "session_states"
 
 
+class ReportMetadata(BaseModel):
+    """Metadata for database reports and report definitions."""
+    
+    # Core identification
+    report_name: str = Field(..., description="Report name or identifier")
+    view_name: Optional[str] = Field(None, description="Underlying view name if applicable")
+    report_type: str = Field("STANDARD", description="Report type: STANDARD, DASHBOARD, SUMMARY")
+    
+    # Descriptive information
+    report_description: str = Field("", description="Report description and purpose")
+    data_returned: Optional[str] = Field(None, description="Description of data returned by report")
+    use_cases: str = Field("", description="Common use cases for this report")
+    
+    # SQL information
+    example_sql: Optional[str] = Field(None, description="Example SQL for this report")
+    filters: Optional[List[str]] = Field(default_factory=list, description="Common filter conditions")
+    
+    # Metadata
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    
+    def generate_full_text(self) -> str:
+        """Generate concatenated text for embedding."""
+        parts = [
+            f"Report: {self.report_name}",
+            f"Type: {self.report_type}",
+        ]
+        
+        if self.view_name:
+            parts.append(f"View: {self.view_name}")
+            
+        if self.report_description:
+            parts.append(f"Description: {self.report_description}")
+            
+        if self.use_cases:
+            parts.append(f"Use Cases: {self.use_cases}")
+            
+        if self.data_returned:
+            parts.append(f"Data Returned: {self.data_returned}")
+            
+        if self.example_sql:
+            parts.append(f"Example SQL: {self.example_sql}")
+            
+        if self.filters:
+            parts.append(f"Common Filters: {', '.join(self.filters)}")
+            
+        return "\n".join(parts)
+
+
+class LookupValue(BaseModel):
+    """Individual lookup value entry."""
+    
+    id: int = Field(..., description="Lookup value ID")
+    name: str = Field(..., description="Lookup value name")
+    code: str = Field(..., description="Lookup code or abbreviation")
+    description: str = Field("", description="Description of the lookup value")
+
+
+class LookupMetadata(BaseModel):
+    """Metadata for lookup tables and reference data."""
+    
+    # Core identification
+    lookup_name: str = Field(..., description="Lookup table or reference name")
+    lookup_type: str = Field("REFERENCE", description="Lookup type: REFERENCE, STATUS, CATEGORY")
+    
+    # Descriptive information
+    description: str = Field("", description="Description of the lookup table")
+    use_cases: str = Field("", description="How this lookup is typically used")
+    
+    # Lookup values
+    values: List[LookupValue] = Field(..., description="List of lookup values")
+    
+    # Metadata
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    
+    def generate_full_text(self) -> str:
+        """Generate concatenated text for embedding."""
+        parts = [
+            f"Lookup: {self.lookup_name}",
+            f"Type: {self.lookup_type}",
+        ]
+        
+        if self.description:
+            parts.append(f"Description: {self.description}")
+            
+        if self.use_cases:
+            parts.append(f"Use Cases: {self.use_cases}")
+            
+        # Add values summary
+        if self.values:
+            value_summary = []
+            for value in self.values[:10]:  # Limit to first 10 for space
+                value_text = f"{value.code} ({value.name})"
+                if value.description:
+                    value_text += f": {value.description}"
+                value_summary.append(value_text)
+            
+            parts.append(f"Values: {'; '.join(value_summary)}")
+            
+            if len(self.values) > 10:
+                parts.append(f"... and {len(self.values) - 10} more values")
+        
+        return "\n".join(parts)
+
+
 class HITLRequest(BaseModel):
     """Human-in-the-Loop approval request."""
     

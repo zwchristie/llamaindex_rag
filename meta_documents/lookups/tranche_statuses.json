@@ -1,6 +1,15 @@
 {
-  "name": "tranche statuses",
+  "lookup_id": 1,
+  "lookup_name": "tranche_statuses",
+  "lookup_type": "STATUS",
   "description": "Lookup information of the possible tranche status with their corresponding id and string representations",
+  "business_domains": [1, 2],
+  "use_cases": "Filter tranches by status, display status names in reports, validate status transitions, track tranche lifecycle progress",
+  "table_column_references": [
+    "V_TRANCHE_SYNDICATES.tranche_status_id",
+    "V_DEAL_OVERVIEW.status_id",
+    "V_TRANCHE_DETAILS_FOR_TODAYS_DEALS.status_id"
+  ],
   "values": [
     {
       "id": 1,

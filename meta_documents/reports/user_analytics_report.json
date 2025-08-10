@@ -1,0 +1,24 @@
+{
+  "report_name": "User Engagement Analytics Report",
+  "report_type": "SUMMARY",
+  "view_name": "V_USER_METRICS",
+  "business_domains": [3],
+  "report_description": "Comprehensive analysis of user engagement patterns, activity levels, and platform adoption metrics for system optimization and user experience improvement",
+  "data_returned": "User activity statistics, engagement trends, login patterns, role-based usage analysis, and user retention metrics",
+  "use_cases": "Platform usage optimization, user training needs assessment, system capacity planning, user experience enhancement, role-based feature development",
+  "related_views": ["V_USER_METRICS", "V_USER_ACTIVITY", "V_USER_SESSIONS"],
+  "filters": [
+    "is_active = 1 -- Active users only",
+    "last_login_date >= CURRENT_DATE - 90 -- Recent activity",
+    "user_status_id IN (1,2) -- Active or inactive status",
+    "user_role_id NOT IN (6) -- Exclude read-only users"
+  ],
+  "example_sql": "SELECT ur.code as user_role, COUNT(*) as user_count, AVG(total_logins) as avg_logins, AVG(total_actions) as avg_actions, AVG(engagement_score) as avg_engagement FROM USR.V_USER_METRICS vm JOIN user_roles ur ON vm.user_role_id = ur.id WHERE vm.is_active = 1 AND vm.last_login_date >= CURRENT_DATE - 30 GROUP BY ur.code ORDER BY avg_engagement DESC",
+  "key_metrics": [
+    "Active Users Count",
+    "Average Login Frequency",
+    "User Engagement Score",
+    "Role Distribution",
+    "Retention Rate by Role"
+  ]
+}

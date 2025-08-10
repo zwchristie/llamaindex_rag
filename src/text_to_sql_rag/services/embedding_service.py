@@ -228,7 +228,7 @@ class VectorService:
             raise
     
     async def search_similar_views(self, query_embedding: List[float], k: int = 5) -> List[Tuple[ViewMetadata, float]]:
-        """Search for similar views using vector similarity."""
+        """Search for similar documents using vector similarity (supports all document types)."""
         try:
             search_body = {
                 "size": k,
@@ -240,7 +240,8 @@ class VectorService:
                         }
                     }
                 },
-                "_source": [self.metadata_field, "view_name"]
+                "_source": ["document_type", "identifier", "view_name", "report_name", "lookup_name", 
+                           "schema", "description", "use_cases", "full_text"]
             }
             
             response = await self.client.search(
@@ -251,11 +252,53 @@ class VectorService:
             results = []
             for hit in response["hits"]["hits"]:
                 score = hit["_score"]
-                metadata_dict = hit["_source"][self.metadata_field]
-                view_metadata = ViewMetadata(**metadata_dict)
-                results.append((view_metadata, score))
+                source = hit["_source"]
+                doc_type = source.get("document_type", "view_metadata")
+                
+                # Create appropriate metadata object based on document type
+                if doc_type == "view_metadata":
+                    metadata = ViewMetadata(
+                        view_name=source.get("view_name", source.get("identifier", "")),
+                        view_type="CORE",
+                        schema_name=source.get("schema", "default"),
+                        description=source.get("description", ""),
+                        use_cases=source.get("use_cases", ""),
+                        columns=[]  # Can be filled from MongoDB if needed
+                    )
+                elif doc_type == "report_metadata":
+                    # Create ViewMetadata with report info for compatibility
+                    metadata = ViewMetadata(
+                        view_name=source.get("report_name", source.get("identifier", "")),
+                        view_type="REPORT",
+                        schema_name="reports",
+                        description=source.get("description", ""),
+                        use_cases=source.get("use_cases", ""),
+                        columns=[]
+                    )
+                elif doc_type == "lookup_metadata":
+                    # Create ViewMetadata with lookup info for compatibility
+                    metadata = ViewMetadata(
+                        view_name=source.get("lookup_name", source.get("identifier", "")),
+                        view_type="LOOKUP",
+                        schema_name="lookups",
+                        description=source.get("description", ""),
+                        use_cases=source.get("use_cases", ""),
+                        columns=[]
+                    )
+                else:
+                    # Default fallback
+                    metadata = ViewMetadata(
+                        view_name=source.get("identifier", "unknown"),
+                        view_type="UNKNOWN",
+                        schema_name="default",
+                        description=source.get("description", ""),
+                        use_cases=source.get("use_cases", ""),
+                        columns=[]
+                    )
+                
+                results.append((metadata, score))
             
-            logger.info(f"Vector search returned {len(results)} similar views")
+            logger.info(f"Vector search returned {len(results)} similar documents")
             return results
             
         except Exception as e:

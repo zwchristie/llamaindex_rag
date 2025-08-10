@@ -1,16 +1,73 @@
 {
-    "example_query": "V_TRANCHE_SYNDICATES",
-    "view_sql": "test sql to be created - fill in",
-    "data_returned": "test data return - fill in",
-    "use_cases": "test use cases - fill in",
     "view_name": "V_TRANCHE_SYNDICATES",
-    "view_type": "SUPPORTING",
-    "description": "test description - fill in",
+    "view_type": "CORE",
+    "schema": "SYND",
+    "description": "Comprehensive view of syndicate participation details for tranches, including deal information, participant roles, and current status",
+    "business_domains": [1, 2],
+    "use_cases": "Monitor syndicate participation across deals, track underwriter allocations, analyze participant roles and responsibilities, review tranche status and progress",
+    "data_returned": "Deal names, tranche IDs, syndicate participant details, roles, allocation amounts, and current tranche status",
     "columns": [
+        {
+            "name": "deal_id",
+            "type": "number",
+            "notNull": true,
+            "description": "Unique identifier for the deal"
+        },
+        {
+            "name": "deal_name",
+            "type": "varchar",
+            "notNull": true,
+            "description": "Name of the financial deal"
+        },
         {
             "name": "tranche_id",
             "type": "number",
-            "notNull": true
+            "notNull": true,
+            "description": "Unique identifier for the tranche"
+        },
+        {
+            "name": "tranche_status_id",
+            "type": "number",
+            "notNull": true,
+            "description": "Status ID of the tranche",
+            "lookup_id": 1
+        },
+        {
+            "name": "syndicate_participant_id",
+            "type": "number",
+            "notNull": true,
+            "description": "Unique identifier for syndicate participant"
+        },
+        {
+            "name": "syndicate_participant_name",
+            "type": "varchar",
+            "notNull": true,
+            "description": "Name of the syndicate participant"
+        },
+        {
+            "name": "syndicate_participant_role",
+            "type": "varchar",
+            "notNull": true,
+            "description": "Role of the participant in the syndicate",
+            "lookup_id": 3
+        },
+        {
+            "name": "allocation_amount",
+            "type": "decimal",
+            "notNull": false,
+            "description": "Amount allocated to this participant"
+        },
+        {
+            "name": "deal_date",
+            "type": "date",
+            "notNull": true,
+            "description": "Date when the deal was created"
         }
-    ]
+    ],
+    "sample_queries": [
+        "SELECT deal_name, COUNT(*) as participant_count FROM V_TRANCHE_SYNDICATES GROUP BY deal_name",
+        "SELECT * FROM V_TRANCHE_SYNDICATES WHERE deal_date >= CURRENT_DATE - 30"
+    ],
+    "example_query": "SELECT * FROM SYND.V_TRANCHE_SYNDICATES WHERE tranche_status_id = 3",
+    "view_sql": "CREATE VIEW V_TRANCHE_SYNDICATES AS SELECT d.deal_id, d.deal_name, t.tranche_id, t.status_id as tranche_status_id, sp.participant_id as syndicate_participant_id, sp.participant_name as syndicate_participant_name, sp.role as syndicate_participant_role, ta.allocation_amount, d.deal_date FROM deals d JOIN tranches t ON d.deal_id = t.deal_id JOIN tranche_allocations ta ON t.tranche_id = ta.tranche_id JOIN syndicate_participants sp ON ta.participant_id = sp.participant_id"
 }

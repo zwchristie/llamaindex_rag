@@ -1,0 +1,51 @@
+{
+  "lookup_id": 6,
+  "lookup_name": "user_statuses",
+  "lookup_type": "STATUS",
+  "description": "Current status of user accounts in the system",
+  "business_domains": [3],
+  "use_cases": "Filter users by account status, validate user access, generate user status reports, manage user lifecycle",
+  "table_column_references": [
+    "V_USER_METRICS.user_status_id",
+    "V_USER_ACTIVITY.status_id",
+    "V_USER_PERMISSIONS.user_status_id"
+  ],
+  "values": [
+    {
+      "id": 1,
+      "name": "active",
+      "code": "ACTIVE",
+      "description": "User account is active and can access the system"
+    },
+    {
+      "id": 2,
+      "name": "inactive",
+      "code": "INACTIVE",
+      "description": "User account is inactive but not permanently disabled"
+    },
+    {
+      "id": 3,
+      "name": "suspended",
+      "code": "SUSPENDED",
+      "description": "User account is temporarily suspended"
+    },
+    {
+      "id": 4,
+      "name": "locked",
+      "code": "LOCKED",
+      "description": "User account is locked due to security concerns"
+    },
+    {
+      "id": 5,
+      "name": "pending_verification",
+      "code": "PENDING_VERIFY",
+      "description": "User account is pending email or identity verification"
+    },
+    {
+      "id": 6,
+      "name": "terminated",
+      "code": "TERMINATED",
+      "description": "User account has been permanently terminated"
+    }
+  ]
+}

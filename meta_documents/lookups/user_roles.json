@@ -1,0 +1,57 @@
+{
+  "lookup_id": 7,
+  "lookup_name": "user_roles",
+  "lookup_type": "CATEGORY",
+  "description": "Roles assigned to users defining their permissions and access levels",
+  "business_domains": [3],
+  "use_cases": "Control user access permissions, filter users by role, generate role-based reports, manage user authorization",
+  "table_column_references": [
+    "V_USER_METRICS.user_role_id",
+    "V_USER_PERMISSIONS.role_id",
+    "V_USER_ACTIVITY.user_role_id"
+  ],
+  "values": [
+    {
+      "id": 1,
+      "name": "admin",
+      "code": "ADMIN",
+      "description": "System administrator with full access rights"
+    },
+    {
+      "id": 2,
+      "name": "manager",
+      "code": "MANAGER",
+      "description": "Manager with elevated permissions for team oversight"
+    },
+    {
+      "id": 3,
+      "name": "trader",
+      "code": "TRADER",
+      "description": "Trading desk user with transaction access"
+    },
+    {
+      "id": 4,
+      "name": "analyst",
+      "code": "ANALYST",
+      "description": "Research analyst with read access to data"
+    },
+    {
+      "id": 5,
+      "name": "client",
+      "code": "CLIENT",
+      "description": "External client with limited access to relevant data"
+    },
+    {
+      "id": 6,
+      "name": "read_only",
+      "code": "READ_ONLY",
+      "description": "Read-only user with view-only access"
+    },
+    {
+      "id": 7,
+      "name": "compliance",
+      "code": "COMPLIANCE",
+      "description": "Compliance officer with audit and monitoring access"
+    }
+  ]
+}

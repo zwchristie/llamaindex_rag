@@ -1,0 +1,51 @@
+{
+  "lookup_id": 3,
+  "lookup_name": "syndicate_roles",
+  "lookup_type": "CATEGORY",
+  "description": "Roles that participants can have in a syndicate structure",
+  "business_domains": [1, 2],
+  "use_cases": "Categorize syndicate participants by role, filter by participant type, generate role-based reports, validate role assignments",
+  "table_column_references": [
+    "V_TRANCHE_SYNDICATES.syndicate_participant_role",
+    "V_SYNDICATE_ALLOCATIONS.participant_role",
+    "V_PARTICIPANT_ROLES.role_id"
+  ],
+  "values": [
+    {
+      "id": 1,
+      "name": "lead_manager",
+      "code": "LEAD_MGR",
+      "description": "Lead manager responsible for overall syndicate coordination"
+    },
+    {
+      "id": 2,
+      "name": "co_manager",
+      "code": "CO_MGR",
+      "description": "Co-manager providing support to lead manager"
+    },
+    {
+      "id": 3,
+      "name": "underwriter",
+      "code": "UNDERWRITER",
+      "description": "Primary underwriter of the tranche"
+    },
+    {
+      "id": 4,
+      "name": "co_underwriter",
+      "code": "CO_UNDERWRITER",
+      "description": "Co-underwriter sharing underwriting responsibilities"
+    },
+    {
+      "id": 5,
+      "name": "selling_group",
+      "code": "SELLING_GRP",
+      "description": "Member of the selling group"
+    },
+    {
+      "id": 6,
+      "name": "investor",
+      "code": "INVESTOR",
+      "description": "Direct investor in the tranche"
+    }
+  ]
+}

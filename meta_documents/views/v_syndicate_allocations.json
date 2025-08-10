@@ -1,0 +1,72 @@
+{
+    "view_name": "V_SYNDICATE_ALLOCATIONS",
+    "view_type": "SUPPORTING",
+    "schema": "SYND",
+    "description": "Detailed allocation breakdown showing how tranche amounts are distributed among syndicate participants",
+    "business_domains": [2, 5],
+    "use_cases": "Track allocation distributions, calculate participant exposure, monitor allocation limits, generate allocation reports",
+    "data_returned": "Participant allocation details, amounts, percentages, and allocation status by tranche",
+    "columns": [
+        {
+            "name": "allocation_id",
+            "type": "number",
+            "notNull": true,
+            "description": "Unique identifier for the allocation"
+        },
+        {
+            "name": "tranche_id",
+            "type": "number",
+            "notNull": true,
+            "description": "Tranche associated with this allocation"
+        },
+        {
+            "name": "participant_id",
+            "type": "number",
+            "notNull": true,
+            "description": "Syndicate participant receiving the allocation"
+        },
+        {
+            "name": "participant_name",
+            "type": "varchar",
+            "notNull": true,
+            "description": "Name of the participant"
+        },
+        {
+            "name": "participant_role",
+            "type": "varchar",
+            "notNull": true,
+            "description": "Role of participant in syndicate",
+            "lookup_id": 3
+        },
+        {
+            "name": "allocated_amount",
+            "type": "decimal",
+            "notNull": true,
+            "description": "Amount allocated to this participant"
+        },
+        {
+            "name": "allocation_percentage",
+            "type": "decimal",
+            "notNull": true,
+            "description": "Percentage of total tranche allocated"
+        },
+        {
+            "name": "allocation_status",
+            "type": "varchar",
+            "notNull": true,
+            "description": "Status of this allocation (confirmed, pending, etc.)"
+        },
+        {
+            "name": "allocation_date",
+            "type": "date",
+            "notNull": true,
+            "description": "Date when allocation was made"
+        }
+    ],
+    "sample_queries": [
+        "SELECT participant_name, SUM(allocated_amount) as total_allocation FROM V_SYNDICATE_ALLOCATIONS GROUP BY participant_name ORDER BY total_allocation DESC",
+        "SELECT * FROM V_SYNDICATE_ALLOCATIONS WHERE allocation_percentage > 10.0 AND allocation_status = 'confirmed'"
+    ],
+    "example_query": "SELECT * FROM SYND.V_SYNDICATE_ALLOCATIONS WHERE participant_role = 'LEAD_MGR' AND allocation_status = 'confirmed'",
+    "view_sql": "CREATE VIEW V_SYNDICATE_ALLOCATIONS AS SELECT ta.allocation_id, ta.tranche_id, ta.participant_id, sp.participant_name, sp.role as participant_role, ta.allocated_amount, (ta.allocated_amount / t.total_amount * 100) as allocation_percentage, ta.status as allocation_status, ta.allocation_date FROM tranche_allocations ta JOIN syndicate_participants sp ON ta.participant_id = sp.participant_id JOIN tranches t ON ta.tranche_id = t.tranche_id"
+}

@@ -1,0 +1,78 @@
+{
+    "view_name": "V_DEAL_OVERVIEW",
+    "view_type": "CORE",
+    "schema": "DEALS",
+    "description": "High-level overview of all deals including key metrics, status, and timeline information",
+    "business_domains": [1, 5],
+    "use_cases": "Executive dashboard reporting, deal pipeline analysis, performance tracking, status monitoring across all active deals",
+    "data_returned": "Deal identification, financial metrics, status information, key dates, and performance indicators",
+    "columns": [
+        {
+            "name": "deal_id",
+            "type": "number",
+            "notNull": true,
+            "description": "Unique identifier for the deal"
+        },
+        {
+            "name": "deal_name",
+            "type": "varchar",
+            "notNull": true,
+            "description": "Official name of the deal"
+        },
+        {
+            "name": "deal_type",
+            "type": "varchar",
+            "notNull": true,
+            "description": "Type of financial deal (e.g., Bond, Loan, Equity)"
+        },
+        {
+            "name": "status_id",
+            "type": "number",
+            "notNull": true,
+            "description": "Current status of the deal",
+            "lookup_id": 1
+        },
+        {
+            "name": "total_amount",
+            "type": "decimal",
+            "notNull": true,
+            "description": "Total deal amount in base currency"
+        },
+        {
+            "name": "currency",
+            "type": "varchar",
+            "notNull": true,
+            "description": "Currency of the deal"
+        },
+        {
+            "name": "launch_date",
+            "type": "date",
+            "notNull": true,
+            "description": "Date when deal was launched"
+        },
+        {
+            "name": "expected_close_date",
+            "type": "date",
+            "notNull": false,
+            "description": "Expected closing date for the deal"
+        },
+        {
+            "name": "lead_manager",
+            "type": "varchar",
+            "notNull": true,
+            "description": "Name of the lead manager for this deal"
+        },
+        {
+            "name": "number_of_tranches",
+            "type": "number",
+            "notNull": true,
+            "description": "Total number of tranches in this deal"
+        }
+    ],
+    "sample_queries": [
+        "SELECT deal_name, total_amount, currency FROM V_DEAL_OVERVIEW WHERE status_id = 3 ORDER BY total_amount DESC",
+        "SELECT COUNT(*) as active_deals FROM V_DEAL_OVERVIEW WHERE status_id IN (2,3) AND launch_date >= CURRENT_DATE - 90"
+    ],
+    "example_query": "SELECT * FROM DEALS.V_DEAL_OVERVIEW WHERE status_id = 3 AND launch_date >= '2024-01-01'",
+    "view_sql": "CREATE VIEW V_DEAL_OVERVIEW AS SELECT d.deal_id, d.deal_name, d.deal_type, d.status_id, d.total_amount, d.currency, d.launch_date, d.expected_close_date, d.lead_manager, COUNT(t.tranche_id) as number_of_tranches FROM deals d LEFT JOIN tranches t ON d.deal_id = t.deal_id GROUP BY d.deal_id, d.deal_name, d.deal_type, d.status_id, d.total_amount, d.currency, d.launch_date, d.expected_close_date, d.lead_manager"
+}

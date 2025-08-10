@@ -1,0 +1,23 @@
+{
+  "report_name": "Deal Pipeline Analysis Report",
+  "report_type": "DASHBOARD",
+  "view_name": "V_DEAL_OVERVIEW",
+  "business_domains": [1, 5],
+  "report_description": "Executive dashboard report showing deal pipeline health, status distribution, and key performance metrics across all active and pending deals",
+  "data_returned": "Deal counts by status, total pipeline value, average deal size, time-to-close metrics, and trend analysis over time periods",
+  "use_cases": "Executive reporting, pipeline forecasting, deal team performance analysis, capacity planning, client relationship management",
+  "related_views": ["V_DEAL_OVERVIEW", "V_TRANCHE_SYNDICATES", "V_SYNDICATE_ALLOCATIONS"],
+  "filters": [
+    "status_id IN (1,2,3) -- Active pipeline statuses",
+    "launch_date >= CURRENT_DATE - 365 -- Last 12 months",
+    "total_amount >= 1000000 -- Minimum deal size"
+  ],
+  "example_sql": "SELECT deal_type, COUNT(*) as deal_count, SUM(total_amount) as pipeline_value, AVG(total_amount) as avg_deal_size FROM DEALS.V_DEAL_OVERVIEW WHERE status_id IN (2,3) AND launch_date >= CURRENT_DATE - 180 GROUP BY deal_type ORDER BY pipeline_value DESC",
+  "key_metrics": [
+    "Total Pipeline Value",
+    "Number of Active Deals",
+    "Average Deal Size",
+    "Time to Close (Days)",
+    "Success Rate by Deal Type"
+  ]
+}
