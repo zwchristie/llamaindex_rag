@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:docs.wrenai.ai)",
+      "WebFetch(domain:getwren.ai)",
+      "Bash(python:*)",
+      "Bash(mkdir:*)",
+      "Bash(find:*)",
+      "Bash(poetry run:*)",
+      "Bash(curl:*)"
+    ],
+    "deny": []
+  }
+}

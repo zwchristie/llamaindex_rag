@@ -1,5 +1,4 @@
 {
-  "domains": ["DEAL", "TRANCHE", "SYNDICATE", "ISSUER"],
   "view_name": "V_TRANCHE_DETAILS_FOR_TODAYS_DEALS",
   "report_name": "Tranche Details for Today's Deals Report",
   "report_description": "This view provides a comprehensive overview of tranche details for deals occurring today, integrating information about deal names",

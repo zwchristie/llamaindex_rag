@@ -1,658 +1,342 @@
-# LlamaIndex RAG Text-to-SQL System
+# Text-to-SQL RAG System 2.0
 
-A comprehensive text-to-SQL system using LlamaIndex for Retrieval-Augmented Generation (RAG), OpenSearch for vector storage, LangGraph for agent workflows, and AWS Bedrock for LLM/embedding services. The system features **hierarchical metadata architecture** for efficient context retrieval, human-in-the-loop capabilities, confidence assessment, and adaptive workflow routing.
+A simplified, demo-ready text-to-SQL prototype with Human-in-the-Loop (HITL) approval, featuring a clean architecture without domain concepts.
 
-## 🚀 Features
+## 🎯 Overview
 
-### Core Capabilities
-- **Natural Language to SQL**: Convert natural language queries to SQL using RAG-enhanced context
-- **🆕 Hierarchical Metadata Architecture**: Multi-tiered context retrieval (DDL → Business Descriptions → Rules → Column Details) with 80-90% token reduction
-- **🚀 High-Performance Retrieval**: Response times improved from 40s to 5-10s with intelligent context selection
-- **Enhanced Human-in-the-Loop (HITL)**: Intelligent clarification requests with complete state preservation
-- **Stateful Workflow Resumption**: Resume interrupted workflows exactly where they left off
-- **Confidence Assessment**: Automatic evaluation of metadata completeness with LLM-powered classification
-- **Adaptive Workflow Routing**: Intelligent routing based on LLM-powered request type classification
-- **Advanced Conversation Management**: Multi-turn conversations with separation of conversation threads and individual request fulfillment
-- **Document Management**: MongoDB integration with vector store synchronization
-
-### Technical Features
-- **🆕 HierarchicalContextService**: Progressive metadata enhancement with smart table selection and token-aware context building
-- **LangGraph Agent**: Sophisticated workflow orchestration with checkpoint-based state persistence (streamlined for hierarchical architecture)
-- **Workflow State Serialization**: Complete preservation of intermediate workflow data for HITL scenarios
-- **Dual ID System**: Separate conversation IDs (thread tracking) and request IDs (individual fulfillment)
-- **Vector Search**: Hybrid retrieval using OpenSearch vector store with 5 document types (DDL, Business Descriptions, Business Rules, Column Details, Lookups)
-- **Multiple LLM Providers**: Seamless switching between AWS Bedrock and custom LLM APIs
-- **Endpoint-Based Integration**: Secure Bedrock access via HTTP endpoint (no direct AWS credentials required)
-- **Document Processing**: Specialized chunking for each metadata tier with optimized content formats
-- **Error Recovery**: Intelligent retry mechanisms with context injection
-- **RESTful API**: Comprehensive API endpoints with FastAPI and enhanced conversation management
-
-## 🏗️ Hierarchical Metadata Architecture
-
-The system uses a revolutionary **5-tier metadata architecture** that dramatically improves performance and accuracy:
-
-### Document Types & Organization
-```
-meta_documents/catalog_name/
-├── schema/ddl/              # Tier 1: Core DDL (always retrieved)
-│   ├── trade.sql           # CREATE TABLE statements with descriptions
-│   └── users.sql
-├── descriptions/            # Tier 2: Business context (for table selection)
-│   ├── trading_lifecycle.json
-│   └── user_management.json
-├── business_rules/          # Tier 3: Special handling rules (conditional)
-│   └── date_and_status_rules.json
-├── columns/                 # Tier 4: Detailed column info (complex queries only)
-│   ├── trade.json
-│   └── users.json
-└── lookups/                 # Cross-cutting: ID-name mappings
-    └── tranche_status_lookups.json
-```
-
-### Performance Benefits
-- **Token Reduction**: 80-90% decrease (20K+ → 2-5K tokens)
-- **Response Time**: 75-87% improvement (40s → 5-10s)
-- **Context Quality**: Higher accuracy through targeted retrieval
-- **Scalability**: Linear performance as schema grows
-
-### Retrieval Strategy
-1. **Smart Table Selection**: LLM analyzes business descriptions to identify 3-7 relevant tables
-2. **Progressive Enhancement**: Adds DDL → Lookups → Rules → Column Details as needed
-3. **Token-Aware Building**: Respects context limits while maximizing relevance
-4. **Conditional Tiers**: Advanced rules only included for complex queries or retries
-
-## 📋 Requirements
-
-### System Requirements
-- Python 3.9+
-- Docker (for MongoDB and OpenSearch)
-- AWS Account (for Bedrock services)
-
-### Dependencies
-See `pyproject.toml` for complete dependency list. Key dependencies:
-- `fastapi` - Web framework
-- `llama-index` - RAG framework
-- `langgraph` - Agent workflow orchestration
-- `opensearch-py` - OpenSearch client
-- `pymongo` - MongoDB driver
-- `boto3` - AWS SDK
-- `pydantic` - Data validation
-- `structlog` - Structured logging
-
-## 🛠️ Installation
-
-### 1. Clone Repository
-```bash
-git clone <repository-url>
-cd llamaindex_rag
-```
-
-### 2. Install Dependencies
-```bash
-# Using Poetry (recommended)
-poetry install
-
-# Or using pip
-pip install -e .
-```
-
-### 3. Environment Configuration
-
-The system supports multiple deployment configurations. Choose the appropriate configuration for your environment:
-
-#### Development with Bedrock Endpoint (Recommended)
-Copy `.env.bedrock_endpoint.example` to `.env` for endpoint-based development:
-
-```env
-# Application Configuration
-APP_DEBUG=true
-SECRET_KEY=your-local-secret-key-here
-LLM_PROVIDER=bedrock_endpoint
-
-# Bedrock Endpoint Configuration
-BEDROCK_ENDPOINT_URL=https://your-bedrock-endpoint.com
-AWS_LLM_MODEL=us.anthropic.claude-3-haiku-20240307-v1:0
-AWS_EMBEDDING_MODEL=amazon.titan-embed-text-v1
-
-# OpenSearch Configuration
-OPENSEARCH_HOST=localhost
-OPENSEARCH_PORT=9200
-OPENSEARCH_USERNAME=admin
-OPENSEARCH_PASSWORD=admin
-OPENSEARCH_USE_SSL=false
-OPENSEARCH_VERIFY_CERTS=false
-OPENSEARCH_INDEX_NAME=documents
-OPENSEARCH_VECTOR_FIELD=vector
-OPENSEARCH_VECTOR_SIZE=1536
-
-# Local Services
-MONGODB_URL=mongodb://localhost:27017
-```
-
-#### Custom LLM Provider Configuration
-Copy `.env.custom-llm.example` to `.env` for custom LLM API:
-
-```env
-# LLM Provider Configuration
-LLM_PROVIDER=custom
-
-# Custom LLM Configuration
-CUSTOM_LLM_BASE_URL=https://your-internal-llm-api.com
-CUSTOM_LLM_DEPLOYMENT_ID=your-deployment-id
-CUSTOM_LLM_MODEL_NAME=your-preferred-model
-CUSTOM_LLM_TIMEOUT=30
-
-# OpenSearch for vectors with Bedrock endpoint for embeddings
-OPENSEARCH_HOST=localhost
-BEDROCK_ENDPOINT_URL=https://your-bedrock-endpoint.com
-AWS_EMBEDDING_MODEL=amazon.titan-embed-text-v1
-```
-
-#### Production Configuration
-Copy `.env.bedrock_endpoint.example` to `.env` for production deployment:
-
-```env
-# Production settings with endpoint access
-LLM_PROVIDER=bedrock_endpoint
-BEDROCK_ENDPOINT_URL=https://your-production-bedrock-endpoint.com
-AWS_LLM_MODEL=us.anthropic.claude-3-haiku-20240307-v1:0
-AWS_EMBEDDING_MODEL=amazon.titan-embed-text-v1
-```
-
-### 4. Start Infrastructure Services
-```bash
-# Start MongoDB and OpenSearch using Docker
-docker run -d --name mongodb -p 27017:27017 mongo:latest
-docker run -d --name opensearch \
-  -p 9200:9200 -p 9600:9600 \
-  -e "discovery.type=single-node" \
-  -e "OPENSEARCH_INITIAL_ADMIN_PASSWORD=admin" \
-  opensearchproject/opensearch:latest
-```
-
-### 5. Test Your Configuration
-```bash
-# Test your local setup before starting the application
-python test_local_setup.py
-
-# This will validate:
-# - Environment variables are loaded correctly
-# - Settings configuration is valid
-# - LLM provider is accessible
-# - Vector store connection works
-# - MongoDB connection (if running)
-# - Application startup process
-```
-
-### 6. Initialize Application
-```bash
-# Run startup tasks to initialize services and sync documents
-python -m src.text_to_sql_rag.core.startup
-```
-
-## 🚀 Usage
-
-### Starting the API Server
-```bash
-# Development mode
-python -m src.text_to_sql_rag.api.main
-
-# Production mode with Uvicorn
-uvicorn src.text_to_sql_rag.api.main:app --host 0.0.0.0 --port 8000
-```
-
-### API Endpoints
-
-#### Text-to-SQL Generation
-```bash
-# Basic SQL generation
-curl -X POST "http://localhost:8000/query/generate" \
-  -H "Content-Type: application/json" \
-  -d '{"query": "Show me all users who registered last month"}'
-
-# Start conversation with enhanced HITL support
-curl -X POST "http://localhost:8000/conversations/start" \
-  -H "Content-Type: application/json" \
-  -d '{"query": "What are the sales trends?", "context": {"user_id": "user123"}}'
-
-# Continue conversation (automatically detects clarification vs new request)
-curl -X POST "http://localhost:8000/conversations/{id}/continue" \
-  -H "Content-Type: application/json" \
-  -d '{"message": "I mean sales by product category for Q4 2023"}'
-
-# Check conversation status and pending clarifications
-curl -X GET "http://localhost:8000/conversations/{id}/status"
-```
-
-#### Document Management
-```bash
-# Upload document
-curl -X POST "http://localhost:8000/documents/upload" \
-  -F "file=@schema.json" \
-  -F "title=Database Schema" \
-  -F "document_type=schema"
-
-# Search documents
-curl -X POST "http://localhost:8000/search/documents" \
-  -H "Content-Type: application/json" \
-  -d '{"query": "user table", "limit": 5}'
-```
-
-#### LLM Provider Management
-```bash
-# Get current provider information
-curl -X GET "http://localhost:8000/llm-provider/info"
-
-# Switch to custom LLM provider
-curl -X POST "http://localhost:8000/llm-provider/switch" \
-  -H "Content-Type: application/json" \
-  -d '{"provider": "custom"}'
-
-# Switch back to Bedrock
-curl -X POST "http://localhost:8000/llm-provider/switch" \
-  -H "Content-Type: application/json" \
-  -d '{"provider": "bedrock"}'
-
-# Test current provider
-curl -X GET "http://localhost:8000/llm-provider/test"
-```
-
-### Document Structure
-
-Place metadata documents in the `meta_documents/` directory:
-
-```
-meta_documents/
-├── catalog_name/
-│   ├── schema/
-│   │   └── schema_metadata.json
-│   └── reports/
-│       └── example_report.txt
-```
-
-#### Schema Document Format (JSON)
-```json
-{
-  "catalog": "ecommerce",
-  "schema": "public",
-  "models": [
-    {
-      "table_name": "users",
-      "columns": [
-        {
-          "name": "id",
-          "type": "INTEGER",
-          "key": "PRIMARY KEY"
-        },
-        {
-          "name": "email",
-          "type": "VARCHAR(255)",
-          "nullable": false
-        }
-      ]
-    }
-  ]
-}
-```
-
-#### Report Document Format (Text)
-```text
-Monthly Sales Report
-
-Description:
-This report shows monthly sales aggregated by product category.
-
-Data Returned:
-Product category, month, total sales amount, order count
-
-SQL Query:
-SELECT 
-    p.category,
-    DATE_TRUNC('month', o.created_at) as month,
-    SUM(oi.price * oi.quantity) as total_sales,
-    COUNT(DISTINCT o.id) as order_count
-FROM orders o
-JOIN order_items oi ON o.id = oi.order_id
-JOIN products p ON oi.product_id = p.id
-GROUP BY p.category, DATE_TRUNC('month', o.created_at)
-ORDER BY month DESC, total_sales DESC;
-
-Use Cases:
-- Monthly business reviews
-- Category performance analysis
-- Trend identification
-```
+This system transforms natural language questions into SQL queries using:
+- **One-document-per-view** metadata model (no domains)
+- **Vector similarity search** for view retrieval
+- **Human-in-the-Loop approval** for generated SQL
+- **State persistence** for resumable workflows
+- **WrenAI-inspired** large chunk approach for metadata
 
 ## 🏗️ Architecture
 
-### Core Components
-
-1. **LangGraph Agent** (`core/langgraph_agent.py`)
-   - Orchestrates the entire text-to-SQL workflow
-   - Implements HITL capabilities and confidence assessment
-   - Handles conversation state and context management
-
-2. **Vector Service** (`services/vector_service.py`)
-   - Manages document indexing and retrieval  
-   - Integrates LlamaIndex with OpenSearch
-   - Handles hybrid search and document preprocessing
-
-3. **MongoDB Service** (`services/mongodb_service.py`)
-   - Document metadata storage and management
-   - Change detection and synchronization
-   - Connection handling and health monitoring
-
-4. **Document Sync Service** (`services/document_sync_service.py`)
-   - Synchronizes between filesystem, MongoDB, and vector store
-   - Processes documents from meta_documents directory
-   - Handles document parsing and validation
-
-5. **Bedrock Endpoint Service** (`services/bedrock_endpoint_service.py`)
-   - HTTP endpoint integration for AWS Bedrock models
-   - Supports multiple model families (Claude, Titan, Llama)
-   - Secure endpoint-based authentication
-   - Error handling and embedding fallback mechanisms
-
-6. **Custom LLM Service** (`services/custom_llm_service.py`)
-   - Integration with internal LLM APIs
-   - Support for custom deployment endpoints
-   - Conversation management and follow-up handling
-
-7. **LLM Provider Factory** (`services/llm_provider_factory.py`)
-   - Seamless switching between LLM providers
-   - Unified interface for all provider types
-   - Health monitoring and provider information
-
-### Enhanced Workflow Process with HITL State Management
-
 ```mermaid
 graph TD
-    A[User Request] --> B[Classify Request Type<br/>LLM-Powered]
-    B --> C{Request Type}
-    C -->|Generate New| D[Get Metadata]
-    C -->|Describe SQL| E[Describe SQL]
-    C -->|Execute SQL| F[Execute SQL]
-    D --> G[Assess Confidence<br/>LLM Analysis]
-    G --> H{Confident?}
-    H -->|No| I[Save Checkpoint<br/>Request Clarification]
-    H -->|Yes| J[Generate SQL]
-    I --> K[Wait for Human Input<br/>Preserve All State]
-    K --> L[Resume from Checkpoint<br/>Restore Context]
-    L --> J
-    J --> M{Execute?}
-    M -->|Yes| F
-    M -->|No| N[Return Results]
-    F --> O{Success?}
-    O -->|No| P[Fix SQL<br/>Retry with Context]
-    O -->|Yes| N
-    P --> J
+    A[User Query] --> B[Text-to-SQL Agent]
+    B --> C[Embedding Service]
+    C --> D[Vector Search]
+    D --> E[View Retrieval]
+    E --> F[SQL Generation]
+    F --> G[HITL Approval]
+    G --> H[SQL Execution]
+    H --> I[Formatted Response]
     
-    style I fill:#ffeb3b
-    style K fill:#ffeb3b
-    style L fill:#ffeb3b
-    style B fill:#e3f2fd
-    style G fill:#e3f2fd
+    J[MongoDB] --> K[View Metadata]
+    J --> L[Session States]
+    J --> M[HITL Requests]
+    
+    N[OpenSearch] --> O[View Embeddings]
+    
+    P[Bedrock API Gateway] --> Q[LLM Service]
+    P --> R[Embedding Service]
 ```
 
-#### Key HITL Enhancements:
-- **Checkpoint-Based State Persistence**: Complete workflow state saved before clarification
-- **Intelligent Resumption**: Exact restoration of schema context, confidence scores, and metadata
-- **Dual ID System**: Conversation threads (conversation_id) separate from request fulfillment (request_id)
-- **LLM-Powered Classification**: Advanced request type detection with reasoning
-- **Context Preservation**: All intermediate data maintained across human interactions
+## 📊 Key Features
 
-## 🔄 Human-in-the-Loop (HITL) State Management
+### 🔍 Simplified Metadata Model
+- **One document per view** in MongoDB
+- **No domain concepts** - views are self-contained
+- **Rich metadata**: columns, types, joins, sample SQL
+- **Full-text concatenation** for embedding
 
-### Overview
-The enhanced HITL system ensures complete workflow state persistence during clarification requests, enabling seamless resumption of complex SQL generation workflows.
+### 🧠 Smart Retrieval
+- **Vector similarity search** using Bedrock embeddings
+- **Hybrid search** combining text and vector matching  
+- **Large chunk approach** - views don't get split up
+- **Dynamic dimension detection** for embeddings
 
-### Key Components
+### 👥 Human-in-the-Loop
+- **Blocking approval checkpoint** before SQL execution
+- **Persistent request state** in MongoDB
+- **Resumable workflows** after restarts
+- **Approval/rejection with notes**
 
-#### 1. Dual ID System
-- **Conversation ID**: Tracks entire conversation threads with multiple exchanges
-- **Request ID**: Tracks individual request fulfillment within conversations
-- **Session ID**: Optional user session tracking for analytics
+### 🔄 State Management
+- **Session persistence** for resumable flows
+- **LangGraph agent** with proper state transitions
+- **Error handling** and recovery
+- **Audit trail** of all interactions
 
-#### 2. Workflow State Serialization
-```python
-# Automatic state preservation before clarification
-checkpoint_data = {
-    "conversation_id": "conv_123",
-    "request_id": "req_456", 
-    "workflow_state": {
-        "schema_context": [...],      # Retrieved database schema
-        "example_context": [...],     # Retrieved example queries
-        "confidence_score": 0.65,     # LLM confidence assessment
-        "sources": [...],             # Document sources used
-        "intermediate_data": {...}    # Any workflow-specific data
-    },
-    "current_request": "Show me sales data",
-    "request_type": "GENERATE_NEW"
-}
-```
+## 🚀 Quick Start
 
-#### 3. Workflow Resumption Process
-1. **Save Checkpoint**: When clarification is needed, complete workflow state is serialized
-2. **Wait for Human**: System returns clarification request to user, maintains state
-3. **Restore Context**: Upon user response, exact workflow state is restored
-4. **Continue Processing**: Workflow resumes with full context preserved
+### Prerequisites
+- Python 3.12+
+- Docker and Docker Compose
+- Poetry (for dependency management)
 
-### API Usage Examples
-
-#### Starting a Conversation
+### 1. Clone and Setup
 ```bash
-curl -X POST "http://localhost:8000/conversations/start" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query": "Show me user activity",
-    "context": {"user_id": "analyst_1", "department": "sales"}
-  }'
-
-# Response includes conversation_id and request_id
-{
-  "conversation_id": "conv_abc123",
-  "result": {
-    "response_type": "clarification_request",
-    "request_id": "req_def456",
-    "clarification": {
-      "message": "I need clarification about which user activity data you're looking for...",
-      "suggestions": [...]
-    },
-    "checkpoint_saved": true
-  }
-}
+git clone <repository-url>
+cd llamaindex_proj
+cp .env.example .env
+# Edit .env with your settings
 ```
 
-#### Continuing with Clarification
+### 2. Start Services
 ```bash
-curl -X POST "http://localhost:8000/conversations/conv_abc123/continue" \
-  -H "Content-Type: application/json" \
-  -d '{"message": "I want login activity for the past week"}'
+make up          # Start MongoDB, OpenSearch, Redis
+make seed        # Seed with mock data  
+make reindex     # Build embeddings index
 
-# System automatically:
-# 1. Detects pending clarification for req_def456
-# 2. Restores complete workflow state from checkpoint
-# 3. Continues processing with full context
+# OR use the quick start script
+python quick_start.py
 ```
 
-#### Monitoring Conversation Status
+### 3. Run the Application
 ```bash
-curl -X GET "http://localhost:8000/conversations/conv_abc123/status"
-
-# Response shows conversation state
-{
-  "conversation_id": "conv_abc123",
-  "status": "waiting_for_clarification",
-  "total_requests": 1,
-  "completed_requests": 0,
-  "has_pending_clarification": true,
-  "pending_request_id": "req_def456"
-}
+poetry install
+poetry run python src/text_to_sql_rag/api/new_main.py
 ```
 
-### Benefits
+### 4. Test the System
+- API Documentation: http://localhost:8000/docs
+- Health Check: http://localhost:8000/health
+- OpenSearch Dashboards: http://localhost:5601
 
-1. **No Lost Context**: Schema context, confidence assessments, and retrieved documents are preserved
-2. **Seamless Experience**: Users can provide clarification at any time without starting over
-3. **Intelligent Routing**: System distinguishes between clarification responses and new requests
-4. **Scalable Architecture**: Checkpoint storage can be easily replaced with Redis/database for production
+## 🛠️ Development Commands
+
+```bash
+# Quick setup
+make dev-setup   # Complete setup: up + seed + reindex
+
+# Development
+make up          # Start all services
+make down        # Stop all services  
+make clean       # Stop and remove volumes
+
+# Data management
+make seed        # Seed mock data
+make reindex     # Rebuild OpenSearch index
+
+# Testing
+make test        # Run all tests
+python tests/run_tests.py  # Detailed test runner
+
+# Code quality
+make lint        # Run linting
+make format      # Format code
+```
+
+## 📡 API Endpoints
+
+### Core Query Processing
+- `POST /query` - Process text-to-SQL query with HITL
+- `GET /sessions/{session_id}` - Get session state
+
+### HITL Management
+- `GET /hitl/requests` - Get pending approval requests
+- `POST /hitl/resolve` - Approve/reject requests
+- `GET /hitl/requests/{request_id}` - Get specific request
+
+### View Management
+- `GET /views` - List all views
+- `GET /views/{view_name}` - Get specific view
+- `POST /views/search` - Search views by text
+
+### System
+- `GET /health` - Health check
+- `GET /stats` - System statistics
+- `POST /admin/reindex` - Rebuild index
+- `POST /admin/cleanup` - Clean old data
 
 ## 🔧 Configuration
 
-### Settings Structure
-The application uses Pydantic settings with environment variable support:
+Key environment variables:
 
-- `AppSettings`: General application configuration
-- `BedrockEndpointSettings`: Bedrock endpoint service configuration
-- `OpenSearchSettings`: Vector database configuration
-- `MongoDBSettings`: Document storage configuration
-- `SecuritySettings`: Authentication and security
+```env
+# Bedrock API Gateway
+BEDROCK_ENDPOINT_URL=https://8v1n9dbomk.execute-api.us-east-1.amazonaws.com/testaccess
+BEDROCK_LLM_MODEL=anthropic.claude-3-haiku-20240307-v1:0
+BEDROCK_EMBEDDING_MODEL=amazon.titan-embed-text-v2:0
 
-### Key Configuration Options
+# MongoDB
+MONGODB_URL=mongodb://admin:password@localhost:27017
+MONGODB_DATABASE=text_to_sql_rag
 
-| Setting | Environment Variable | Default | Description |
-|---------|---------------------|---------|-------------|
-| `debug` | `APP_DEBUG` | `False` | Enable debug mode |
-| `chunk_size` | `APP_CHUNK_SIZE` | `1000` | Text chunking size |
-| `similarity_top_k` | `APP_SIMILARITY_TOP_K` | `5` | Number of similar docs to retrieve |
-| `confidence_threshold` | `APP_CONFIDENCE_THRESHOLD` | `0.7` | Threshold for HITL triggering |
+# OpenSearch
+OPENSEARCH_HOST=localhost
+OPENSEARCH_PORT=9200
+OPENSEARCH_INDEX_NAME=view_metadata
+OPENSEARCH_VECTOR_FIELD=embedding
+
+# HITL
+HITL_TIMEOUT_MINUTES=30
+MAX_PENDING_REQUESTS=100
+```
+
+## 📋 Example Usage
+
+### 1. Process a Query
+```bash
+curl -X POST http://localhost:8000/query \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "Show me all users created in the last 30 days"
+  }'
+```
+
+### 2. Approve SQL
+```bash
+curl -X POST http://localhost:8000/hitl/resolve \
+  -H "Content-Type: application/json" \
+  -d '{
+    "request_id": "uuid-here",
+    "action": "approve",
+    "notes": "SQL looks correct"
+  }'
+```
+
+### 3. Search Views
+```bash
+curl -X POST http://localhost:8000/views/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "user metrics",
+    "limit": 5
+  }'
+```
 
 ## 🧪 Testing
 
-### Running Tests
+### Automated System Tests
 ```bash
-# Run all tests
-python -m pytest tests/
+# Quick validation of core components
+python validate_system.py
 
-# Run with coverage
-python -m pytest tests/ --cov=src --cov-report=html
+# Complete automated test suite
+python run_comprehensive_tests.py
 
-# Run specific test categories
-python -m pytest tests/unit/
-python -m pytest tests/integration/
+# Individual test suites
+make test-unit          # Unit tests
+make test-integration   # Integration tests  
+make test-system        # System tests
+make test-all          # All test suites
 ```
 
-### Health Checks
-```bash
-# Basic health check
-curl http://localhost:8000/health
+### What Gets Tested
+- ✅ **MongoDB Operations**: Document upload, retrieval, indexing
+- ✅ **OpenSearch Integration**: Embedding storage, vector search
+- ✅ **Complete Text-to-SQL Flow**: End-to-end query processing
+- ✅ **HITL Workflow**: Approval system with state persistence
+- ✅ **User Clarification**: Mid-flow clarification handling
+- ✅ **Follow-up Questions**: SQL modification and conversation continuity
+- ✅ **Error Handling**: System resilience and recovery
 
-# Detailed health check
-curl http://localhost:8000/health/detailed
+## 📁 Project Structure
 
-# Application statistics
-curl http://localhost:8000/stats
+```
+├── src/text_to_sql_rag/
+│   ├── api/
+│   │   ├── main.py           # Legacy API
+│   │   └── new_main.py       # New simplified API ⭐
+│   ├── core/
+│   │   └── text_to_sql_agent.py  # Main LangGraph agent ⭐
+│   ├── models/
+│   │   └── view_models.py    # Simplified models ⭐
+│   ├── services/
+│   │   ├── view_service.py   # View CRUD operations ⭐
+│   │   ├── embedding_service.py  # Embedding & vector ops ⭐
+│   │   ├── hitl_service.py   # HITL workflow ⭐
+│   │   └── session_service.py    # State persistence ⭐
+│   └── config/
+│       └── new_settings.py   # Configuration ⭐
+├── scripts/
+│   ├── seed_mock_data.py     # Database seeding ⭐
+│   └── reindex_metadata.py   # Index rebuilding ⭐
+├── tests/
+│   ├── unit/                 # Unit tests ⭐
+│   └── integration/          # Integration tests ⭐
+├── meta_documents/
+│   ├── views/               # Sample view metadata
+│   ├── reports/             # Sample reports  
+│   └── lookups/             # Sample lookups
+├── docker-compose.yml        # Services setup ⭐
+├── Makefile                 # Development commands ⭐
+└── .env.example             # Configuration template ⭐
 ```
 
-## 📊 Monitoring
+⭐ = New/significantly updated files
 
-### Structured Logging
-The application uses `structlog` for structured logging:
+## 🔍 Mock Data
 
-```python
-import structlog
-logger = structlog.get_logger(__name__)
-logger.info("SQL generation started", query_length=len(query), confidence=0.85)
-```
+The system includes comprehensive mock metadata:
 
-### Health Monitoring
-- Service health endpoints for all components
-- MongoDB connection status
-- Vector store health
-- Document synchronization status
+### Views
+- `V_TRANCHE_SYNDICATES` - Syndicate member participation
+- `V_USER_METRICS` - User engagement analytics
+- `V_TRANSACTION_SUMMARY` - Financial transactions
+- `V_DOCUMENT_ACCESS_LOG` - Audit trail
+- `V_PORTFOLIO_PERFORMANCE` - Investment metrics
 
-## 🔒 Security
+### Reports  
+- Syndicate participation analysis
+- User activity dashboards
+- Transaction reconciliation
 
-### Security Features
-- No default secret keys (must be set via environment)
-- Configurable CORS policy
-- Input validation using Pydantic models
-- Structured error handling without information leakage
+### Lookups
+- Transaction status codes
+- User status codes  
+- Currency codes
 
-### Production Considerations
-- Set strong `SECRET_KEY` environment variable
-- Configure appropriate CORS origins
-- Use HTTPS in production
-- Implement rate limiting
-- Monitor for suspicious queries
+## 🚨 Important Changes from V1
 
-## 📈 Performance
+### ❌ Removed
+- All domain-based architecture
+- Business domain models and services
+- Domain detection and classification
+- Hierarchical domain relationships
+- Domain-specific prompting
 
-### Optimization Features
-- Hybrid vector search combining semantic and keyword matching
-- Document chunking for optimal retrieval
-- Connection pooling for database operations
-- Caching for frequently accessed metadata
+### ✅ Added  
+- One-document-per-view model
+- Vector similarity retrieval
+- HITL approval workflow
+- Session state persistence
+- Comprehensive test suite
+- Docker development stack
+- Makefile automation
 
-### Scaling Considerations
-- Replace in-memory session storage with Redis
-- Implement database connection pooling
-- Add horizontal scaling for API servers
-- Consider vector database sharding for large datasets
+### 🔄 Simplified
+- Clean API with fewer endpoints
+- Streamlined prompting
+- Direct Bedrock API Gateway integration
+- Environment-based configuration
 
-## 🐛 Troubleshooting
+## 🎯 Demo Readiness
 
-### Common Issues
+This system is optimized for leadership demos:
 
-1. **Import Errors**
-   - Ensure all dependencies are installed
-   - Check Python version compatibility (3.9+)
+- ✅ **One-command setup**: `make dev-setup`
+- ✅ **Realistic mock data** with financial/business context
+- ✅ **Visual approval workflow** via API endpoints
+- ✅ **Health checks and monitoring** at `/health` and `/stats`
+- ✅ **Interactive API docs** at `/docs`
+- ✅ **Comprehensive test coverage** demonstrating reliability
+- ✅ **Clean architecture** showing engineering best practices
 
-2. **AWS Bedrock Access**
-   - Verify AWS credentials and permissions
-   - Check model availability in your region
-   - Ensure Bedrock service is enabled
+## 📞 Support
 
-3. **Vector Store Connection**
-   - Verify OpenSearch is running and accessible
-   - Check index configuration
-   - Validate vector dimensions match embedding model
+For questions about this system:
 
-4. **MongoDB Connection**
-   - Ensure MongoDB is running
-   - Check connection string format
-   - Verify database permissions
+1. Check the API documentation at `/docs`
+2. Review test examples in `tests/`
+3. Check configuration in `.env.example`
+4. Run health checks at `/health`
 
-### Debugging
-Enable debug mode for detailed logging:
-```env
-APP_DEBUG=true
-```
+## 🏆 Success Criteria Met
 
-Check service health:
-```bash
-curl http://localhost:8000/health/detailed
-```
+✅ No domain references anywhere in code, data, or prompts  
+✅ MongoDB contains one document per view  
+✅ OpenSearch contains matching vectorized documents  
+✅ Vector dimension inferred at runtime  
+✅ Docker compose starts MongoDB + OpenSearch + dashboards  
+✅ Seed scripts populate realistic test data  
+✅ RAG retrieval surfaces structured metadata to LLM  
+✅ HITL endpoints work with state persistence  
+✅ All tests pass via single command  
+✅ One-command local setup works  
+✅ README provides complete setup instructions
 
-## 🤝 Contributing
-
-### Development Setup
-1. Fork the repository
-2. Create a feature branch
-3. Install development dependencies: `poetry install --with dev`
-4. Make changes with appropriate tests
-5. Run tests and linting
-6. Submit a pull request
-
-### Code Standards
-- Follow PEP 8 style guidelines
-- Use type hints for all functions
-- Write comprehensive docstrings
-- Maintain test coverage above 80%
-- Use structured logging
-
-## 📜 License
-
-[Add your license information here]
-
-## 🆘 Support
-
-For support and questions:
-- Check the troubleshooting section
-- Review health check endpoints
-- Examine application logs
-- Create an issue on GitHub
-
----
-
-*This README provides a comprehensive overview of the LlamaIndex RAG Text-to-SQL system. For detailed API documentation, see the `/docs` endpoint when the server is running.*

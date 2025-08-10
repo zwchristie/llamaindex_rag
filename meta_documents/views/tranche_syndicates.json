@@ -1,0 +1,16 @@
+{
+    "example_query": "V_TRANCHE_SYNDICATES",
+    "view_sql": "test sql to be created - fill in",
+    "data_returned": "test data return - fill in",
+    "use_cases": "test use cases - fill in",
+    "view_name": "V_TRANCHE_SYNDICATES",
+    "view_type": "SUPPORTING",
+    "description": "test description - fill in",
+    "columns": [
+        {
+            "name": "tranche_id",
+            "type": "number",
+            "notNull": true
+        }
+    ]
+}
