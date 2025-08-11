@@ -1,504 +1,271 @@
-"""FastAPI application for text-to-SQL RAG system."""
+"""
+Consolidated FastAPI application for text-to-SQL RAG system.
+Focused on conversation-based workflows, metadata management, and one-shot queries.
+"""
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
-from typing import List, Optional
-import tempfile
-import os
+from typing import List, Optional, Dict, Any, Union
 import uuid
+import json
 from datetime import datetime
 from pathlib import Path
+import logging
+from contextlib import asynccontextmanager
+from pydantic import BaseModel
 
+# Core imports
 from ..config.settings import settings
-from ..services.vector_service import LlamaIndexVectorService
-from ..services.query_execution_service import QueryExecutionService
-from ..core.langgraph_agent import TextToSQLAgent
 from ..core.startup import run_startup_tasks, get_initialized_services
-from ..models.simple_models import (
-    DocumentType, DocumentUploadRequest, DocumentSearchRequest, DocumentSearchResponse,
-    SQLGenerationRequest, SQLGenerationResponse, QueryValidationRequest, QueryValidationResponse,
-    QueryExplanationRequest, QueryExplanationResponse, SessionRequest, SessionResponse,
-    HealthCheckResponse
-)
-from ..models.conversation import (
-    ConversationState, RequestType, ConversationStatus, AgentResponse
-)
+from ..core.langgraph_agent import TextToSQLAgent
+from ..services.query_execution_service import QueryExecutionService
+from ..services.mongodb_service import MongoDBService
+from ..services.vector_service import LlamaIndexVectorService
+from ..services.embedding_service import EmbeddingService
 from ..services.llm_provider_factory import llm_factory
+from ..models.simple_models import (
+    DocumentType, SQLGenerationRequest, HealthCheckResponse
+)
+from ..models.conversation import ConversationState, ConversationStatus
 import structlog
 
+# Setup logging
+logging.basicConfig(level=logging.INFO)
 logger = structlog.get_logger(__name__)
 
-# In-memory session storage (replace with Redis in production)
-sessions = {}
-# In-memory conversation storage for HITL workflows
+# Global services storage
+app_services = {}
+
+# In-memory storage for conversations (use Redis in production)
 conversations = {}
-# Enhanced storage for conversation threads vs individual requests
-conversation_threads = {}  # conversation_id -> conversation metadata and message history
-active_requests = {}       # request_id -> checkpoint data for HITL workflows
+conversation_threads = {}
+
+
+class ConversationRequest(BaseModel):
+    """Request model for starting conversations."""
+    query: str
+    context: Optional[Dict[str, Any]] = {}
+    session_id: Optional[str] = None
+
+
+class ContinueConversationRequest(BaseModel):
+    """Request model for continuing conversations."""
+    message: str
+    context: Optional[Dict[str, Any]] = {}
+
+
+class OneShotRequest(BaseModel):
+    """Request model for one-shot SQL generation."""
+    query: str
+    mode: str = "generate"  # "generate" or "edit"
+    existing_sql: Optional[str] = None
+
+
+class MetadataRequest(BaseModel):
+    """Request model for saving/updating metadata."""
+    document_type: str  # "view", "report", "lookup", "business_domain"
+    data: Dict[str, Any]
+    metadata_id: Optional[str] = None  # For updates
+
+
+class MetadataSearchRequest(BaseModel):
+    """Request model for searching metadata."""
+    query: Optional[str] = None
+    document_type: Optional[str] = None
+    limit: int = 20
+    offset: int = 0
+
+
+async def initialize_services():
+    """Initialize all required services."""
+    try:
+        success = await run_startup_tasks()
+        if success:
+            # Get initialized services
+            mongodb_service, vector_service, _ = get_initialized_services()
+            
+            # Initialize additional services
+            query_execution_service = QueryExecutionService()
+            sql_agent = TextToSQLAgent(vector_service, query_execution_service)
+            
+            # Store services globally
+            app_services.update({
+                "mongodb_service": mongodb_service,
+                "vector_service": vector_service,
+                "query_execution_service": query_execution_service,
+                "sql_agent": sql_agent
+            })
+            
+            logger.info("All services initialized successfully")
+            return True
+        else:
+            logger.error("Failed to initialize services")
+            return False
+    except Exception as e:
+        logger.error(f"Service initialization failed: {e}")
+        return False
+
+
+async def cleanup_services():
+    """Cleanup services on shutdown."""
+    try:
+        if "mongodb_service" in app_services:
+            await app_services["mongodb_service"].close()
+        logger.info("Services cleaned up successfully")
+    except Exception as e:
+        logger.error(f"Error during cleanup: {e}")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan manager."""
+    success = await initialize_services()
+    if not success:
+        logger.error("Failed to initialize application")
+    yield
+    await cleanup_services()
+
 
 # Initialize FastAPI app
 app = FastAPI(
-    title=settings.app.title,
-    description=settings.app.description,
-    version=settings.app.version,
-    debug=settings.app.debug
+    title="Text-to-SQL RAG API",
+    description="Consolidated API for conversation-based text-to-SQL with metadata management",
+    version="3.0.0",
+    lifespan=lifespan
 )
-#poke
-# Add CORS middleware
-# Configure CORS - update for production
-allowed_origins = ["http://localhost:3000", "http://localhost:8080"]  # Add your frontend URLs
-if settings.app.debug:
-    allowed_origins.append("*")  # Allow all origins in debug mode only
 
+# CORS configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
+    allow_origins=["http://localhost:3000", "http://localhost:8080", "*"],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
-# Global variables for services (will be initialized on startup)
-vector_service = None
-query_execution_service = None
-sql_agent = None
-mongodb_service = None
-sync_service = None
+
+# Dependency injection
+def get_sql_agent() -> TextToSQLAgent:
+    if "sql_agent" not in app_services:
+        raise HTTPException(status_code=503, detail="SQL agent not initialized")
+    return app_services["sql_agent"]
 
 
-@app.on_event("startup")
-async def startup_event():
-    """Run startup tasks on application startup."""
-    global vector_service, query_execution_service, sql_agent, mongodb_service, sync_service
-    
-    success = await run_startup_tasks()
-    if success:
-        # Get initialized services
-        mongodb_service, vector_service, _ = get_initialized_services()
-        query_execution_service = QueryExecutionService()
-        sql_agent = TextToSQLAgent(vector_service, query_execution_service)
-        print("Application startup completed successfully")
-    else:
-        print("Application startup failed - some features may not work")
+def get_mongodb_service() -> MongoDBService:
+    if "mongodb_service" not in app_services:
+        raise HTTPException(status_code=503, detail="MongoDB service not initialized")
+    return app_services["mongodb_service"]
 
 
-# Health check endpoints
+def get_vector_service() -> LlamaIndexVectorService:
+    if "vector_service" not in app_services:
+        raise HTTPException(status_code=503, detail="Vector service not initialized")
+    return app_services["vector_service"]
+
+
+# Note: Hierarchical service removed - using TextToSQLAgent directly
+
+
+# =============================================================================
+# HEALTH & STATUS ENDPOINTS
+# =============================================================================
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
-    if not vector_service or not query_execution_service:
+    if not app_services:
+        return {"status": "starting", "message": "Services are initializing"}
+    
+    try:
+        # Check core services
+        mongodb_healthy = False
+        if "mongodb_service" in app_services:
+            mongo_health = app_services["mongodb_service"].health_check()
+            mongodb_healthy = mongo_health.get("status") == "connected"
+        
+        vector_healthy = False
+        if "vector_service" in app_services:
+            vector_healthy = app_services["vector_service"].health_check()
+        
+        execution_healthy = False
+        if "query_execution_service" in app_services:
+            execution_healthy = app_services["query_execution_service"].health_check()
+        
+        status = "healthy" if all([mongodb_healthy, vector_healthy, execution_healthy]) else "degraded"
+        
         return {
-            "status": "starting",
-            "message": "Services are still initializing"
-        }
-    
-    vector_healthy = vector_service.health_check()
-    execution_healthy = query_execution_service.health_check()
-    
-    status = "healthy"
-    if not vector_healthy or not execution_healthy:
-        status = "degraded"
-    
-    # Add MongoDB health check
-    mongodb_status = "disconnected"
-    if mongodb_service:
-        mongo_health = mongodb_service.health_check()
-        mongodb_status = mongo_health.get("status", "disconnected")
-    
-    # Add document sync status - now handled directly in startup
-    sync_status = {"status": "direct_mongodb_sync", "method": "mongodb_to_vector_store"}
-    
-    return {
-        "status": status,
-        "vector_store": "connected" if vector_healthy else "disconnected",
-        "execution_service": "connected" if execution_healthy else "disconnected",
-        "mongodb": mongodb_status,
-        "document_sync": sync_status,
-        "version": settings.app.version,
-        "timestamp": datetime.utcnow().isoformat()
-    }
-
-
-@app.get("/health/detailed")
-async def detailed_health_check():
-    """Detailed health check with service statistics."""
-    return {
-        "status": "healthy",
-        "services": {
-            "vector_store": vector_service.get_index_stats() if vector_service else {"status": "not_initialized"},
-            "execution_service": {
-                "available": query_execution_service.health_check() if query_execution_service else False,
-                "endpoint": settings.app.execution_api_url
+            "status": status,
+            "services": {
+                "mongodb": "connected" if mongodb_healthy else "disconnected",
+                "vector_store": "connected" if vector_healthy else "disconnected", 
+                "execution_service": "connected" if execution_healthy else "disconnected",
+                "sql_agent": "initialized" if "sql_agent" in app_services else "not_initialized"
             },
-            "opensearch": {
-                "host": settings.opensearch.host,
-                "port": settings.opensearch.port,
-                "index_name": settings.opensearch.index_name
-            },
-            "settings": {
-                "chunk_size": settings.app.chunk_size,
-                "chunk_overlap": settings.app.chunk_overlap,
-                "similarity_top_k": settings.app.similarity_top_k
-            }
-        }
-    }
-
-
-# Document management endpoints
-@app.post("/documents/upload")
-async def upload_document(
-    file: UploadFile = File(...),
-    title: str = Form(...),
-    document_type: DocumentType = Form(...),
-    description: Optional[str] = Form(None)
-):
-    """Upload a new document."""
-    
-    # Validate file type
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="No filename provided")
-    
-    file_extension = Path(file.filename).suffix.lower().lstrip('.')
-    if file_extension not in settings.app.allowed_file_types:
-        raise HTTPException(
-            status_code=400, 
-            detail=f"File type .{file_extension} not allowed. Allowed types: {settings.app.allowed_file_types}"
-        )
-    
-    # Check file size
-    content = await file.read()
-    if len(content) > settings.app.max_upload_size:
-        raise HTTPException(
-            status_code=413,
-            detail=f"File too large. Maximum size: {settings.app.max_upload_size} bytes"
-        )
-    
-    # Save file temporarily
-    with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file_extension}") as temp_file:
-        temp_file.write(content)
-        temp_file_path = temp_file.name
-    
-    try:
-        # Decode content
-        content_text = content.decode('utf-8')
-        
-        # Generate unique document ID
-        document_id = str(uuid.uuid4().int)[:10]  # Use first 10 digits of UUID as string
-        
-        # Prepare metadata
-        metadata = {
-            "title": title,
-            "description": description,
-            "file_name": file.filename,
-            "uploaded_at": datetime.utcnow().isoformat(),
-            "document_type": document_type.value
-        }
-        
-        # Add to vector store
-        success = vector_service.add_document(
-            document_id=document_id,
-            content=content_text,
-            metadata=metadata,
-            document_type=document_type.value
-        )
-        
-        if not success:
-            raise HTTPException(status_code=500, detail="Failed to index document")
-        
-        return {
-            "document_id": document_id,
-            "title": title,
-            "document_type": document_type.value,
-            "file_name": file.filename,
-            "status": "indexed",
-            "message": "Document uploaded and indexed successfully"
-        }
-        
-    except UnicodeDecodeError:
-        raise HTTPException(status_code=400, detail="File must be text-based and UTF-8 encoded")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to process document: {str(e)}")
-    finally:
-        # Clean up temp file
-        try:
-            os.unlink(temp_file_path)
-        except:
-            pass
-
-
-@app.get("/documents/{document_id}")
-async def get_document_info(document_id: str):
-    """Get document information from vector store."""
-    try:
-        logger.info("Getting document info", document_id=document_id, document_id_type=type(document_id))
-        info = vector_service.get_document_info(document_id)
-        logger.info("Document info result", info=info)
-        
-        if info.get("status") == "not_found" or info.get("num_chunks", 0) == 0:
-            raise HTTPException(status_code=404, detail="Document not found")
-        return info
-    except HTTPException:
-        raise  # Re-raise HTTP exceptions
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get document info: {str(e)}")
-
-
-@app.delete("/documents/{document_id}")
-async def delete_document(document_id: str):
-    """Delete document from vector store."""
-    try:
-        success = vector_service.delete_document(document_id)
-        if success:
-            return {"message": f"Document {document_id} deleted successfully"}
-        else:
-            raise HTTPException(status_code=404, detail="Document not found")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Delete failed: {str(e)}")
-
-
-# Search and RAG endpoints
-@app.post("/search/documents")
-async def search_documents(
-    search_request: DocumentSearchRequest
-):
-    """Search documents using vector similarity."""
-    try:
-        results = vector_service.search_similar(
-            query=search_request.query,
-            retriever_type="hybrid",
-            similarity_top_k=search_request.limit,
-            document_type=search_request.document_types[0].value if search_request.document_types else None
-        )
-        
-        return {
-            "query": search_request.query,
-            "results": results,
-            "total_found": len(results)
-        }
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
-
-
-@app.post("/query/generate")
-async def generate_sql_query(request: SQLGenerationRequest):
-    """Generate SQL query from natural language with enhanced conversation support."""
-    if not request.query.strip():
-        raise HTTPException(status_code=400, detail="Query cannot be empty")
-    
-    try:
-        logger.info("SQL generation requested", query=request.query)
-        
-        # Check if sql_agent is initialized
-        if sql_agent is None:
-            logger.error("SQL agent is not initialized")
-            raise HTTPException(status_code=500, detail="SQL agent not initialized")
-        
-        # Use session_id if provided, otherwise generate new conversation
-        conversation_id = request.session_id or str(uuid.uuid4())
-        logger.info("Generating SQL", conversation_id=conversation_id)
-        
-        result = await sql_agent.generate_sql(request.query, conversation_id)
-        logger.info("SQL generation completed", result_type=result.get("response_type") if result else "None")
-        
-        # Store conversation state if it requires human input
-        if result.get("response_type") == "clarification_request":
-            # This is a placeholder - in production, store in Redis or database
-            conversations[conversation_id] = {
-                "conversation_id": conversation_id,
-                "status": "waiting_for_clarification",
-                "created_at": datetime.utcnow(),
-                "last_interaction": datetime.utcnow()
-            }
-        
-        return result
-        
-    except HTTPException:
-        raise  # Re-raise HTTP exceptions
-    except Exception as e:
-        logger.error("SQL generation failed", error=str(e), error_type=type(e).__name__)
-        import traceback
-        logger.error("Full traceback", traceback=traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"SQL generation failed: {str(e)}")
-
-
-@app.post("/query/generate-and-execute")
-async def generate_and_execute_sql_query(request: SQLGenerationRequest):
-    """Generate SQL query and automatically execute it."""
-    if not request.query.strip():
-        raise HTTPException(status_code=400, detail="Query cannot be empty")
-    
-    try:
-        # Use session_id if provided, otherwise generate new conversation
-        conversation_id = request.session_id or str(uuid.uuid4())
-        
-        # The LangGraph agent automatically handles execution if query_execution_service is provided
-        result = await sql_agent.generate_sql(request.query, conversation_id)
-        
-        # Enable auto-execution for this workflow
-        if result.get("response_type") == "sql_result" and result.get("sql"):
-            # Mark that execution should happen
-            # This would be handled in the agent workflow
-            pass
-        
-        return result
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"SQL generation and execution failed: {str(e)}")
-
-
-@app.post("/query/execute")
-async def execute_sql_query(request: dict):
-    """Execute SQL query via external service."""
-    sql_query = request.get("sql_query", "").strip()
-    if not sql_query:
-        raise HTTPException(status_code=400, detail="SQL query cannot be empty")
-    
-    try:
-        result = await query_execution_service.execute_query(
-            sql_query=sql_query,
-            session_id=request.get("session_id"),
-            metadata=request.get("metadata", {})
-        )
-        
-        return result
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Query execution failed: {str(e)}")
-
-
-@app.post("/query/validate")
-async def validate_sql_query(request: QueryValidationRequest):
-    """Validate SQL query and suggest fixes if invalid."""
-    try:
-        result = query_execution_service.validate_query(request.sql_query)
-        return result
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Query validation failed: {str(e)}")
-
-
-@app.post("/query/explain")
-async def explain_sql_query(request: QueryExplanationRequest):
-    """Explain what a SQL query does."""
-    try:
-        # Create a simple explanation using the vector service
-        explanation_query = f"Explain what this SQL query does: {request.sql_query}"
-        response = sql_agent.vector_service.query_engine.query(explanation_query)
-        
-        return {
-            "sql_query": request.sql_query,
-            "explanation": str(response),
-            "confidence": 0.8
-        }
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Query explanation failed: {str(e)}")
-
-
-# Session management endpoints (simplified in-memory implementation)
-@app.post("/sessions")
-async def create_session(session_data: SessionRequest):
-    """Create a new user session."""
-    session_id = str(uuid.uuid4())
-    
-    session = {
-        "session_id": session_id,
-        "initial_query": session_data.initial_query,
-        "user_id": session_data.user_id,
-        "context": session_data.context,
-        "created_at": datetime.utcnow(),
-        "status": "active",
-        "interactions": []
-    }
-    
-    sessions[session_id] = session
-    
-    return {
-        "session_id": session_id,
-        "initial_query": session_data.initial_query,
-        "user_id": session_data.user_id,
-        "context": session_data.context,
-        "created_at": session["created_at"],
-        "status": "active"
-    }
-
-
-@app.get("/sessions/{session_id}")
-async def get_session(session_id: str):
-    """Get session by ID."""
-    if session_id not in sessions:
-        raise HTTPException(status_code=404, detail="Session not found")
-    
-    session = sessions[session_id]
-    return {
-        "session_id": session_id,
-        "initial_query": session["initial_query"],
-        "user_id": session.get("user_id"),
-        "context": session["context"],
-        "created_at": session["created_at"],
-        "status": session["status"],
-        "interactions": session.get("interactions", [])
-    }
-
-
-@app.get("/debug/documents")
-async def debug_list_all_documents():
-    """Debug endpoint to list all documents in the vector store."""
-    try:
-        documents = vector_service.list_all_documents()
-        return {
-            "total_documents": len(documents),
-            "documents": documents
+            "version": "3.0.0",
+            "timestamp": datetime.utcnow().isoformat()
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to list documents: {str(e)}")
+        return {"status": "error", "message": f"Health check failed: {str(e)}"}
 
 
 @app.get("/stats")
 async def get_stats():
     """Get application statistics."""
-    return {
-        "vector_store": vector_service.get_index_stats() if vector_service else {"status": "not_initialized"},
-        "active_sessions": len(sessions),
-        "active_conversations": len(conversations),
-        "pending_clarifications": len([c for c in conversations.values() if c.get("status") == "waiting_for_clarification"]),
-        "llm_provider": llm_factory.get_provider_info(),
-        "services": {
-            "vector_store_healthy": vector_service.health_check() if vector_service else False,
-            "execution_service_healthy": query_execution_service.health_check() if query_execution_service else False,
-            "llm_provider_healthy": llm_factory.health_check()
-        }
-    }
-
-
-# Enhanced conversation management endpoints for HITL workflows
-@app.post("/conversations/start")
-async def start_conversation(request: dict):
-    """Start a new conversation with enhanced HITL support."""
-    query = request.get("query", "").strip()
-    context = request.get("context", {})
-    
-    if not query:
-        raise HTTPException(status_code=400, detail="Query cannot be empty")
-    
     try:
-        conversation_id = str(uuid.uuid4())
-        result = await sql_agent.generate_sql(query, conversation_id)
+        stats = {
+            "active_conversations": len(conversations),
+            "conversation_threads": len(conversation_threads),
+            "pending_clarifications": len([c for c in conversations.values() if c.get("status") == "waiting_for_clarification"]),
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+        # Add service-specific stats
+        if "vector_service" in app_services:
+            stats["vector_store"] = app_services["vector_service"].get_index_stats()
+        
+        if "mongodb_service" in app_services:
+            mongo_stats = app_services["mongodb_service"].get_stats()
+            stats["mongodb"] = mongo_stats
+            
+        return stats
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get stats: {str(e)}")
+
+
+# =============================================================================
+# CONVERSATION-BASED TEXT-TO-SQL ENDPOINTS
+# =============================================================================
+
+@app.post("/conversations/start")
+async def start_conversation(
+    request: ConversationRequest,
+    sql_agent: TextToSQLAgent = Depends(get_sql_agent)
+):
+    """Start a new conversation with text-to-SQL generation."""
+    try:
+        if not request.query.strip():
+            raise HTTPException(status_code=400, detail="Query cannot be empty")
+        
+        conversation_id = request.session_id or str(uuid.uuid4())
+        logger.info(f"Starting conversation {conversation_id}")
+        
+        # Generate SQL using hierarchical context
+        result = await sql_agent.generate_sql(request.query, conversation_id)
         
         # Store conversation thread metadata
-        conversation_threads[conversation_id] = {
+        conversation_data = {
             "conversation_id": conversation_id,
-            "initial_query": query,
+            "initial_query": request.query,
             "status": result.get("status", "completed"),
             "created_at": datetime.utcnow(),
             "last_interaction": datetime.utcnow(),
-            "context": context,
+            "context": request.context,
             "message_history": [
                 {
-                    "role": "user", 
-                    "content": query, 
+                    "role": "user",
+                    "content": request.query,
                     "timestamp": datetime.utcnow().isoformat(),
                     "message_type": "initial_request"
                 }
@@ -507,59 +274,63 @@ async def start_conversation(request: dict):
             "completed_requests": 1 if result.get("response_type") != "clarification_request" else 0
         }
         
-        # If this is a clarification request, store the checkpoint
+        # Handle clarification requests
         if result.get("response_type") == "clarification_request" and result.get("request_id"):
-            # The checkpoint should already be stored by the agent
-            conversation_threads[conversation_id]["status"] = "waiting_for_clarification"
-            conversation_threads[conversation_id]["pending_request_id"] = result.get("request_id")
+            conversation_data["status"] = "waiting_for_clarification"
+            conversation_data["pending_request_id"] = result.get("request_id")
         
-        # Maintain backward compatibility with old conversations storage
-        conversations[conversation_id] = conversation_threads[conversation_id].copy()
+        # Store conversation
+        conversation_threads[conversation_id] = conversation_data
+        conversations[conversation_id] = conversation_data.copy()
         
         return {
             "conversation_id": conversation_id,
-            "result": result
+            "result": result,
+            "conversation_status": conversation_data["status"]
         }
         
     except Exception as e:
+        logger.error(f"Error starting conversation: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to start conversation: {str(e)}")
 
 
 @app.post("/conversations/{conversation_id}/continue")
-async def continue_conversation(conversation_id: str, request: dict):
-    """Continue an existing conversation with clarification or follow-up."""
-    message = request.get("message", "").strip()
-    if not message:
-        raise HTTPException(status_code=400, detail="Message cannot be empty")
-    
-    if conversation_id not in conversation_threads:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-    
+async def continue_conversation(
+    conversation_id: str,
+    request: ContinueConversationRequest,
+    sql_agent: TextToSQLAgent = Depends(get_sql_agent)
+):
+    """Continue an existing conversation with follow-up or clarification."""
     try:
+        if not request.message.strip():
+            raise HTTPException(status_code=400, detail="Message cannot be empty")
+        
+        if conversation_id not in conversation_threads:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        
         conversation_thread = conversation_threads[conversation_id]
         
         # Check if there's a pending clarification request
         pending_request_id = conversation_thread.get("pending_request_id")
         
         if pending_request_id and pending_request_id in sql_agent._checkpoint_storage:
-            # This is a clarification response - resume from checkpoint
+            # Resume from checkpoint for clarification
             logger.info(f"Resuming from checkpoint for request {pending_request_id}")
-            result = await sql_agent.continue_from_checkpoint(pending_request_id, message)
+            result = await sql_agent.continue_from_checkpoint(pending_request_id, request.message)
             
-            # Clear the pending request
+            # Clear pending request
             if "pending_request_id" in conversation_thread:
                 del conversation_thread["pending_request_id"]
-            
             conversation_thread["completed_requests"] += 1
             
         else:
-            # This is a new request in the conversation thread
+            # New request in the conversation thread
             logger.info(f"Starting new request in conversation {conversation_id}")
-            result = await sql_agent.generate_sql(message, conversation_id)
+            result = await sql_agent.generate_sql(request.message, conversation_id)
             
             conversation_thread["total_requests"] += 1
             
-            # Check if this new request also needs clarification
+            # Check if this new request needs clarification
             if result.get("response_type") == "clarification_request" and result.get("request_id"):
                 conversation_thread["pending_request_id"] = result.get("request_id")
                 conversation_thread["status"] = "waiting_for_clarification"
@@ -568,13 +339,13 @@ async def continue_conversation(conversation_id: str, request: dict):
         
         # Add message to conversation history
         conversation_thread["message_history"].append({
-            "role": "user", 
-            "content": message, 
+            "role": "user",
+            "content": request.message,
             "timestamp": datetime.utcnow().isoformat(),
             "message_type": "clarification_response" if pending_request_id else "follow_up"
         })
         
-        # Update conversation metadata
+        # Update metadata
         conversation_thread["last_interaction"] = datetime.utcnow()
         conversation_thread["status"] = result.get("status", "completed")
         
@@ -583,6 +354,8 @@ async def continue_conversation(conversation_id: str, request: dict):
         
         return result
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error continuing conversation {conversation_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to continue conversation: {str(e)}")
@@ -595,100 +368,63 @@ async def get_conversation(conversation_id: str):
         raise HTTPException(status_code=404, detail="Conversation not found")
     
     conversation_thread = conversation_threads[conversation_id]
-    
-    # Add checkpoint information if there's a pending request
     result = conversation_thread.copy()
     
+    # Add checkpoint information if there's a pending request
     if "pending_request_id" in conversation_thread:
         pending_request_id = conversation_thread["pending_request_id"]
-        result["has_pending_clarification"] = pending_request_id in sql_agent._checkpoint_storage
-        result["pending_request_id"] = pending_request_id
+        sql_agent = app_services.get("sql_agent")
+        if sql_agent and pending_request_id in sql_agent._checkpoint_storage:
+            result["has_pending_clarification"] = True
+            result["pending_request_id"] = pending_request_id
+        else:
+            result["has_pending_clarification"] = False
     else:
         result["has_pending_clarification"] = False
     
     return result
 
 
-@app.get("/conversations/{conversation_id}/status")
-async def get_conversation_status(conversation_id: str):
-    """Get conversation status and pending clarifications."""
-    if conversation_id not in conversation_threads:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-    
-    conversation_thread = conversation_threads[conversation_id]
-    
-    status = {
-        "conversation_id": conversation_id,
-        "status": conversation_thread.get("status", "unknown"),
-        "total_requests": conversation_thread.get("total_requests", 0),
-        "completed_requests": conversation_thread.get("completed_requests", 0),
-        "has_pending_clarification": False,
-        "pending_request_id": None,
-        "last_interaction": conversation_thread.get("last_interaction")
-    }
-    
-    # Check for pending clarifications
-    if "pending_request_id" in conversation_thread:
-        pending_request_id = conversation_thread["pending_request_id"]
-        if pending_request_id in sql_agent._checkpoint_storage:
-            status["has_pending_clarification"] = True
-            status["pending_request_id"] = pending_request_id
-    
-    return status
-
-
 @app.get("/conversations")
-async def list_conversations(status: Optional[str] = None, limit: int = 20):
-    """List conversations with optional status filter."""
-    filtered_conversations = []
-    
-    for conv_id, conv_data in conversations.items():
-        if status is None or conv_data.get("status") == status:
-            filtered_conversations.append({
-                "conversation_id": conv_id,
-                "initial_query": conv_data.get("initial_query", ""),
-                "status": conv_data.get("status", "unknown"),
-                "created_at": conv_data.get("created_at"),
-                "last_interaction": conv_data.get("last_interaction"),
-                "message_count": len(conv_data.get("messages", []))
-            })
-    
-    # Sort by last interaction, most recent first
-    filtered_conversations.sort(
-        key=lambda x: x.get("last_interaction", datetime.min), 
-        reverse=True
-    )
-    
-    return {
-        "conversations": filtered_conversations[:limit],
-        "total": len(filtered_conversations),
-        "filtered_by_status": status
-    }
-
-
-@app.post("/conversations/{conversation_id}/describe-sql")
-async def describe_sql_in_conversation(conversation_id: str, request: dict):
-    """Describe an SQL query within a conversation context."""
-    sql_query = request.get("sql_query", "").strip()
-    if not sql_query:
-        raise HTTPException(status_code=400, detail="SQL query cannot be empty")
-    
+async def list_conversations(
+    status: Optional[str] = None,
+    limit: int = 20,
+    offset: int = 0
+):
+    """List conversations with optional filtering."""
     try:
-        # Create a conversation state for SQL description
-        from ..models.conversation import ConversationState, RequestType
-        conversation_state = ConversationState(
-            conversation_id=conversation_id,
-            current_request=f"Describe this SQL query: {sql_query}",
-            request_type=RequestType.DESCRIBE_SQL
+        filtered_conversations = []
+        
+        for conv_id, conv_data in conversations.items():
+            if status is None or conv_data.get("status") == status:
+                filtered_conversations.append({
+                    "conversation_id": conv_id,
+                    "initial_query": conv_data.get("initial_query", ""),
+                    "status": conv_data.get("status", "unknown"),
+                    "created_at": conv_data.get("created_at"),
+                    "last_interaction": conv_data.get("last_interaction"),
+                    "message_count": len(conv_data.get("message_history", []))
+                })
+        
+        # Sort by last interaction, most recent first
+        filtered_conversations.sort(
+            key=lambda x: x.get("last_interaction", datetime.min),
+            reverse=True
         )
         
-        # Use the agent's describe_sql workflow
-        final_state = sql_agent.graph.invoke(conversation_state)
+        # Apply pagination
+        paginated = filtered_conversations[offset:offset + limit]
         
-        return final_state.final_result
+        return {
+            "conversations": paginated,
+            "total": len(filtered_conversations),
+            "offset": offset,
+            "limit": limit,
+            "filtered_by_status": status
+        }
         
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to describe SQL: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to list conversations: {str(e)}")
 
 
 @app.delete("/conversations/{conversation_id}")
@@ -697,77 +433,365 @@ async def delete_conversation(conversation_id: str):
     if conversation_id not in conversations:
         raise HTTPException(status_code=404, detail="Conversation not found")
     
+    # Remove from both storage locations
     del conversations[conversation_id]
+    if conversation_id in conversation_threads:
+        del conversation_threads[conversation_id]
     
     return {"message": f"Conversation {conversation_id} deleted successfully"}
 
 
-# LLM Provider management endpoints
-@app.get("/llm-provider/info")
-async def get_llm_provider_info():
-    """Get information about the current LLM provider."""
+# =============================================================================
+# ONE-SHOT SQL GENERATION/EDITING ENDPOINTS  
+# =============================================================================
+
+@app.post("/sql/generate")
+async def generate_sql_oneshot(
+    request: OneShotRequest,
+    sql_agent: TextToSQLAgent = Depends(get_sql_agent)
+):
+    """Generate SQL query in one-shot mode without conversation context."""
     try:
-        provider_info = llm_factory.get_provider_info()
-        health_status = llm_factory.health_check()
+        if not request.query.strip():
+            raise HTTPException(status_code=400, detail="Query cannot be empty")
+        
+        # Generate unique session for this one-shot request
+        session_id = str(uuid.uuid4())
+        
+        if request.mode == "edit" and request.existing_sql:
+            # Modify the query to indicate it's an edit request
+            edit_query = f"Edit this SQL query: {request.existing_sql}\n\nChange requested: {request.query}"
+            result = await sql_agent.generate_sql(edit_query, session_id)
+        else:
+            # Standard generation
+            result = await sql_agent.generate_sql(request.query, session_id)
+        
+        # Don't store in conversations for one-shot requests
+        return {
+            "session_id": session_id,
+            "mode": request.mode,
+            "original_query": request.query,
+            "result": result
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in one-shot SQL generation: {e}")
+        raise HTTPException(status_code=500, detail=f"One-shot SQL generation failed: {str(e)}")
+
+
+@app.post("/sql/validate")
+async def validate_sql(request: Dict[str, str]):
+    """Validate SQL query syntax and suggest improvements."""
+    try:
+        sql_query = request.get("sql_query", "").strip()
+        if not sql_query:
+            raise HTTPException(status_code=400, detail="SQL query cannot be empty")
+        
+        query_service = app_services.get("query_execution_service")
+        if not query_service:
+            raise HTTPException(status_code=503, detail="Query execution service not available")
+        
+        result = query_service.validate_query(sql_query)
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Query validation failed: {str(e)}")
+
+
+@app.post("/sql/explain")
+async def explain_sql(request: Dict[str, str]):
+    """Explain what a SQL query does in natural language."""
+    try:
+        sql_query = request.get("sql_query", "").strip()
+        if not sql_query:
+            raise HTTPException(status_code=400, detail="SQL query cannot be empty")
+        
+        # Use vector service to generate explanation with LLM
+        vector_service = get_vector_service()
+        explanation_query = f"Explain what this SQL query does in natural language: {sql_query}"
+        response = vector_service.query_engine.query(explanation_query)
+        explanation = str(response)
         
         return {
-            "provider_info": provider_info,
-            "health_status": health_status,
-            "available_providers": ["bedrock", "custom"]
+            "sql_query": sql_query,
+            "explanation": explanation,
+            "timestamp": datetime.utcnow().isoformat()
         }
+        
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get provider info: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"SQL explanation failed: {str(e)}")
 
 
-@app.post("/llm-provider/switch")
-async def switch_llm_provider(request: dict):
-    """Switch to a different LLM provider."""
-    provider_name = request.get("provider", "").lower()
-    
-    if provider_name not in ["bedrock", "custom"]:
-        raise HTTPException(status_code=400, detail="Provider must be either 'bedrock' or 'custom'")
-    
+# =============================================================================
+# METADATA MANAGEMENT ENDPOINTS
+# =============================================================================
+
+@app.get("/metadata/{document_type}")
+async def get_metadata_by_type(
+    document_type: str,
+    limit: int = 50,
+    offset: int = 0,
+    mongodb_service: MongoDBService = Depends(get_mongodb_service)
+):
+    """Get all metadata documents of a specific type for UI rendering."""
     try:
-        success = llm_factory.switch_provider(provider_name)
-        if success:
-            new_info = llm_factory.get_provider_info()
+        valid_types = ["view", "report", "lookup", "business_domain"]
+        if document_type not in valid_types:
+            raise HTTPException(status_code=400, detail=f"Invalid document type. Must be one of: {valid_types}")
+        
+        # Adjust document type to match storage format
+        storage_type = f"{document_type}_metadata" if document_type != "business_domain" else "business_domain"
+        
+        documents = await mongodb_service.get_documents_by_type(
+            storage_type, limit=limit, offset=offset
+        )
+        
+        return {
+            "document_type": document_type,
+            "documents": documents,
+            "count": len(documents),
+            "limit": limit,
+            "offset": offset
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get metadata: {str(e)}")
+
+
+@app.post("/metadata/search")
+async def search_metadata(
+    request: MetadataSearchRequest,
+    mongodb_service: MongoDBService = Depends(get_mongodb_service)
+):
+    """Search metadata documents with text query and optional type filter."""
+    try:
+        if request.query:
+            # Use vector search if query provided
+            vector_service = get_vector_service()
+            results = vector_service.search_similar(
+                query=request.query,
+                retriever_type="hybrid",
+                similarity_top_k=request.limit,
+                document_type=request.document_type
+            )
+            
             return {
-                "success": True,
-                "message": f"Successfully switched to {provider_name} provider",
-                "provider_info": new_info
+                "search_query": request.query,
+                "document_type": request.document_type,
+                "results": results,
+                "total_found": len(results)
             }
         else:
-            raise HTTPException(status_code=500, detail=f"Failed to switch to {provider_name} provider")
-    
+            # Return all documents of specified type
+            if not request.document_type:
+                raise HTTPException(status_code=400, detail="Either query or document_type must be provided")
+            
+            storage_type = f"{request.document_type}_metadata" if request.document_type != "business_domain" else "business_domain"
+            documents = await mongodb_service.get_documents_by_type(
+                storage_type, limit=request.limit, offset=request.offset
+            )
+            
+            return {
+                "document_type": request.document_type,
+                "results": documents,
+                "total_found": len(documents)
+            }
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error switching provider: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Metadata search failed: {str(e)}")
 
 
-@app.get("/llm-provider/test")
-async def test_llm_provider():
-    """Test the current LLM provider with a simple query."""
+@app.post("/metadata/save")
+async def save_metadata(
+    request: MetadataRequest,
+    mongodb_service: MongoDBService = Depends(get_mongodb_service),
+    vector_service: LlamaIndexVectorService = Depends(get_vector_service)
+):
+    """Save or update metadata document and refresh embeddings."""
     try:
-        test_prompt = "Generate a simple SQL query to select all columns from a table named 'users'. Respond with just the SQL query."
+        valid_types = ["view", "report", "lookup", "business_domain"]
+        if request.document_type not in valid_types:
+            raise HTTPException(status_code=400, detail=f"Invalid document type. Must be one of: {valid_types}")
         
-        response = await llm_factory.generate_text(test_prompt)
+        # Prepare document data
+        document_data = request.data.copy()
+        document_data["_document_type"] = f"{request.document_type}_metadata" if request.document_type != "business_domain" else "business_domain"
+        document_data["_updated_at"] = datetime.utcnow()
+        
+        if request.metadata_id:
+            # Update existing document
+            document_id = request.metadata_id
+            
+            # Remove old embedding from vector store
+            vector_service.delete_document(document_id)
+            
+            # Update in MongoDB
+            updated = await mongodb_service.update_document(document_id, document_data)
+            if not updated:
+                raise HTTPException(status_code=404, detail="Document not found for update")
+            
+        else:
+            # Create new document
+            document_data["_created_at"] = datetime.utcnow()
+            document_id = await mongodb_service.insert_document(document_data)
+        
+        # Generate new embedding and add to vector store
+        try:
+            # Create full text for embedding based on document type
+            if request.document_type == "view":
+                full_text = f"View: {document_data.get('view_name', '')}\nDescription: {document_data.get('description', '')}\nColumns: {', '.join([col.get('name', '') for col in document_data.get('columns', [])])}"
+            elif request.document_type == "report":
+                full_text = f"Report: {document_data.get('report_name', '')}\nDescription: {document_data.get('description', '')}\nUse Cases: {document_data.get('use_cases', '')}"
+            elif request.document_type == "lookup":
+                full_text = f"Lookup: {document_data.get('lookup_name', '')}\nDescription: {document_data.get('description', '')}\nValues: {len(document_data.get('values', []))} entries"
+            else:  # business_domain
+                full_text = f"Domain: {document_data.get('domain_name', '')}\nDescription: {document_data.get('description', '')}\nKeywords: {', '.join(document_data.get('keywords', []))}"
+            
+            # Add to vector store
+            success = vector_service.add_document(
+                document_id=document_id,
+                content=full_text,
+                metadata={
+                    "document_type": document_data["_document_type"],
+                    "updated_at": document_data["_updated_at"].isoformat()
+                }
+            )
+            
+            if not success:
+                logger.warning(f"Failed to update vector embedding for document {document_id}")
+            
+        except Exception as e:
+            logger.error(f"Error updating vector embedding: {e}")
+            # Don't fail the whole operation if embedding update fails
         
         return {
-            "success": True,
-            "provider": llm_factory.get_provider_info()["provider"],
-            "test_prompt": test_prompt,
-            "response": response,
-            "response_length": len(response)
+            "document_id": document_id,
+            "document_type": request.document_type,
+            "action": "updated" if request.metadata_id else "created",
+            "message": f"Metadata {'updated' if request.metadata_id else 'saved'} successfully"
         }
-    
+        
+    except HTTPException:
+        raise
     except Exception as e:
+        logger.error(f"Error saving metadata: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to save metadata: {str(e)}")
+
+
+@app.delete("/metadata/{document_type}/{document_id}")
+async def delete_metadata(
+    document_type: str,
+    document_id: str,
+    mongodb_service: MongoDBService = Depends(get_mongodb_service),
+    vector_service: LlamaIndexVectorService = Depends(get_vector_service)
+):
+    """Delete metadata document and remove from vector store."""
+    try:
+        valid_types = ["view", "report", "lookup", "business_domain"]
+        if document_type not in valid_types:
+            raise HTTPException(status_code=400, detail=f"Invalid document type. Must be one of: {valid_types}")
+        
+        # Delete from vector store
+        try:
+            vector_service.delete_document(document_id)
+        except Exception as e:
+            logger.warning(f"Failed to delete vector embedding for document {document_id}: {e}")
+        
+        # Delete from MongoDB
+        deleted = await mongodb_service.delete_document(document_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Document not found")
+        
         return {
-            "success": False,
-            "error": str(e),
-            "provider": llm_factory.get_provider_info()["provider"]
+            "document_id": document_id,
+            "document_type": document_type,
+            "message": "Metadata deleted successfully"
         }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete metadata: {str(e)}")
 
 
-# Main entry point
+# =============================================================================
+# DEBUG & UTILITY ENDPOINTS
+# =============================================================================
+
+@app.get("/debug/conversations")
+async def debug_conversations():
+    """Debug endpoint to view all conversation data."""
+    return {
+        "conversations": conversations,
+        "conversation_threads": conversation_threads,
+        "total_conversations": len(conversations),
+        "total_threads": len(conversation_threads)
+    }
+
+
+@app.post("/admin/reindex")
+async def reindex_embeddings():
+    """Reindex all metadata embeddings (admin endpoint)."""
+    try:
+        mongodb_service = get_mongodb_service()
+        vector_service = get_vector_service()
+        
+        # Get all documents from MongoDB
+        all_docs = await mongodb_service.get_all_documents()
+        if not all_docs:
+            return {"message": "No documents found to reindex"}
+        
+        # Clear and rebuild vector index
+        reindexed_count = 0
+        for doc in all_docs:
+            try:
+                doc_id = str(doc["_id"])
+                doc_type = doc.get("_document_type", "unknown")
+                
+                # Generate full text based on type
+                if "view" in doc_type:
+                    full_text = f"View: {doc.get('view_name', '')}\nDescription: {doc.get('description', '')}"
+                elif "report" in doc_type:
+                    full_text = f"Report: {doc.get('report_name', '')}\nDescription: {doc.get('description', '')}"
+                elif "lookup" in doc_type:
+                    full_text = f"Lookup: {doc.get('lookup_name', '')}\nDescription: {doc.get('description', '')}"
+                else:
+                    full_text = f"Domain: {doc.get('domain_name', '')}\nDescription: {doc.get('description', '')}"
+                
+                # Remove old and add new
+                vector_service.delete_document(doc_id)
+                success = vector_service.add_document(
+                    document_id=doc_id,
+                    content=full_text,
+                    metadata={"document_type": doc_type}
+                )
+                
+                if success:
+                    reindexed_count += 1
+                    
+            except Exception as e:
+                logger.error(f"Error reindexing document {doc_id}: {e}")
+        
+        return {
+            "message": f"Reindexing completed",
+            "total_documents": len(all_docs),
+            "reindexed_count": reindexed_count
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Reindexing failed: {str(e)}")
+
+
+# =============================================================================
+# MAIN ENTRY POINT
+# =============================================================================
+
 if __name__ == "__main__":
     uvicorn.run(
         "src.text_to_sql_rag.api.main:app",

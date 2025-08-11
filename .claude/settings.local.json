@@ -11,7 +11,8 @@
       "Bash(curl:*)",
       "Bash(poetry lock:*)",
       "Bash(docker compose:*)",
-      "Bash(docker logs:*)"
+      "Bash(docker logs:*)",
+      "Bash(mv:*)"
     ],
     "deny": []
   }
