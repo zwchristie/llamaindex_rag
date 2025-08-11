@@ -1,52 +1,60 @@
-# Text-to-SQL RAG System 2.0
+# Text-to-SQL RAG System with Hierarchical Retrieval
 
-A simplified, demo-ready text-to-SQL prototype with Human-in-the-Loop (HITL) approval, featuring a clean architecture without domain concepts.
+An advanced text-to-SQL system featuring hierarchical metadata retrieval, Oracle SQL generation, and Human-in-the-Loop (HITL) approval workflow.
 
 ## 🎯 Overview
 
-This system transforms natural language questions into SQL queries using:
-- **One-document-per-view** metadata model (no domains)
-- **Vector similarity search** for view retrieval
+This system transforms natural language questions into Oracle SQL queries using:
+- **Hierarchical metadata retrieval** (domains → views → reports → lookups)
+- **Business domain intelligence** for context-aware SQL generation
+- **Oracle SQL dialect** with schema-qualified table names
 - **Human-in-the-Loop approval** for generated SQL
-- **State persistence** for resumable workflows
-- **WrenAI-inspired** large chunk approach for metadata
+- **Lookup value integration** for accurate WHERE clauses
+- **Graph-based metadata relationships** with lookup_id connections
 
 ## 🏗️ Architecture
 
 ```mermaid
 graph TD
-    A[User Query] --> B[Text-to-SQL Agent]
-    B --> C[Embedding Service]
-    C --> D[Vector Search]
-    D --> E[View Retrieval]
-    E --> F[SQL Generation]
-    F --> G[HITL Approval]
-    G --> H[SQL Execution]
-    H --> I[Formatted Response]
+    A[User Query] --> B[Hierarchical Context Service]
+    B --> C[Step 1: Business Domain Identification]
+    C --> D[Step 2: Core View Retrieval]
+    D --> E[Step 3: Supporting View Retrieval]
+    E --> F[Step 4: Report Examples]
+    F --> G[Step 5: Lookup Values]
+    G --> H[Oracle SQL Generation]
+    H --> I[HITL Approval]
+    I --> J[SQL Execution]
+    J --> K[Formatted Response]
     
-    J[MongoDB] --> K[View Metadata]
-    J --> L[Session States]
-    J --> M[HITL Requests]
+    L[MongoDB] --> M[Business Domains]
+    L --> N[View Metadata]
+    L --> O[Report Metadata] 
+    L --> P[Lookup Metadata]
+    L --> Q[Session States]
+    L --> R[HITL Requests]
     
-    N[OpenSearch] --> O[View Embeddings]
+    S[OpenSearch] --> T[Vectorized Documents]
     
-    P[Bedrock API Gateway] --> Q[LLM Service]
-    P --> R[Embedding Service]
+    U[Bedrock API Gateway] --> V[Claude 3 Haiku]
+    U --> W[Titan Embeddings]
 ```
 
 ## 📊 Key Features
 
-### 🔍 Simplified Metadata Model
-- **One document per view** in MongoDB
-- **No domain concepts** - views are self-contained
-- **Rich metadata**: columns, types, joins, sample SQL
-- **Full-text concatenation** for embedding
+### 🔍 Hierarchical Metadata Model
+- **Business domains** define knowledge areas with keywords and relationships
+- **Views** tagged with business_domains and lookup_id references
+- **Reports** provide SQL patterns and examples for specific domains
+- **Lookups** connected via lookup_id for accurate value resolution
+- **Graph relationships** enable sophisticated context assembly
 
-### 🧠 Smart Retrieval
-- **Vector similarity search** using Bedrock embeddings
-- **Hybrid search** combining text and vector matching  
-- **Large chunk approach** - views don't get split up
-- **Dynamic dimension detection** for embeddings
+### 🧠 Intelligent Retrieval Pipeline
+- **5-step hierarchical retrieval** starting with domain identification
+- **LLM-driven domain classification** using business domain context
+- **Semantic similarity ranking** with cosine similarity scoring
+- **Parallel execution** for reports and lookups (configurable)
+- **Oracle-specific context formatting** with schema qualification
 
 ### 👥 Human-in-the-Loop
 - **Blocking approval checkpoint** before SQL execution
@@ -59,6 +67,35 @@ graph TD
 - **LangGraph agent** with proper state transitions
 - **Error handling** and recovery
 - **Audit trail** of all interactions
+
+## 🔄 Hierarchical Retrieval Process
+
+The system uses a sophisticated 5-step retrieval pipeline:
+
+1. **Domain Identification** (LLM-based)
+   - Analyze user query to identify relevant business domains
+   - Use domain keywords and descriptions for classification
+   - Return prioritized list of domain IDs
+
+2. **Core View Retrieval** (Domain-filtered + Semantic)
+   - Filter views by identified domains
+   - Rank by semantic similarity to user query
+   - Return most relevant core views (configurable limit)
+
+3. **Supporting View Retrieval** (Relationship-based)
+   - Find additional views from same domains
+   - Exclude already selected core views
+   - Rank by semantic relevance
+
+4. **Report Example Retrieval** (Parallel)
+   - Find reports related to selected views/domains
+   - Provide SQL patterns and examples
+   - Include use cases and data patterns
+
+5. **Lookup Value Retrieval** (lookup_id-based)
+   - Extract lookup_id references from selected views
+   - Retrieve lookup tables and their values
+   - Provide context for WHERE clause construction
 
 ## 🚀 Quick Start
 
@@ -262,48 +299,53 @@ make test-all          # All test suites
 
 ## 🔍 Mock Data
 
-The system includes comprehensive mock metadata:
+The system includes comprehensive hierarchical metadata:
 
-### Views
-- `V_TRANCHE_SYNDICATES` - Syndicate member participation
-- `V_USER_METRICS` - User engagement analytics
-- `V_TRANSACTION_SUMMARY` - Financial transactions
-- `V_DOCUMENT_ACCESS_LOG` - Audit trail
-- `V_PORTFOLIO_PERFORMANCE` - Investment metrics
+### Business Domains
+- **1. Syndicate Management** - Deal syndication and member participation
+- **2. User Analytics** - User behavior and engagement metrics  
+- **3. Transaction Processing** - Financial transactions and settlements
+- **4. Deal Pipeline** - Deal flow and opportunity management
+- **5. Document Management** - Document access and audit trails
+- **6. Portfolio Analytics** - Investment performance tracking
 
-### Reports  
-- Syndicate participation analysis
-- User activity dashboards
-- Transaction reconciliation
+### Views (with business_domains tags)
+- `V_TRANCHE_SYNDICATES` - Syndicate participation (domains: 1, 2)
+- `V_USER_METRICS` - User engagement (domains: 2, 5)
+- `V_SYNDICATE_ALLOCATIONS` - Investment allocations (domains: 1, 6)
+- `V_DEAL_OVERVIEW` - Deal pipeline overview (domains: 4, 6)
 
-### Lookups
-- Transaction status codes
-- User status codes  
-- Currency codes
+### Reports (domain-specific examples)
+- **Syndicate Performance Report** - Participation analysis with SQL examples
+- **User Analytics Report** - Engagement metrics with Oracle queries
+- **Deal Pipeline Report** - Deal flow analysis with lookups
 
-## 🚨 Important Changes from V1
+### Lookups (with lookup_id connections)
+- **1. Tranche Statuses** - Connected to syndicate views
+- **2. User Roles** - Connected to user management views
+- **3. User Statuses** - User state tracking
+- **4. Syndicate Roles** - Member role definitions
 
-### ❌ Removed
-- All domain-based architecture
-- Business domain models and services
-- Domain detection and classification
-- Hierarchical domain relationships
-- Domain-specific prompting
+## 🚀 Advanced Features
 
-### ✅ Added  
-- One-document-per-view model
-- Vector similarity retrieval
-- HITL approval workflow
-- Session state persistence
-- Comprehensive test suite
-- Docker development stack
-- Makefile automation
+### 🎯 Hierarchical Context Retrieval
+- **Business Domain Classification**: LLM identifies relevant domains from query
+- **Metadata Graph Traversal**: Follows domain → views → reports → lookups relationships
+- **Contextual SQL Generation**: Provides comprehensive context for Oracle SQL
+- **Lookup Value Integration**: Resolves column values via lookup_id connections
 
-### 🔄 Simplified
-- Clean API with fewer endpoints
-- Streamlined prompting
-- Direct Bedrock API Gateway integration
-- Environment-based configuration
+### 🔧 Oracle SQL Optimization
+- **Schema-qualified table references** (e.g., SCHEMA.TABLE_NAME)
+- **Oracle-specific functions** (SYSDATE, TO_DATE, TO_CHAR, ROWNUM)
+- **Lookup ID resolution** for accurate WHERE clauses
+- **Case-insensitive matching** with UPPER() functions
+
+### 📊 Advanced Metadata Structure
+- **Business domains** with keywords and view relationships
+- **View metadata** enhanced with business_domains arrays
+- **Report examples** linked to domains and views
+- **Lookup tables** with lookup_id cross-references
+- **Column-level lookup_id** attributes for value resolution
 
 ## 🎯 Demo Readiness
 
@@ -326,17 +368,18 @@ For questions about this system:
 3. Check configuration in `.env.example`
 4. Run health checks at `/health`
 
-## 🏆 Success Criteria Met
+## 🏆 System Capabilities
 
-✅ No domain references anywhere in code, data, or prompts  
-✅ MongoDB contains one document per view  
-✅ OpenSearch contains matching vectorized documents  
-✅ Vector dimension inferred at runtime  
-✅ Docker compose starts MongoDB + OpenSearch + dashboards  
-✅ Seed scripts populate realistic test data  
-✅ RAG retrieval surfaces structured metadata to LLM  
-✅ HITL endpoints work with state persistence  
-✅ All tests pass via single command  
-✅ One-command local setup works  
-✅ README provides complete setup instructions
+✅ **Hierarchical metadata retrieval** with 5-step pipeline  
+✅ **Business domain intelligence** for context-aware SQL  
+✅ **Oracle SQL dialect** with schema-qualified tables  
+✅ **Lookup value integration** via lookup_id connections  
+✅ **Graph-based metadata relationships** across all types  
+✅ **LLM-driven domain classification** with fallback to keywords  
+✅ **Parallel report/lookup retrieval** for performance  
+✅ **Comprehensive metadata structure** (domains, views, reports, lookups)  
+✅ **Vector dimension detection** at runtime  
+✅ **HITL approval workflow** with state persistence  
+✅ **Comprehensive test coverage** including Oracle SQL validation  
+✅ **Docker compose setup** with all required services
 

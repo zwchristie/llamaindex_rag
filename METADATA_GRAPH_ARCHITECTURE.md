@@ -185,10 +185,11 @@ The final context includes:
 - LLM-based domain identification from user queries
 - Domain filtering and relationship traversal
 
-**HierarchicalRetrievalService**
-- Orchestrate multi-step retrieval pipeline
-- Coordinate between different retrieval steps
-- Assemble final context from all sources
+**HierarchicalContextService**
+- Orchestrate multi-step retrieval pipeline with Oracle SQL integration
+- Coordinate between different retrieval steps (domains → views → reports → lookups)
+- Assemble final context with Oracle-specific formatting and guidelines
+- Provide performance metrics and confidence scoring
 
 **MetadataGraphService**
 - Manage graph relationships between metadata objects

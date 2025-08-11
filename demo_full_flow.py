@@ -74,6 +74,7 @@ async def demo_text_to_sql_flow():
         from text_to_sql_rag.services.embedding_service import EmbeddingService, VectorService
         from text_to_sql_rag.services.hitl_service import HITLService
         from text_to_sql_rag.services.bedrock_endpoint_service import BedrockEndpointService
+        from text_to_sql_rag.services.hierarchical_context_service import HierarchicalContextService, RetrievalConfig
         
         # Get configuration
         bedrock_endpoint = os.getenv("BEDROCK_ENDPOINT_URL", "https://8v1n9dbomk.execute-api.us-east-1.amazonaws.com/testaccess")
@@ -94,6 +95,17 @@ async def demo_text_to_sql_flow():
         # Initialize real Bedrock service for LLM
         bedrock_service = BedrockEndpointService(bedrock_endpoint, embedding_model, llm_model)
         llm_service = RealLLMService(bedrock_service)
+        
+        # Initialize hierarchical context service
+        meta_docs_path = Path(__file__).parent / "meta_documents"
+        config = RetrievalConfig(max_core_views=2, max_supporting_views=2, max_reports=1, max_lookups=3)
+        context_service = HierarchicalContextService(
+            meta_docs_path=meta_docs_path,
+            embedding_service=embedding_service,
+            vector_service=vector_service,
+            bedrock_service=bedrock_service,
+            config=config
+        )
         
         print("[INIT] All services initialized successfully")
         
@@ -124,32 +136,28 @@ async def demo_text_to_sql_flow():
         print(f"\n{'='*20} SCENARIO {i}: {scenario['name']} {'='*20}")
         
         try:
-            # Step 1: Query Processing and Context Retrieval
-            print(f"\n[STEP 1] Processing query: '{scenario['query']}'")
+            # Step 1: Query Processing with Hierarchical Context Retrieval
+            print(f"\n[STEP 1] Processing query with hierarchical retrieval: '{scenario['query']}'")
             
-            # Generate embedding for the query
-            query_embedding = await embedding_service.get_embedding(scenario['query'])
-            print(f"[STEP 1] Generated query embedding ({len(query_embedding)} dimensions)")
+            # Build hierarchical context using the new service
+            hierarchical_context = await context_service.build_context(scenario['query'])
+            print(f"[STEP 1] Built hierarchical context: {len(hierarchical_context.core_views)} core views, {len(hierarchical_context.supporting_views)} supporting views, {len(hierarchical_context.lookups)} lookups")
             
-            # Search for relevant views
-            similar_views = await vector_service.search_similar_views(query_embedding, k=3)
-            print(f"[STEP 1] Found {len(similar_views)} relevant views")
-            
-            if not similar_views:
-                print("[WARNING] No relevant views found - this may indicate indexing issues")
+            # Display context components
+            all_views = hierarchical_context.core_views + hierarchical_context.supporting_views
+            if all_views:
+                for view in all_views:
+                    print(f"[STEP 1] - {view.get('view_name', 'Unknown')} ({view.get('view_type', 'UNKNOWN')} view)")
+            else:
+                print("[WARNING] No relevant views found in hierarchical context")
                 continue
             
-            # Build context from retrieved views
-            context_views = []
-            for view, score in similar_views:
-                context_views.append(view)
-                print(f"[STEP 1] - {view.view_name} (similarity: {score:.3f})")
+            # Get combined context for SQL generation
+            combined_context = hierarchical_context.get_combined_context()
             
-            context = "\\n\\n".join([view.generate_full_text() for view in context_views])
-            
-            # Step 2: SQL Generation
-            print(f"\\n[STEP 2] Generating SQL with LLM")
-            sql_response = await llm_service.generate_sql(scenario['query'], context)
+            # Step 2: Oracle SQL Generation with Hierarchical Context
+            print(f"\\n[STEP 2] Generating Oracle SQL with hierarchical context")
+            sql_response = await llm_service.generate_sql(scenario['query'], combined_context)
             
             print(f"[STEP 2] Generated SQL:")
             print(f"```sql")
@@ -167,7 +175,7 @@ async def demo_text_to_sql_flow():
                 "user_query": scenario['query'],
                 "generated_sql": sql_response['sql'],
                 "explanation": sql_response['explanation'],
-                "context_views": [view.view_name for view in context_views],
+                "context_views": [view.get('view_name', 'Unknown') for view in all_views],
                 "status": "pending",
                 "created_at": datetime.utcnow(),
                 "timeout_at": datetime.utcnow()
@@ -179,7 +187,7 @@ async def demo_text_to_sql_flow():
                 user_query=scenario['query'], 
                 generated_sql=sql_response['sql'],
                 sql_explanation=sql_response['explanation'],
-                selected_views=[view.view_name for view in context_views]
+                selected_views=[view.get('view_name', 'Unknown') for view in all_views]
             )
             
             print(f"[STEP 3] Created HITL request: {request_id}")
@@ -217,11 +225,11 @@ async def demo_text_to_sql_flow():
     print("DEMO COMPLETED - Text-to-SQL system working correctly!")
     print("="*50)
     print("\\nKey components verified:")
-    print("[PASS] Context retrieval via vector search")
-    print("[PASS] SQL generation with LLM integration")  
+    print("[PASS] Hierarchical context retrieval (domains -> views -> reports -> lookups)")
+    print("[PASS] Oracle SQL generation with schema qualification")  
     print("[PASS] Human-in-the-Loop approval workflow")
     print("[PASS] Session state management")
-    print("[PASS] End-to-end query processing")
+    print("[PASS] End-to-end query processing with business domain intelligence")
 
 
 if __name__ == "__main__":

@@ -1,476 +1,716 @@
 """
-Business Domain-First Cascading RAG Hierarchical Context Service.
-Implements 3-stage cascading query refinement with 5-tier progressive context building.
+Hierarchical RAG Context Service for Multi-Step Metadata Retrieval.
+
+Implements the sophisticated hierarchical retrieval pipeline:
+1. Business Domain Identification (LLM-based)
+2. Core View Retrieval (domain-filtered + semantic)
+3. Supporting View Retrieval (relationship-based)
+4. Report Example Retrieval (parallel)
+5. Lookup Value Retrieval (column lookup_id based)
+
+Designed for Oracle SQL generation with comprehensive context assembly.
 """
 
+import asyncio
 import json
-import structlog
+import logging
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Set, Tuple
 from dataclasses import dataclass
+import math
 
-from .vector_service import LlamaIndexVectorService
-from .llm_service import LLMService
-from .business_domain_service import BusinessDomainService
-from .view_selection_service import ViewSelectionService
-from .report_pattern_service import ReportPatternService
-from ..models.simple_models import (
-    DocumentType, DomainContext, ViewContext, ReportContext
-)
+logger = logging.getLogger(__name__)
 
-logger = structlog.get_logger(__name__)
-
+# Hierarchical Context Components
 
 @dataclass
-class ContextTier:
-    """Represents a tier of context information."""
-    name: str
-    tokens_estimate: int
-    content: str
-    sources: List[str]
-    confidence: float = 1.0
-
-
-@dataclass 
-class CascadingContext:
-    """Complete cascading context for SQL generation with domain intelligence."""
-    query: str
-    domain_context: DomainContext
-    view_context: ViewContext
-    report_context: ReportContext
-    tiers: List[ContextTier]
+class HierarchicalContext:
+    """Complete context assembled from hierarchical retrieval."""
+    user_query: str
+    identified_domains: List[int]
+    core_views: List[Dict[str, Any]]
+    supporting_views: List[Dict[str, Any]]
+    reports: List[Dict[str, Any]]
+    lookups: List[Dict[str, Any]]
+    retrieval_steps: Dict[str, Any]
+    confidence: float
     total_tokens: int
     retrieval_time_ms: float
     
     def get_combined_context(self) -> str:
-        """Combine all tiers into a single context string."""
+        """Combine all context components into Oracle SQL generation context."""
         context_parts = []
-        for tier in self.tiers:
-            context_parts.append(f"## {tier.name.upper()}\n{tier.content}")
+        
+        # Business Domain Context
+        if self.identified_domains:
+            domain_names = [f"Domain {d}" for d in self.identified_domains]
+            context_parts.append(f"# Business Domains: {', '.join(domain_names)}")
+        
+        # Core Views (Primary Tables)
+        if self.core_views:
+            context_parts.append("\n# CORE VIEWS (Primary Tables)")
+            for view in self.core_views:
+                context_parts.append(self._format_view_for_context(view, "CORE"))
+        
+        # Supporting Views (Additional Tables)
+        if self.supporting_views:
+            context_parts.append("\n# SUPPORTING VIEWS (Additional Tables)")
+            for view in self.supporting_views:
+                context_parts.append(self._format_view_for_context(view, "SUPPORTING"))
+        
+        # Report Examples (SQL Patterns)
+        if self.reports:
+            context_parts.append("\n# SQL EXAMPLES FROM REPORTS")
+            for report in self.reports:
+                context_parts.append(self._format_report_for_context(report))
+        
+        # Lookup Values (For WHERE Clauses)
+        if self.lookups:
+            context_parts.append("\n# LOOKUP VALUES (For WHERE Clauses)")
+            for lookup in self.lookups:
+                context_parts.append(self._format_lookup_for_context(lookup))
+        
+        # Oracle SQL Guidelines
+        context_parts.append(self._get_oracle_sql_guidelines())
+        
         return "\n\n".join(context_parts)
     
+    def _format_view_for_context(self, view: Dict[str, Any], view_category: str) -> str:
+        """Format view metadata for SQL context."""
+        parts = [f"## {view.get('view_name', 'UNKNOWN')} ({view_category})"]
+        
+        if view.get('schema'):
+            parts.append(f"Schema: {view['schema']}")
+        
+        if view.get('description'):
+            parts.append(f"Description: {view['description']}")
+        
+        # Column information
+        columns = view.get('columns', [])
+        if columns:
+            parts.append("Columns:")
+            for col in columns:
+                col_info = f"  - {col.get('name', 'unknown')} ({col.get('type', 'unknown')})"
+                if col.get('lookup_id'):
+                    col_info += f" [LOOKUP_ID: {col['lookup_id']}]"
+                if col.get('description'):
+                    col_info += f" - {col['description']}"
+                parts.append(col_info)
+        
+        return "\n".join(parts)
+    
+    def _format_report_for_context(self, report: Dict[str, Any]) -> str:
+        """Format report examples for SQL context."""
+        parts = [f"## {report.get('report_name', 'Unknown Report')}"]
+        
+        if report.get('example_sql'):
+            parts.append(f"Example SQL:\n```sql\n{report['example_sql']}\n```")
+        
+        if report.get('use_cases'):
+            parts.append(f"Use Cases: {report['use_cases'][:200]}...")
+        
+        return "\n".join(parts)
+    
+    def _format_lookup_for_context(self, lookup: Dict[str, Any]) -> str:
+        """Format lookup values for SQL WHERE clauses."""
+        parts = [f"## {lookup.get('lookup_name', 'Unknown')} (ID: {lookup.get('lookup_id', 'N/A')})"]
+        
+        values = lookup.get('values', [])
+        if values:
+            parts.append("Valid Values:")
+            for value in values[:10]:  # Limit to first 10
+                value_info = f"  - {value.get('id', 'N/A')}: '{value.get('name', 'N/A')}'"
+                if value.get('code'):
+                    value_info += f" (Code: '{value['code']}')"
+                parts.append(value_info)
+            
+            if len(values) > 10:
+                parts.append(f"  ... and {len(values) - 10} more values")
+        
+        return "\n".join(parts)
+    
+    def _get_oracle_sql_guidelines(self) -> str:
+        """Get Oracle SQL specific guidelines."""
+        return """# ORACLE SQL GUIDELINES
+- Use Oracle SQL syntax and functions
+- Schema-qualify table references (e.g., SCHEMA.TABLE_NAME)
+- Use Oracle date functions: SYSDATE, TO_DATE, TO_CHAR
+- For string comparisons, use UPPER() for case-insensitive matching
+- Use ROWNUM for row limiting (not LIMIT)
+- Use (+) syntax or ANSI JOIN syntax for outer joins
+- For lookup values, use the ID numbers in WHERE clauses, not the names
+- Use appropriate Oracle data types (VARCHAR2, NUMBER, DATE, etc.)"""
+    
     def get_selected_views(self) -> List[str]:
-        """Get all selected views (core + supporting)."""
-        return self.view_context.core_views + self.view_context.supporting_views
+        """Get all selected view names."""
+        all_views = []
+        for view in self.core_views + self.supporting_views:
+            view_name = view.get('view_name')
+            if view_name:
+                all_views.append(view_name)
+        return all_views
+
+
+@dataclass
+class RetrievalConfig:
+    """Configuration for hierarchical retrieval."""
+    max_core_views: int = 3
+    max_supporting_views: int = 5
+    max_reports: int = 2
+    max_lookups: int = 10
+    enable_parallel_lookup: bool = True
+    domain_confidence_threshold: float = 0.7
+    semantic_search_threshold: float = 0.5
 
 
 class HierarchicalContextService:
-    """Business Domain-First Cascading RAG Context Service."""
+    """Hierarchical RAG Context Service for Oracle SQL Generation."""
     
-    def __init__(
-        self,
-        vector_service: LlamaIndexVectorService,
-        llm_service: LLMService,
-        max_context_tokens: int = 15000
-    ):
+    def __init__(self,
+                 meta_docs_path: Path,
+                 embedding_service,
+                 vector_service, 
+                 bedrock_service,
+                 config: Optional[RetrievalConfig] = None):
         """
-        Initialize cascading hierarchical context service.
-        
+        Initialize hierarchical context service.
+
         Args:
-            vector_service: Vector search service
-            llm_service: LLM service for reasoning
-            max_context_tokens: Maximum tokens to use for context
+            meta_docs_path: Path to metadata documents
+            embedding_service: Service for generating embeddings
+            vector_service: Service for vector similarity search
+            bedrock_service: Service for LLM calls
+            config: Configuration for retrieval behavior
         """
+        self.meta_docs_path = meta_docs_path
+        self.embedding_service = embedding_service
         self.vector_service = vector_service
-        self.llm_service = llm_service
-        self.max_context_tokens = max_context_tokens
+        self.bedrock_service = bedrock_service
+        self.config = config or RetrievalConfig()
         
-        # Initialize cascading services
-        self.domain_service = BusinessDomainService(vector_service, llm_service)
-        self.view_service = ViewSelectionService(vector_service, llm_service)
-        self.report_service = ReportPatternService(vector_service, llm_service)
+        # Cached metadata
+        self.business_domains: Dict[int, Dict[str, Any]] = {}
+        self.view_metadata: Dict[str, Dict[str, Any]] = {}
+        self.report_metadata: Dict[str, Dict[str, Any]] = {}
+        self.lookup_metadata: Dict[int, Dict[str, Any]] = {}
+        
+        # Load all metadata
+        self._load_all_metadata()
     
-    def build_context(
+    async def build_context(
         self,
         query: str,
         debug: bool = False
-    ) -> CascadingContext:
+    ) -> HierarchicalContext:
         """
-        Build cascading context using business domain-first 3-stage refinement.
+        Build hierarchical context using multi-step metadata retrieval.
         
         Args:
             query: User's natural language query
             debug: Enable debug logging
             
         Returns:
-            CascadingContext with all relevant metadata tiers
+            HierarchicalContext with all relevant metadata
         """
         import time
         start_time = time.time()
         
-        logger.info("Building business domain-first cascading context", query=query)
+        logger.info(f"Building hierarchical context for Oracle SQL generation: {query}")
         
-        # STAGE 1: Business Domain Identification
-        domain_context = self.domain_service.identify_business_domains(query, debug)
+        retrieval_steps = {}
         
-        # STAGE 2: Domain-Filtered View Selection  
-        view_context = self.view_service.select_domain_views(domain_context, debug=debug)
-        
-        # STAGE 3: Report Pattern Extraction
-        report_context = self.report_service.extract_report_patterns(
-            query, view_context, debug=debug
-        )
-        
-        # PHASE 2: Build 5-Tier Progressive Context
-        tiers = []
-        remaining_tokens = self.max_context_tokens
-        
-        # Tier 1: Business Domain Context (always included)
-        domain_tier = self._build_domain_tier(domain_context, remaining_tokens)
-        if domain_tier:
-            tiers.append(domain_tier)
-            remaining_tokens -= domain_tier.tokens_estimate
-        
-        # Tier 2: View DDL (filtered by domains)
-        if remaining_tokens > 1000:
-            ddl_tier = self._build_view_ddl_tier(view_context, remaining_tokens)
-            if ddl_tier:
-                tiers.append(ddl_tier)
-                remaining_tokens -= ddl_tier.tokens_estimate
-        
-        # Tier 3: Report Examples & Patterns (targeted)
-        if remaining_tokens > 1500:
-            report_tier = self._build_report_tier(report_context, remaining_tokens)
-            if report_tier:
-                tiers.append(report_tier)
-                remaining_tokens -= report_tier.tokens_estimate
-        
-        # Tier 4: Core View Details (if complex query)
-        if remaining_tokens > 2000 and self._query_needs_view_details(query, view_context):
-            view_tier = self._build_view_details_tier(view_context, remaining_tokens)
-            if view_tier:
-                tiers.append(view_tier)
-                remaining_tokens -= view_tier.tokens_estimate
-        
-        # Tier 5: Lookup Metadata (if status/reference queries)
-        if self._query_needs_lookups(query) and remaining_tokens > 500:
-            lookup_tier = self._build_lookup_tier(query, remaining_tokens)
-            if lookup_tier:
-                tiers.append(lookup_tier)
-                remaining_tokens -= lookup_tier.tokens_estimate
-        
-        retrieval_time = (time.time() - start_time) * 1000
-        total_tokens = sum(tier.tokens_estimate for tier in tiers)
-        
-        context = CascadingContext(
-            query=query,
-            domain_context=domain_context,
-            view_context=view_context,
-            report_context=report_context,
-            tiers=tiers,
-            total_tokens=total_tokens,
-            retrieval_time_ms=retrieval_time
-        )
-        
-        logger.info(
-            "Cascading context built",
-            domains=len(domain_context.identified_domains),
-            core_views=len(view_context.core_views),
-            supporting_views=len(view_context.supporting_views),
-            reports=len(report_context.relevant_reports),
-            tiers_count=len(tiers),
-            total_tokens=total_tokens,
-            retrieval_time_ms=retrieval_time
-        )
-        
-        return context
-    
-    # New 5-Tier Context Builders
-    
-    def _build_domain_tier(self, domain_context: DomainContext, max_tokens: int) -> Optional[ContextTier]:
-        """Build Tier 1: Business Domain Context."""
-        if max_tokens < 500:
-            return None
-        
-        content_parts = []
-        
-        # Business domain descriptions
-        content_parts.append("# Business Domain Context")
-        content_parts.append(domain_context.business_context)
-        
-        # Domain relationships
-        if domain_context.domain_relationships:
-            content_parts.append("\n## Domain Relationships:")
-            for domain, relations in domain_context.domain_relationships.items():
-                if relations.get("parent"):
-                    content_parts.append(f"- {domain} → child of {relations['parent']}")
-                if relations.get("children"):
-                    children = ", ".join(relations["children"])
-                    content_parts.append(f"- {domain} → parent of {children}")
-        
-        # Enhanced query terms
-        content_parts.append(f"\n## Domain-Enhanced Query: {domain_context.enhanced_query}")
-        
-        content = "\n".join(content_parts)
-        tokens_estimate = len(content) // 4
-        
-        # Truncate if too long
-        if tokens_estimate > max_tokens - 100:
-            content = content[:max_tokens * 4]
-            tokens_estimate = max_tokens - 100
-        
-        return ContextTier(
-            name="Business Domain Context",
-            tokens_estimate=tokens_estimate,
-            content=content,
-            sources=["business_domains"],
-            confidence=domain_context.confidence
-        )
-    
-    def _build_view_ddl_tier(self, view_context: ViewContext, max_tokens: int) -> Optional[ContextTier]:
-        """Build Tier 2: View DDL (filtered by domains)."""
-        if max_tokens < 500:
-            return None
-        
-        selected_views = view_context.core_views + view_context.supporting_views
-        if not selected_views:
-            return None
-        
-        ddl_content = []
-        sources = []
-        
-        for view_name in selected_views:
-            # Search for DDL file
-            try:
-                ddl_results = self.vector_service.search_similar(
-                    query=f"view {view_name}",
-                    retriever_type="keyword",
-                    similarity_top_k=1,
-                    document_type=DocumentType.DDL.value
-                )
-                
-                if ddl_results:
-                    result = ddl_results[0]
-                    content = result.text if hasattr(result, 'text') else str(result)
-                    ddl_content.append(f"-- {view_name}\n{content}")
-                    sources.append(f"{view_name.lower()}.sql")
-            except Exception as e:
-                logger.warning(f"Failed to get DDL for {view_name}", error=str(e))
-        
-        if not ddl_content:
-            return None
-        
-        content = "\n\n".join(ddl_content)
-        tokens_estimate = len(content) // 4
-        
-        # Truncate if too long
-        if tokens_estimate > max_tokens - 100:
-            content = content[:max_tokens * 4]
-            tokens_estimate = max_tokens - 100
-        
-        return ContextTier(
-            name="View DDL Structures",
-            tokens_estimate=tokens_estimate,
-            content=content,
-            sources=sources,
-            confidence=0.9
-        )
-    
-    def _build_report_tier(self, report_context: ReportContext, max_tokens: int) -> Optional[ContextTier]:
-        """Build Tier 3: Report Examples & Patterns (targeted)."""
-        if max_tokens < 500 or not report_context.relevant_reports:
-            return None
-        
-        content_parts = []
-        
-        # SQL patterns
-        if report_context.sql_patterns:
-            content_parts.append("# Query Patterns")
-            for i, pattern in enumerate(report_context.sql_patterns[:3], 1):
-                content_parts.append(f"\n## Pattern {i}:\n```sql\n{pattern}\n```")
-        
-        # Use case matches
-        if report_context.use_case_matches:
-            content_parts.append("\n# Similar Use Cases")
-            for use_case in report_context.use_case_matches[:3]:
-                content_parts.append(f"- {use_case}")
-        
-        # Query examples
-        if report_context.query_examples:
-            content_parts.append("\n# Query Examples")
-            for example in report_context.query_examples[:2]:
-                content_parts.append(f"```sql\n{example}\n```")
-        
-        if not content_parts:
-            return None
-        
-        content = "\n".join(content_parts)
-        tokens_estimate = len(content) // 4
-        
-        # Truncate if too long
-        if tokens_estimate > max_tokens - 100:
-            content = content[:max_tokens * 4]
-            tokens_estimate = max_tokens - 100
-        
-        return ContextTier(
-            name="Report Patterns & Examples",
-            tokens_estimate=tokens_estimate,
-            content=content,
-            sources=report_context.relevant_reports,
-            confidence=report_context.pattern_confidence
-        )
-    
-    def _build_view_details_tier(self, view_context: ViewContext, max_tokens: int) -> Optional[ContextTier]:
-        """Build Tier 4: Core View Details (for complex queries)."""
-        if max_tokens < 500:
-            return None
-        
-        view_content = []
-        sources = []
-        
-        # Focus on core views first
-        for view_name in view_context.core_views[:3]:  # Limit to top 3 core views
-            try:
-                view_results = self.vector_service.search_similar(
-                    query=f"view {view_name} metadata details",
-                    retriever_type="hybrid",
-                    similarity_top_k=1,
-                    document_type=DocumentType.CORE_VIEW.value
-                )
-                
-                if view_results:
-                    result = view_results[0]
-                    content = self._format_view_metadata(result, view_name)
-                    if content:
-                        view_content.append(content)
-                        sources.append(f"{view_name.lower()}.json")
-            except Exception as e:
-                logger.warning(f"Failed to get details for {view_name}", error=str(e))
-        
-        if not view_content:
-            return None
-        
-        content = "\n\n".join(view_content)
-        tokens_estimate = len(content) // 4
-        
-        # Truncate if too long
-        if tokens_estimate > max_tokens - 100:
-            content = content[:max_tokens * 4]
-            tokens_estimate = max_tokens - 100
-        
-        return ContextTier(
-            name="Core View Details",
-            tokens_estimate=tokens_estimate,
-            content=content,
-            sources=sources,
-            confidence=0.8
-        )
-    
-    def _format_view_metadata(self, result: Any, view_name: str) -> str:
-        """Format view metadata for better readability."""
         try:
-            if isinstance(result, dict):
-                content = result.get("content", "")
+            # Step 1: Business Domain Identification
+            identified_domains = await self._identify_business_domains(query)
+            retrieval_steps['domain_identification'] = {
+                'domains': identified_domains,
+                'method': 'llm_analysis'
+            }
+            
+            # Step 2: Core View Retrieval
+            core_views = await self._retrieve_core_views(query, identified_domains)
+            retrieval_steps['core_views'] = {
+                'count': len(core_views),
+                'views': [v.get('view_name') for v in core_views]
+            }
+            
+            # Step 3: Supporting View Retrieval
+            supporting_views = await self._retrieve_supporting_views(query, core_views, identified_domains)
+            retrieval_steps['supporting_views'] = {
+                'count': len(supporting_views),
+                'views': [v.get('view_name') for v in supporting_views]
+            }
+            
+            # Steps 4 & 5: Report and Lookup Retrieval (parallel)
+            all_views = core_views + supporting_views
+            
+            if self.config.enable_parallel_lookup:
+                reports, lookups = await asyncio.gather(
+                    self._retrieve_report_examples(query, all_views, identified_domains),
+                    self._retrieve_lookup_values(all_views)
+                )
             else:
-                content = getattr(result, 'text', str(result))
+                reports = await self._retrieve_report_examples(query, all_views, identified_domains)
+                lookups = await self._retrieve_lookup_values(all_views)
             
-            # Parse JSON content if available
-            if content.strip().startswith('{'):
-                data = json.loads(content)
-                
-                formatted = f"View: {view_name}\n"
-                formatted += f"Type: {data.get('view_type', 'Unknown')}\n"
-                formatted += f"Description: {data.get('description', '')}\n"
-                
-                if data.get('use_cases'):
-                    formatted += f"Use Cases: {', '.join(data['use_cases'][:3])}\n"
-                
-                if data.get('data_returned'):
-                    formatted += f"Data Returned: {data['data_returned'][:200]}...\n"
-                
-                return formatted
-                
+            retrieval_steps['reports'] = {
+                'count': len(reports),
+                'reports': [r.get('report_name') for r in reports]
+            }
+            retrieval_steps['lookups'] = {
+                'count': len(lookups),
+                'lookup_ids': [l.get('lookup_id') for l in lookups]
+            }
+            
+            # Calculate metrics
+            retrieval_time = (time.time() - start_time) * 1000
+            confidence = self._calculate_retrieval_confidence(identified_domains, core_views, supporting_views)
+            
+            # Estimate total tokens
+            total_tokens = self._estimate_context_tokens(
+                identified_domains, core_views, supporting_views, reports, lookups
+            )
+            
+            context = HierarchicalContext(
+                user_query=query,
+                identified_domains=identified_domains,
+                core_views=core_views,
+                supporting_views=supporting_views,
+                reports=reports,
+                lookups=lookups,
+                retrieval_steps=retrieval_steps,
+                confidence=confidence,
+                total_tokens=total_tokens,
+                retrieval_time_ms=retrieval_time
+            )
+            
+            logger.info(f"Hierarchical context completed: {len(identified_domains)} domains, {len(core_views)} core views, {len(supporting_views)} supporting views, {len(reports)} reports, {len(lookups)} lookups, confidence={confidence:.2f}")
+            
+            return context
+            
         except Exception as e:
-            logger.warning("Failed to parse view metadata", error=str(e))
-        
-        # Fallback: return raw content truncated
-        if isinstance(result, dict):
-            content = result.get("content", "")
-        else:
-            content = getattr(result, 'text', str(result))
-        
-        return content[:500] if len(content) > 500 else content
+            logger.error(f"Error in hierarchical context building: {e}")
+            # Return minimal fallback context
+            return self._create_fallback_context(query, retrieval_steps)
     
-    def _query_needs_view_details(self, query: str, view_context: ViewContext) -> bool:
-        """Determine if query needs detailed view information."""
-        # Complex queries with many views or specific detail requests
-        complex_keywords = [
-            "detailed", "specific", "exact", "precise", "columns", "fields",
-            "structure", "metadata", "definition"
-        ]
-        query_lower = query.lower()
-        
-        # Needs details if: complex keywords OR many views selected OR supporting views present
-        return (any(keyword in query_lower for keyword in complex_keywords) or 
-                len(view_context.core_views) > 3 or
-                len(view_context.supporting_views) > 0)
+    def _load_all_metadata(self):
+        """Load all metadata types from files."""
+        try:
+            self._load_business_domains()
+            self._load_view_metadata()
+            self._load_report_metadata()
+            self._load_lookup_metadata()
+            
+            logger.info(f"Loaded hierarchical metadata: {len(self.business_domains)} domains, {len(self.view_metadata)} views, {len(self.report_metadata)} reports, {len(self.lookup_metadata)} lookups")
+            
+        except Exception as e:
+            logger.error(f"Failed to load metadata: {e}")
     
-    def _build_lookup_tier(self, query: str, max_tokens: int) -> Optional[ContextTier]:
-        """Build Tier 5: Lookup Metadata (if status/reference queries)."""
-        if max_tokens < 300:
-            return None
+    def _load_business_domains(self):
+        """Load business domain definitions."""
+        domains_file = self.meta_docs_path / "business_domains.json"
+        if domains_file.exists():
+            with open(domains_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                for domain in data.get('business_domains', []):
+                    self.business_domains[domain['domain_id']] = domain
+    
+    def _load_view_metadata(self):
+        """Load view metadata from files."""
+        views_dir = self.meta_docs_path / "views"
+        if views_dir.exists():
+            for json_file in views_dir.glob("*.json"):
+                try:
+                    with open(json_file, 'r', encoding='utf-8') as f:
+                        view_data = json.load(f)
+                        view_name = view_data.get('view_name', json_file.stem)
+                        self.view_metadata[view_name] = view_data
+                except Exception as e:
+                    logger.warning(f"Failed to load view {json_file.name}: {e}")
+    
+    def _load_report_metadata(self):
+        """Load report metadata from files."""
+        reports_dir = self.meta_docs_path / "reports"
+        if reports_dir.exists():
+            for json_file in reports_dir.glob("*.json"):
+                try:
+                    with open(json_file, 'r', encoding='utf-8') as f:
+                        report_data = json.load(f)
+                        report_name = report_data.get('report_name', json_file.stem)
+                        self.report_metadata[report_name] = report_data
+                except Exception as e:
+                    logger.warning(f"Failed to load report {json_file.name}: {e}")
+    
+    def _load_lookup_metadata(self):
+        """Load lookup metadata from files."""
+        lookups_dir = self.meta_docs_path / "lookups"
+        if lookups_dir.exists():
+            for json_file in lookups_dir.glob("*.json"):
+                try:
+                    with open(json_file, 'r', encoding='utf-8') as f:
+                        lookup_data = json.load(f)
+                        lookup_id = lookup_data.get('lookup_id')
+                        if lookup_id:
+                            self.lookup_metadata[lookup_id] = lookup_data
+                except Exception as e:
+                    logger.warning(f"Failed to load lookup {json_file.name}: {e}")
+    
+    async def _identify_business_domains(self, user_query: str) -> List[int]:
+        """Step 1: Identify relevant business domains."""
+        try:
+            # Create domain context for LLM
+            domain_context = self._create_domain_context_for_llm()
+            
+            prompt = f"""Analyze the following user query and identify which business domains are most relevant.
+
+User Query: {user_query}
+
+Available Business Domains:
+{domain_context}
+
+Instructions:
+1. Consider which domains would contain the data needed to answer the query
+2. Include related domains that might have supporting information
+3. Focus on domains whose views and reports would be relevant
+4. Return ONLY the domain IDs as a comma-separated list (e.g., 1,2,3)
+
+Relevant Domain IDs:"""
+            
+            response = await self.bedrock_service.generate_response(prompt)
+            
+            # Parse domain IDs from response
+            domain_ids = self._parse_domain_ids_from_response(response)
+            
+            if not domain_ids:
+                # Fallback to keyword matching
+                domain_ids = self._identify_domains_by_keywords(user_query)
+            
+            return domain_ids[:4]  # Limit to 4 domains max
+            
+        except Exception as e:
+            logger.error(f"Error identifying domains: {e}")
+            return list(self.business_domains.keys())[:3]  # Fallback to first 3 domains
+    
+    def _create_domain_context_for_llm(self) -> str:
+        """Create formatted domain context for LLM."""
+        context_parts = []
+        
+        for domain_id, domain in self.business_domains.items():
+            context_parts.append(
+                f"ID: {domain_id}\n"
+                f"Name: {domain['domain_name']}\n"
+                f"Description: {domain['description']}\n"
+                f"Keywords: {', '.join(domain['keywords'])}\n"
+            )
+        
+        return "\n".join(context_parts)
+    
+    def _parse_domain_ids_from_response(self, response: str) -> List[int]:
+        """Parse domain IDs from LLM response."""
+        try:
+            import re
+            numbers = re.findall(r'\b\d+\b', response)
+            
+            domain_ids = []
+            for num_str in numbers:
+                domain_id = int(num_str)
+                if domain_id in self.business_domains:
+                    domain_ids.append(domain_id)
+            
+            return domain_ids
+            
+        except Exception:
+            return []
+    
+    def _identify_domains_by_keywords(self, user_query: str) -> List[int]:
+        """Fallback keyword-based domain identification."""
+        query_lower = user_query.lower()
+        matched_domains = []
+        
+        for domain_id, domain in self.business_domains.items():
+            keywords = domain.get('keywords', [])
+            if any(keyword.lower() in query_lower for keyword in keywords):
+                matched_domains.append(domain_id)
+        
+        return matched_domains
+    
+    async def _retrieve_core_views(self, user_query: str, domain_ids: List[int]) -> List[Dict[str, Any]]:
+        """Step 2: Retrieve core views for identified domains."""
+        try:
+            # Get candidate views from domains
+            candidate_views = self._get_candidate_views_for_domains(domain_ids, core_only=True)
+            
+            if not candidate_views:
+                # Fallback to all core views if domain filtering fails
+                candidate_views = [v for v in self.view_metadata.values() 
+                                 if v.get('view_type') == 'CORE']
+            
+            # Rank by semantic similarity
+            ranked_views = await self._rank_views_by_similarity(user_query, candidate_views)
+            
+            return ranked_views[:self.config.max_core_views]
+            
+        except Exception as e:
+            logger.error(f"Error retrieving core views: {e}")
+            return []
+    
+    def _get_candidate_views_for_domains(self, domain_ids: List[int], core_only: bool = False) -> List[Dict[str, Any]]:
+        """Get candidate views for specified domains."""
+        candidate_views = []
+        
+        for view_name, view_data in self.view_metadata.items():
+            view_domains = set(view_data.get('business_domains', []))
+            
+            # Check if view belongs to any of our domains
+            if view_domains.intersection(set(domain_ids)):
+                if not core_only or view_data.get('view_type') == 'CORE':
+                    candidate_views.append(view_data)
+        
+        return candidate_views
+    
+    async def _retrieve_supporting_views(self, user_query: str, core_views: List[Dict[str, Any]], domain_ids: List[int]) -> List[Dict[str, Any]]:
+        """Step 3: Retrieve supporting views based on core views and domains."""
+        try:
+            # Get supporting view candidates from domains
+            candidate_views = self._get_candidate_views_for_domains(domain_ids, core_only=False)
+            
+            # Filter out core views we already have
+            core_view_names = {v.get('view_name') for v in core_views}
+            candidate_views = [v for v in candidate_views 
+                             if v.get('view_name') not in core_view_names]
+            
+            # Filter to supporting views
+            candidate_views = [v for v in candidate_views 
+                             if v.get('view_type') == 'SUPPORTING']
+            
+            # Rank by semantic similarity
+            ranked_views = await self._rank_views_by_similarity(user_query, candidate_views)
+            
+            return ranked_views[:self.config.max_supporting_views]
+            
+        except Exception as e:
+            logger.error(f"Error retrieving supporting views: {e}")
+            return []
+    
+    async def _retrieve_report_examples(self, user_query: str, all_views: List[Dict[str, Any]], domain_ids: List[int]) -> List[Dict[str, Any]]:
+        """Step 4: Retrieve relevant report examples."""
+        try:
+            # Get view names for filtering
+            view_names = {v.get('view_name') for v in all_views}
+            
+            # Find reports that relate to our views and domains
+            candidate_reports = []
+            
+            for report in self.report_metadata.values():
+                # Check domain overlap
+                report_domains = set(report.get('business_domains', []))
+                if report_domains.intersection(set(domain_ids)):
+                    candidate_reports.append(report)
+                    continue
+                
+                # Check view relationships
+                report_view = report.get('view_name')
+                related_views = set(report.get('related_views', []))
+                
+                if report_view in view_names or related_views.intersection(view_names):
+                    candidate_reports.append(report)
+            
+            # Rank by relevance to query
+            ranked_reports = await self._rank_reports_by_similarity(user_query, candidate_reports)
+            
+            return ranked_reports[:self.config.max_reports]
+            
+        except Exception as e:
+            logger.error(f"Error retrieving reports: {e}")
+            return []
+    
+    async def _retrieve_lookup_values(self, all_views: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Step 5: Retrieve lookup values for columns with lookup_id."""
+        try:
+            # Extract all lookup IDs from view columns
+            lookup_ids = set()
+            
+            for view in all_views:
+                columns = view.get('columns', [])
+                for column in columns:
+                    lookup_id = column.get('lookup_id')
+                    if lookup_id:
+                        lookup_ids.add(lookup_id)
+            
+            # Get lookup metadata for these IDs
+            lookups = []
+            for lookup_id in lookup_ids:
+                lookup_data = self.lookup_metadata.get(lookup_id)
+                if lookup_data:
+                    lookups.append(lookup_data)
+            
+            return lookups[:self.config.max_lookups]
+            
+        except Exception as e:
+            logger.error(f"Error retrieving lookups: {e}")
+            return []
+    
+    async def _rank_views_by_similarity(self, query: str, views: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Rank views by semantic similarity to query."""
+        if not views:
+            return []
         
         try:
-            lookup_results = self.vector_service.search_similar(
-                query=query,
-                retriever_type="hybrid", 
-                similarity_top_k=5,
-                document_type=DocumentType.LOOKUP_METADATA.value
-            )
+            # Generate query embedding
+            query_embedding = await self.embedding_service.get_embedding(query)
             
-            if not lookup_results:
-                return None
+            view_scores = []
             
-            lookup_content = []
-            sources = []
-            
-            for result in lookup_results:
-                if isinstance(result, dict):
-                    content = result.get("content", "")
-                    metadata = result.get("metadata", {})
-                else:
-                    content = getattr(result, 'text', str(result))
-                    metadata = getattr(result, 'metadata', {})
+            for view in views:
+                # Create view text for similarity
+                view_text = self._create_view_text_for_similarity(view)
+                view_embedding = await self.embedding_service.get_embedding(view_text)
                 
-                if content:
-                    lookup_content.append(content)
-                    source = metadata.get('file_path', 'unknown_lookup')
-                    sources.append(source)
+                # Calculate cosine similarity
+                similarity = self._calculate_cosine_similarity(query_embedding, view_embedding)
+                view_scores.append((view, similarity))
             
-            if not lookup_content:
-                return None
+            # Sort by similarity descending
+            view_scores.sort(key=lambda x: x[1], reverse=True)
             
-            content = "\n\n".join(lookup_content)
-            tokens_estimate = len(content) // 4
-            
-            # Truncate if too long
-            if tokens_estimate > max_tokens - 100:
-                content = content[:max_tokens * 4]
-                tokens_estimate = max_tokens - 100
-            
-            return ContextTier(
-                name="Lookup Metadata",
-                tokens_estimate=tokens_estimate,
-                content=content,
-                sources=sources,
-                confidence=0.9
-            )
+            return [view for view, score in view_scores if score >= self.config.semantic_search_threshold]
             
         except Exception as e:
-            logger.warning("Failed to build lookup tier", error=str(e))
-            return None
+            logger.error(f"Error ranking views by similarity: {e}")
+            return views  # Return unranked if similarity ranking fails
     
-    def _query_needs_lookups(self, query: str) -> bool:
-        """Determine if query likely needs lookup metadata."""
-        lookup_keywords = [
-            "status", "type", "category", "state", "code", "name",
-            "active", "pending", "cancelled", "approved", "rejected",
-            "lookup", "reference", "mapping"
+    async def _rank_reports_by_similarity(self, query: str, reports: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Rank reports by semantic similarity to query."""
+        if not reports:
+            return []
+        
+        try:
+            query_embedding = await self.embedding_service.get_embedding(query)
+            
+            report_scores = []
+            
+            for report in reports:
+                report_text = self._create_report_text_for_similarity(report)
+                report_embedding = await self.embedding_service.get_embedding(report_text)
+                
+                similarity = self._calculate_cosine_similarity(query_embedding, report_embedding)
+                report_scores.append((report, similarity))
+            
+            report_scores.sort(key=lambda x: x[1], reverse=True)
+            
+            return [report for report, score in report_scores if score >= self.config.semantic_search_threshold]
+            
+        except Exception as e:
+            logger.error(f"Error ranking reports by similarity: {e}")
+            return reports
+    
+    def _create_view_text_for_similarity(self, view: Dict[str, Any]) -> str:
+        """Create text representation of view for similarity calculation."""
+        parts = [
+            view.get('view_name', ''),
+            view.get('description', ''),
+            view.get('use_cases', '')
         ]
-        query_lower = query.lower()
-        return any(keyword in query_lower for keyword in lookup_keywords)
+        
+        # Add column information
+        columns = view.get('columns', [])
+        column_names = [col.get('name', '') for col in columns]
+        if column_names:
+            parts.append(' '.join(column_names))
+        
+        return ' '.join(filter(None, parts))
+    
+    def _create_report_text_for_similarity(self, report: Dict[str, Any]) -> str:
+        """Create text representation of report for similarity calculation."""
+        parts = [
+            report.get('report_name', ''),
+            report.get('report_description', ''),
+            report.get('use_cases', ''),
+            report.get('data_returned', '')
+        ]
+        
+        return ' '.join(filter(None, parts))
+    
+    def _calculate_cosine_similarity(self, vec1: List[float], vec2: List[float]) -> float:
+        """Calculate cosine similarity between two vectors."""
+        try:
+            if len(vec1) != len(vec2):
+                return 0.0
+            
+            dot_product = sum(a * b for a, b in zip(vec1, vec2))
+            magnitude_a = math.sqrt(sum(a * a for a in vec1))
+            magnitude_b = math.sqrt(sum(b * b for b in vec2))
+            
+            if magnitude_a == 0 or magnitude_b == 0:
+                return 0.0
+            
+            return dot_product / (magnitude_a * magnitude_b)
+            
+        except Exception:
+            return 0.0
+    
+    def _calculate_retrieval_confidence(self, domains: List[int], core_views: List[Dict[str, Any]], supporting_views: List[Dict[str, Any]]) -> float:
+        """Calculate overall confidence in retrieval results."""
+        # Base confidence from domain identification
+        domain_confidence = min(len(domains) / 2.0, 1.0)  # Normalize to 0-1
+        
+        # View retrieval confidence
+        view_confidence = min((len(core_views) + len(supporting_views)) / 5.0, 1.0)
+        
+        # Combined confidence
+        overall_confidence = (domain_confidence * 0.4 + view_confidence * 0.6)
+        
+        return max(overall_confidence, 0.3)  # Minimum confidence of 0.3
+    
+    def _estimate_context_tokens(self, domains: List[int], core_views: List[Dict[str, Any]], 
+                                supporting_views: List[Dict[str, Any]], reports: List[Dict[str, Any]], 
+                                lookups: List[Dict[str, Any]]) -> int:
+        """Estimate total tokens in context."""
+        # Rough estimation: 4 characters per token
+        total_chars = 0
+        
+        # Domain context
+        total_chars += len(domains) * 100
+        
+        # Views
+        for view in core_views + supporting_views:
+            view_text = json.dumps(view, separators=(',', ':'))
+            total_chars += len(view_text)
+        
+        # Reports
+        for report in reports:
+            report_text = json.dumps(report, separators=(',', ':'))
+            total_chars += len(report_text)
+        
+        # Lookups
+        for lookup in lookups:
+            lookup_text = json.dumps(lookup, separators=(',', ':'))
+            total_chars += len(lookup_text)
+        
+        # Oracle guidelines
+        total_chars += 500
+        
+        return total_chars // 4
+    
+    def _create_fallback_context(self, user_query: str, retrieval_steps: Dict[str, Any]) -> HierarchicalContext:
+        """Create fallback context when retrieval fails."""
+        # Return basic context with available metadata
+        fallback_views = list(self.view_metadata.values())[:3]
+        
+        return HierarchicalContext(
+            user_query=user_query,
+            identified_domains=list(self.business_domains.keys())[:2],
+            core_views=fallback_views,
+            supporting_views=[],
+            reports=list(self.report_metadata.values())[:1],
+            lookups=list(self.lookup_metadata.values())[:3],
+            retrieval_steps=retrieval_steps,
+            confidence=0.3,
+            total_tokens=5000,
+            retrieval_time_ms=100.0
+        )
     
     # Legacy method for backward compatibility
-    def build_hierarchical_context(self, query: str, debug: bool = False) -> CascadingContext:
+    async def build_hierarchical_context(self, query: str, debug: bool = False) -> HierarchicalContext:
         """Legacy method name - redirects to build_context.""" 
-        return self.build_context(query, debug)
+        return await self.build_context(query, debug)

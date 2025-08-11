@@ -62,23 +62,33 @@ class BedrockEndpointService:
             raise
     
     async def generate_sql(self, user_query: str, context: str) -> Dict[str, str]:
-        """Generate SQL using LLM with structured prompt."""
-        prompt = f"""You are a SQL expert. Generate a SQL query based on the user's question and the provided database context.
+        """Generate Oracle SQL using LLM with hierarchical context and Oracle dialect."""
+        prompt = f"""You are an Oracle SQL expert. Generate an Oracle SQL query based on the user's question and the provided hierarchical database context.
 
 User Question: {user_query}
 
-Database Context:
+Hierarchical Database Context:
 {context}
 
-Requirements:
-1. Generate a valid SQL query that answers the user's question
-2. Use only the tables and columns mentioned in the context
-3. Include appropriate WHERE clauses, JOINs, and filters
-4. Provide a brief explanation of what the query does
+ORACLE SQL REQUIREMENTS:
+1. Generate a valid Oracle SQL query that answers the user's question
+2. Use only the tables/views and columns mentioned in the context
+3. Schema-qualify all table references (e.g., SCHEMA.TABLE_NAME)
+4. Use Oracle-specific syntax and functions:
+   - Oracle date functions: SYSDATE, TO_DATE, TO_CHAR
+   - Use ROWNUM for row limiting (not LIMIT)
+   - Use Oracle outer join syntax: (+) or ANSI JOIN
+   - Use UPPER() for case-insensitive string comparisons
+5. For lookup columns with LOOKUP_ID references:
+   - Use the numeric ID values in WHERE clauses, not the text names
+   - Reference the lookup values provided in the context
+6. Include appropriate WHERE clauses, JOINs, and filters
+7. Use Oracle data types (VARCHAR2, NUMBER, DATE, etc.)
+8. Follow the SQL examples from reports when applicable
 
 Response format:
-SQL: [your SQL query here]
-EXPLANATION: [brief explanation of what the query does]"""
+SQL: [your Oracle SQL query here]
+EXPLANATION: [brief explanation of what the query does and why specific Oracle features were used]"""
 
         try:
             payload = {
@@ -118,6 +128,10 @@ EXPLANATION: [brief explanation of what the query does]"""
         except Exception as e:
             logger.error(f"Error generating SQL: {e}")
             raise
+    
+    async def generate_response(self, prompt: str) -> str:
+        """Generate general text response using LLM (alias for generate_text)."""
+        return await self.generate_text(prompt)
     
     async def generate_text(self, prompt: str) -> str:
         """Generate text response using LLM."""

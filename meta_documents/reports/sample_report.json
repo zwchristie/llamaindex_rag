@@ -1,8 +1,0 @@
-{
-  "view_name": "V_TRANCHE_DETAILS_FOR_TODAYS_DEALS",
-  "report_name": "Tranche Details for Today's Deals Report",
-  "report_description": "This view provides a comprehensive overview of tranche details for deals occurring today, integrating information about deal names",
-  "data_returned": "DEAL_NAME: Name of the deal associated with the tranche.\n",
-  "example_sql": "SELECT * FROM SYND.V_TRANCHE_DETAILS_FOR_TODAYS_DEALS",
-  "use_cases": " - Monitor the details and organizational aspects of tranches associated with today's deals. \n - Get all Deal & Tranche IDs for deals announc"
-}

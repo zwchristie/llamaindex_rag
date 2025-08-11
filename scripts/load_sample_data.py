@@ -158,6 +158,42 @@ class DataLoader:
             logger.error(f"❌ Failed to clear existing data: {e}")
             return False
     
+    async def load_business_domains(self):
+        """Load business domains from meta_documents/business_domains.json."""
+        try:
+            business_domains_file = self.meta_docs_path / "business_domains.json"
+            
+            if not business_domains_file.exists():
+                logger.warning(f"Business domains file not found: {business_domains_file}")
+                return 0
+            
+            with open(business_domains_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            domains = data.get('business_domains', [])
+            if not domains:
+                logger.warning("No business domains found in file")
+                return 0
+            
+            # Store each domain as a separate document
+            loaded_count = 0
+            for domain in domains:
+                domain['_uploaded_at'] = datetime.utcnow()
+                domain['_source_file'] = 'business_domains.json'
+                domain['_document_type'] = 'business_domain'
+                
+                result = await self.db.view_metadata.insert_one(domain)
+                if result.inserted_id:
+                    loaded_count += 1
+                    logger.info(f"Loaded business domain: {domain.get('domain_name', 'Unknown')}")
+            
+            logger.info(f"Loaded {loaded_count} business domain documents")
+            return loaded_count
+            
+        except Exception as e:
+            logger.error(f"Failed to load business domains: {e}")
+            return 0
+    
     async def load_view_metadata(self):
         """Load view metadata files from meta_documents/views/."""
         return await self._load_documents_from_directory("views", "view_metadata")
@@ -255,7 +291,9 @@ class DataLoader:
                     
                     # Generate full text based on document type
                     document_type = doc.get('_document_type', 'view_metadata')
-                    identifier = doc.get('view_name') or doc.get('report_name') or doc.get('lookup_name') or doc.get('name', 'unknown')
+                    identifier = (doc.get('view_name') or doc.get('report_name') or 
+                                doc.get('lookup_name') or doc.get('domain_name') or 
+                                doc.get('name', 'unknown'))
                     logger.info(f"Processing {document_type}: {identifier}")
                     
                     if document_type == 'view_metadata':
@@ -345,6 +383,32 @@ class DataLoader:
                         full_text = "\n".join(parts)
                         metadata_obj = None  # No metadata object for simplified approach
                     
+                    elif document_type == 'business_domain':
+                        # Handle business domains
+                        domain_name = doc.get('domain_name', '')
+                        domain_desc = doc.get('description', '')
+                        keywords = doc.get('keywords', [])
+                        core_views = doc.get('core_views', [])
+                        supporting_views = doc.get('supporting_views', [])
+                        
+                        # Create full text manually
+                        parts = [
+                            f"Business Domain: {domain_name}",
+                            f"ID: {doc.get('domain_id', 'N/A')}",
+                        ]
+                        
+                        if domain_desc:
+                            parts.append(f"Description: {domain_desc}")
+                        if keywords:
+                            parts.append(f"Keywords: {', '.join(keywords)}")
+                        if core_views:
+                            parts.append(f"Core Views: {', '.join(core_views)}")
+                        if supporting_views:
+                            parts.append(f"Supporting Views: {', '.join(supporting_views)}")
+                        
+                        full_text = "\n".join(parts)
+                        metadata_obj = None  # No metadata object for simplified approach
+                    
                     else:
                         logger.warning(f"Unknown document type: {document_type}")
                         continue
@@ -393,6 +457,15 @@ class DataLoader:
                             "use_cases": doc.get('use_cases', ''),
                             "values_count": len(doc.get('values', []))
                         })
+                    elif document_type == 'business_domain':
+                        opensearch_doc.update({
+                            "domain_name": doc.get('domain_name', ''),
+                            "domain_id": doc.get('domain_id'),
+                            "description": doc.get('description', ''),
+                            "keywords": doc.get('keywords', []),
+                            "core_views": doc.get('core_views', []),
+                            "supporting_views": doc.get('supporting_views', [])
+                        })
                     
                     await self.opensearch_client.index(
                         index="view_metadata",
@@ -430,14 +503,16 @@ class DataLoader:
                 opensearch_count = await self.opensearch_client.count(index="view_metadata")
                 logger.info(f"🔍 OpenSearch documents: {opensearch_count['count']}")
                 
-                # Test a sample search
+                # Test a sample search using generic method
                 if opensearch_count['count'] > 0:
                     test_embedding = await self.embedding_service.get_embedding("user metrics")
-                    search_result = await self.vector_service.search_similar_views(test_embedding, k=1)
+                    search_result = await self.vector_service.search_similar_documents(test_embedding, k=1)
                     
                     if search_result:
-                        view, score = search_result[0]
-                        logger.info(f"✅ Test search successful: {view.view_name} (similarity: {score:.3f})")
+                        doc, score = search_result[0]
+                        identifier = (doc.get('view_name') or doc.get('report_name') or 
+                                    doc.get('lookup_name') or doc.get('domain_name') or 'Unknown')
+                        logger.info(f"✅ Test search successful: {identifier} (similarity: {score:.3f})")
                     else:
                         logger.warning("⚠️  Test search returned no results")
                         
@@ -486,19 +561,20 @@ async def main():
             print("Continuing anyway - index may already exist...")
             # Don't fail here, index might already exist
         
-        # Load all metadata types
+        # Load all metadata types (hierarchical order: domains first)
         print("\nLoading metadata files...")
+        domain_count = await loader.load_business_domains()
         view_count = await loader.load_view_metadata()
         report_count = await loader.load_report_metadata()
         lookup_count = await loader.load_lookup_metadata()
         
-        total_loaded = view_count + report_count + lookup_count
+        total_loaded = domain_count + view_count + report_count + lookup_count
         
         if total_loaded == 0:
             print("No data loaded")
             return False
         
-        print(f"Total loaded: {total_loaded} documents (Views: {view_count}, Reports: {report_count}, Lookups: {lookup_count})")
+        print(f"Total loaded: {total_loaded} documents (Domains: {domain_count}, Views: {view_count}, Reports: {report_count}, Lookups: {lookup_count})")
         
         # Generate embeddings and index
         print("\nGenerating embeddings and indexing...")

@@ -54,7 +54,7 @@ async def initialize_services():
         vector_service = VectorService(opensearch_client, settings.opensearch_index_name, settings.opensearch_vector_field)
         hitl_service = HITLService(db, settings.hitl_timeout_minutes)
         session_service = SessionService(db)
-        llm_service = BedrockEndpointService(settings.bedrock_endpoint_url, settings.bedrock_llm_model)
+        llm_service = BedrockEndpointService(settings.bedrock_endpoint_url, settings.bedrock_embedding_model, settings.bedrock_llm_model)
         
         # Create indexes
         await view_service.ensure_indexes()
