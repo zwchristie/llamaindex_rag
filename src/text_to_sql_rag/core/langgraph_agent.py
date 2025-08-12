@@ -264,7 +264,7 @@ Reasoning: [Brief explanation of why this classification was chosen]
 """
             
             # Get classification from LLM
-            response_text = await llm_factory.generate_text(classification_prompt)
+            response_text = llm_factory.generate_text(classification_prompt)
             
             # Parse the LLM response
             classification_result = self._parse_classification_response(response_text)
@@ -554,7 +554,7 @@ GUIDELINES:
             logger.debug("Confidence assessment prompt", prompt=assessment_prompt)
             
             # Get confidence assessment from LLM
-            response_text = await llm_factory.generate_text(assessment_prompt)
+            response_text = llm_factory.generate_text(assessment_prompt)
             
             # Log LLM assessment response
             logger.info("Received confidence assessment response",
@@ -864,7 +864,7 @@ Requirements:
             logger.debug("Full LLM prompt", prompt=prompt)
             
             # Generate SQL using the vector service's query engine
-            response_text = await llm_factory.generate_text(prompt)
+            response_text = llm_factory.generate_text(prompt)
             
             # Log LLM response
             logger.info("Received LLM response", 
@@ -934,7 +934,7 @@ Provide a comprehensive explanation including:
 Format your response clearly and make it understandable for both technical and non-technical users.
 """
                 
-                response_text = await llm_factory.generate_text(description_prompt)
+                response_text = llm_factory.generate_text(description_prompt)
                 
                 state.final_result = {
                     "response_type": "sql_description",

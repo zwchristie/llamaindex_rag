@@ -64,9 +64,8 @@ class CustomBedrockEmbedding(BaseEmbedding):
             return [0.0] * 1024
         
         try:
-            # Use endpoint service for embeddings (only supported approach)
-            import asyncio
-            embedding = asyncio.run(self._endpoint_service.get_embedding(query))
+            # Use endpoint service for embeddings (now synchronous)
+            embedding = self._endpoint_service.get_embedding(query)
             
             if not embedding or len(embedding) == 0:
                 logger.warning("Empty embedding returned from service")
@@ -84,9 +83,8 @@ class CustomBedrockEmbedding(BaseEmbedding):
             return [0.0] * 1024  # Match the vector size
         
         try:
-            # Use endpoint service for embeddings (only supported approach)
-            import asyncio
-            embedding = asyncio.run(self._endpoint_service.get_embedding(text))
+            # Use endpoint service for embeddings (now synchronous)
+            embedding = self._endpoint_service.get_embedding(text)
             
             if not embedding or len(embedding) == 0:
                 logger.warning("Empty embedding returned from service")
@@ -119,12 +117,12 @@ class CustomBedrockLLM(LLM):
     
     def complete(self, prompt: str, **kwargs) -> str:
         """Complete a prompt."""
-        return self._endpoint_service.generate_response(prompt, **kwargs)
+        return self._endpoint_service.generate_response(prompt)
     
     def stream_complete(self, prompt: str, **kwargs):
         """Stream complete - not implemented for simplicity."""
         # For now, just return the complete response
-        response = self.complete(prompt, **kwargs)
+        response = self.complete(prompt)
         yield response
     
     def chat(self, messages, **kwargs) -> str:
@@ -136,7 +134,7 @@ class CustomBedrockLLM(LLM):
                 prompt += f"{message.content}\n"
             else:
                 prompt += f"{message}\n"
-        return self.complete(prompt, **kwargs)
+        return self.complete(prompt)
     
     def stream_chat(self, messages, **kwargs):
         """Stream chat interface."""
@@ -145,7 +143,7 @@ class CustomBedrockLLM(LLM):
     
     async def acomplete(self, prompt: str, **kwargs) -> str:
         """Async complete."""
-        return self.complete(prompt, **kwargs)
+        return self.complete(prompt)
     
     async def astream_complete(self, prompt: str, **kwargs):
         """Async stream complete."""
@@ -154,7 +152,7 @@ class CustomBedrockLLM(LLM):
     
     async def achat(self, messages, **kwargs) -> str:
         """Async chat."""
-        return self.chat(messages, **kwargs)
+        return self.chat(messages)
     
     async def astream_chat(self, messages, **kwargs):
         """Async stream chat."""

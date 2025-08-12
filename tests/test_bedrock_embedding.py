@@ -151,45 +151,44 @@ class BedrockEmbeddingTest:
             )
             return False
     
-    async def test_health_check(self):
-        """Test Bedrock service health check."""
+    def test_configuration_check(self):
+        """Test Bedrock service configuration check (no API calls)."""
         try:
-            # Do a simple test by trying to generate an embedding
-            try:
-                test_embedding = await self.bedrock_service.get_embedding("ping")
-                is_healthy = bool(test_embedding and len(test_embedding) > 0)
-            except Exception:
-                is_healthy = False
+            if not hasattr(self, 'bedrock_service') or self.bedrock_service is None:
+                # Service hasn't been initialized yet, check settings
+                is_configured = bool(self.settings.bedrock_endpoint.url)
+            else:
+                is_configured = self.bedrock_service.is_configured()
             
-            if is_healthy:
+            if is_configured:
                 self.log_result(
-                    "Health Check",
+                    "Configuration Check",
                     True,
-                    "Bedrock service is healthy (tested with simple embedding generation)"
+                    "Bedrock service is properly configured"
                 )
             else:
                 self.log_result(
-                    "Health Check",
+                    "Configuration Check",
                     False,
-                    "Bedrock service health check failed"
+                    "Bedrock service configuration check failed"
                 )
             
-            return is_healthy
+            return is_configured
             
         except Exception as e:
             self.log_result(
-                "Health Check",
+                "Configuration Check",
                 False,
-                f"Health check error: {e}"
+                f"Configuration check error: {e}"
             )
             return False
     
-    async def test_single_embedding(self):
+    def test_single_embedding(self):
         """Test generating a single embedding."""
         try:
             test_text = "This is a test document for embedding generation."
             
-            embedding = await self.bedrock_service.get_embedding(test_text)
+            embedding = self.bedrock_service.get_embedding(test_text)
             
             if embedding and len(embedding) > 0:
                 self.log_result(
@@ -220,7 +219,7 @@ class BedrockEmbeddingTest:
             )
             return False
     
-    async def test_batch_embeddings(self):
+    def test_batch_embeddings(self):
         """Test generating batch embeddings."""
         try:
             test_texts = [
@@ -229,7 +228,7 @@ class BedrockEmbeddingTest:
                 "Third document to complete the batch test."
             ]
             
-            embeddings = await self.bedrock_service.get_embeddings_batch(test_texts, batch_size=2)
+            embeddings = self.bedrock_service.get_embeddings_batch(test_texts, batch_size=2)
             
             if embeddings and len(embeddings) == len(test_texts):
                 # Check consistency of dimensions
@@ -269,13 +268,13 @@ class BedrockEmbeddingTest:
             )
             return False
     
-    async def test_embedding_consistency(self):
+    def test_embedding_consistency(self):
         """Test embedding consistency for the same text."""
         try:
             test_text = "Consistency test document for embedding stability."
             
-            embedding1 = await self.bedrock_service.get_embedding(test_text)
-            embedding2 = await self.bedrock_service.get_embedding(test_text)
+            embedding1 = self.bedrock_service.get_embedding(test_text)
+            embedding2 = self.bedrock_service.get_embedding(test_text)
             
             if embedding1 and embedding2:
                 # Calculate similarity (cosine similarity)
@@ -316,11 +315,11 @@ class BedrockEmbeddingTest:
             )
             return False
     
-    async def test_dimension_detection(self):
+    def test_dimension_detection(self):
         """Test embedding dimension detection."""
         try:
             # Generate an embedding first
-            await self.bedrock_service.get_embedding("Test for dimension detection")
+            self.bedrock_service.get_embedding("Test for dimension detection")
             
             dimension = self.bedrock_service.get_embedding_dimension()
             
@@ -351,12 +350,12 @@ class BedrockEmbeddingTest:
             )
             return False
     
-    async def test_error_handling(self):
+    def test_error_handling(self):
         """Test error handling with invalid input."""
         try:
             # Test with empty text
             try:
-                embedding = await self.bedrock_service.get_embedding("")
+                embedding = self.bedrock_service.get_embedding("")
                 empty_text_handled = len(embedding) == 0  # Should return empty or handle gracefully
             except Exception:
                 empty_text_handled = True  # Exception is also acceptable
@@ -364,7 +363,7 @@ class BedrockEmbeddingTest:
             # Test with very long text
             long_text = "This is a very long text. " * 1000  # ~27,000 characters
             try:
-                embedding = await self.bedrock_service.get_embedding(long_text)
+                embedding = self.bedrock_service.get_embedding(long_text)
                 long_text_handled = len(embedding) > 0
             except Exception:
                 long_text_handled = True  # Exception is acceptable for overly long text
@@ -399,13 +398,17 @@ class BedrockEmbeddingTest:
         # Sync tests first
         tests_sync = [
             self.test_import_services,
-            self.test_configuration
+            self.test_configuration,
+            self.test_configuration_check
         ]
         
-        # Async tests
+        # Async tests (only service initialization is still async)
         tests_async = [
-            self.test_service_initialization,
-            self.test_health_check,
+            self.test_service_initialization
+        ]
+        
+        # Sync tests (after service initialization)
+        tests_sync_after = [
             self.test_single_embedding,
             self.test_batch_embeddings,
             self.test_embedding_consistency,
@@ -414,7 +417,7 @@ class BedrockEmbeddingTest:
         ]
         
         passed = 0
-        total = len(tests_sync) + len(tests_async)
+        total = len(tests_sync) + len(tests_async) + len(tests_sync_after)
         
         # Run sync tests
         for test in tests_sync:
@@ -428,6 +431,14 @@ class BedrockEmbeddingTest:
         for test in tests_async:
             try:
                 if await test():
+                    passed += 1
+            except Exception as e:
+                print(f"FAIL: {test.__name__} - Unexpected error: {e}")
+        
+        # Run sync tests after service initialization
+        for test in tests_sync_after:
+            try:
+                if test():
                     passed += 1
             except Exception as e:
                 print(f"FAIL: {test.__name__} - Unexpected error: {e}")

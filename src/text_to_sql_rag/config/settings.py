@@ -1,13 +1,20 @@
 """Application configuration management."""
 
 from typing import Optional, List
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
-load_dotenv()
+# Load environment variables from .env file in project root FIRST
+# Get the absolute path to the project root (4 levels up from this file)
+current_file = Path(__file__).resolve()
+project_root = current_file.parent.parent.parent.parent
+env_file = project_root / ".env"
+
+# Load environment variables BEFORE defining any BaseSettings classes
+load_dotenv(env_file)
 
 
 class DatabaseSettings(BaseSettings):
@@ -156,17 +163,18 @@ class MongoDBSettings(BaseSettings):
 class BedrockEndpointSettings(BaseSettings):
     """Bedrock HTTP endpoint configuration with SSL and auth options."""
     
-    url: Optional[str] = Field(default=None, env="BEDROCK_ENDPOINT_URL")
-    verify_ssl: bool = Field(default=True, env="BEDROCK_ENDPOINT_VERIFY_SSL")
-    ssl_cert_file: Optional[str] = Field(default=None, env="BEDROCK_SSL_CERT_FILE")
-    ssl_key_file: Optional[str] = Field(default=None, env="BEDROCK_SSL_KEY_FILE")
-    ssl_ca_file: Optional[str] = Field(default=None, env="BEDROCK_SSL_CA_FILE")
-    http_auth_username: Optional[str] = Field(default=None, env="BEDROCK_HTTP_AUTH_USERNAME")
-    http_auth_password: Optional[str] = Field(default=None, env="BEDROCK_HTTP_AUTH_PASSWORD")
+    model_config = SettingsConfigDict(
+        case_sensitive=True,
+        env_file=None  # We handle .env loading manually
+    )
     
-    class Config:
-        # Don't use env_prefix since we're explicitly setting env names above
-        pass
+    url: Optional[str] = Field(default=None, alias="BEDROCK_ENDPOINT_URL")
+    verify_ssl: bool = Field(default=True, alias="BEDROCK_ENDPOINT_VERIFY_SSL")
+    ssl_cert_file: Optional[str] = Field(default=None, alias="BEDROCK_SSL_CERT_FILE")
+    ssl_key_file: Optional[str] = Field(default=None, alias="BEDROCK_SSL_KEY_FILE")
+    ssl_ca_file: Optional[str] = Field(default=None, alias="BEDROCK_SSL_CA_FILE")
+    http_auth_username: Optional[str] = Field(default=None, alias="BEDROCK_HTTP_AUTH_USERNAME")
+    http_auth_password: Optional[str] = Field(default=None, alias="BEDROCK_HTTP_AUTH_PASSWORD")
 
 
 class Settings:

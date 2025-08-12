@@ -1,12 +1,12 @@
 """Enhanced Bedrock integration with SSL, HTTP auth, and consolidated functionality."""
 
 import json
-import httpx
+import requests
 import ssl
 from typing import List, Dict, Any, Optional
 import logging
 from pathlib import Path
-import asyncio
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -87,29 +87,35 @@ class EnhancedBedrockService:
         
         return ssl_context
     
-    def _get_http_auth(self) -> Optional[httpx.BasicAuth]:
+    def _get_http_auth(self) -> Optional[tuple]:
         """Get HTTP basic auth if configured."""
         if self.http_auth_username and self.http_auth_password:
-            return httpx.BasicAuth(self.http_auth_username, self.http_auth_password)
+            return (self.http_auth_username, self.http_auth_password)
         return None
     
-    def _create_http_client(self, timeout: float = 30.0) -> httpx.AsyncClient:
-        """Create configured HTTP client with SSL and auth settings."""
-        client_kwargs = {
-            "timeout": timeout,
-            "verify": self.ssl_context if self.ssl_context else self.verify_ssl,
-            "follow_redirects": True
-        }
+    def _create_http_session(self, timeout: float = 30.0) -> requests.Session:
+        """Create configured HTTP session with SSL and auth settings."""
+        session = requests.Session()
+        
+        # Configure SSL verification
+        if self.ssl_context:
+            # For requests, we'll use the verify parameter
+            session.verify = self.verify_ssl
+        else:
+            session.verify = self.verify_ssl
         
         # Add HTTP auth if configured
         auth = self._get_http_auth()
         if auth:
-            client_kwargs["auth"] = auth
+            session.auth = auth
         
-        return httpx.AsyncClient(**client_kwargs)
+        # Set timeout (will be used in individual requests)
+        self.timeout = timeout
+        
+        return session
     
     # Embedding functionality
-    async def get_embedding(self, text: str) -> List[float]:
+    def get_embedding(self, text: str) -> List[float]:
         """Get embedding for text."""
         try:
             payload = {
@@ -118,34 +124,35 @@ class EnhancedBedrockService:
                 "query": text
             }
             
-            async with self._create_http_client(timeout=30.0) as client:
-                response = await client.post(
-                    self.endpoint_url,
-                    json=payload,
-                    headers={"Content-Type": "application/json"}
-                )
-                response.raise_for_status()
-                
-                result = response.json()
-                
-                # Extract embedding from response
-                if "embedding" in result:
-                    embedding = result["embedding"]
-                elif "body" in result:
-                    body_data = json.loads(result["body"]) if isinstance(result["body"], str) else result["body"]
-                    embedding = body_data.get("embedding", [])
-                else:
-                    logger.error(f"Unexpected embedding response format: {result}")
-                    raise ValueError("Could not extract embedding from response")
-                
-                # Detect embedding dimension on first call
-                if self.embedding_dimension is None:
-                    self.embedding_dimension = len(embedding)
-                    logger.info(f"Detected embedding dimension: {self.embedding_dimension}")
-                
-                return embedding
+            session = self._create_http_session(timeout=30.0)
+            response = session.post(
+                self.endpoint_url,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+                timeout=self.timeout
+            )
+            response.raise_for_status()
+            
+            result = response.json()
+            
+            # Extract embedding from response
+            if "embedding" in result:
+                embedding = result["embedding"]
+            elif "body" in result:
+                body_data = json.loads(result["body"]) if isinstance(result["body"], str) else result["body"]
+                embedding = body_data.get("embedding", [])
+            else:
+                logger.error(f"Unexpected embedding response format: {result}")
+                raise ValueError("Could not extract embedding from response")
+            
+            # Detect embedding dimension on first call
+            if self.embedding_dimension is None:
+                self.embedding_dimension = len(embedding)
+                logger.info(f"Detected embedding dimension: {self.embedding_dimension}")
+            
+            return embedding
                     
-        except httpx.HTTPError as e:
+        except requests.HTTPError as e:
             logger.error(f"HTTP error getting embedding: {e}")
             # Add more specific error handling for common issues
             if e.response.status_code == 404:
@@ -162,7 +169,7 @@ class EnhancedBedrockService:
             logger.error(f"Error getting embedding: {e}")
             raise
     
-    async def get_embeddings_batch(self, texts: List[str], batch_size: int = 5) -> List[List[float]]:
+    def get_embeddings_batch(self, texts: List[str], batch_size: int = 5) -> List[List[float]]:
         """Generate embeddings for multiple texts in batches."""
         embeddings = []
         
@@ -170,23 +177,21 @@ class EnhancedBedrockService:
             batch = texts[i:i + batch_size]
             batch_embeddings = []
             
-            # Process batch concurrently
-            tasks = [self.get_embedding(text) for text in batch]
-            batch_results = await asyncio.gather(*tasks, return_exceptions=True)
-            
-            for j, result in enumerate(batch_results):
-                if isinstance(result, Exception):
-                    logger.error(f"Error embedding text {i+j}: {result}")
+            # Process batch sequentially
+            for j, text in enumerate(batch):
+                try:
+                    result = self.get_embedding(text)
+                    batch_embeddings.append(result)
+                except Exception as e:
+                    logger.error(f"Error embedding text {i+j}: {e}")
                     # Use zero vector as fallback
                     batch_embeddings.append([0.0] * (self.embedding_dimension or 1536))
-                else:
-                    batch_embeddings.append(result)
             
             embeddings.extend(batch_embeddings)
             
             # Small delay between batches to avoid rate limiting
             if i + batch_size < len(texts):
-                await asyncio.sleep(0.1)
+                time.sleep(0.1)
         
         return embeddings
     
@@ -195,7 +200,7 @@ class EnhancedBedrockService:
         return self.embedding_dimension
     
     # LLM functionality
-    async def generate_sql(self, user_query: str, context: str) -> Dict[str, str]:
+    def generate_sql(self, user_query: str, context: str) -> Dict[str, str]:
         """Generate Oracle SQL using LLM with hierarchical context and Oracle dialect."""
         prompt = f"""You are an Oracle SQL expert. Generate an Oracle SQL query based on the user's question and the provided hierarchical database context.
 
@@ -231,32 +236,33 @@ EXPLANATION: [brief explanation of what the query does and why specific Oracle f
                 "query": prompt
             }
             
-            async with self._create_http_client(timeout=60.0) as client:
-                response = await client.post(
-                    self.endpoint_url,
-                    json=payload,
-                    headers={"Content-Type": "application/json"}
-                )
-                response.raise_for_status()
-                
-                result = response.json()
-                
-                # Extract text from response
-                if "result" in result:
-                    llm_response = result["result"]
-                elif "text" in result:
-                    llm_response = result["text"]
-                elif "body" in result:
-                    body_data = json.loads(result["body"]) if isinstance(result["body"], str) else result["body"]
-                    llm_response = body_data.get("text", str(result))
-                else:
-                    logger.warning(f"Unexpected LLM response format: {result}")
-                    llm_response = str(result)
-                
-                # Parse SQL and explanation from response
-                return self._parse_sql_response(llm_response)
+            session = self._create_http_session(timeout=60.0)
+            response = session.post(
+                self.endpoint_url,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+                timeout=self.timeout
+            )
+            response.raise_for_status()
+            
+            result = response.json()
+            
+            # Extract text from response
+            if "result" in result:
+                llm_response = result["result"]
+            elif "text" in result:
+                llm_response = result["text"]
+            elif "body" in result:
+                body_data = json.loads(result["body"]) if isinstance(result["body"], str) else result["body"]
+                llm_response = body_data.get("text", str(result))
+            else:
+                logger.warning(f"Unexpected LLM response format: {result}")
+                llm_response = str(result)
+            
+            # Parse SQL and explanation from response
+            return self._parse_sql_response(llm_response)
                     
-        except httpx.HTTPError as e:
+        except requests.HTTPError as e:
             logger.error(f"HTTP error generating SQL: {e}")
             # Add more specific error handling
             if e.response.status_code == 404:
@@ -273,11 +279,11 @@ EXPLANATION: [brief explanation of what the query does and why specific Oracle f
             logger.error(f"Error generating SQL: {e}")
             raise
     
-    async def generate_response(self, prompt: str) -> str:
+    def generate_response(self, prompt: str) -> str:
         """Generate general text response using LLM (alias for generate_text)."""
-        return await self.generate_text(prompt)
+        return self.generate_text(prompt)
     
-    async def generate_text(self, prompt: str) -> str:
+    def generate_text(self, prompt: str) -> str:
         """Generate text response using LLM."""
         try:
             payload = {
@@ -286,29 +292,30 @@ EXPLANATION: [brief explanation of what the query does and why specific Oracle f
                 "query": prompt
             }
             
-            async with self._create_http_client(timeout=60.0) as client:
-                response = await client.post(
-                    self.endpoint_url,
-                    json=payload,
-                    headers={"Content-Type": "application/json"}
-                )
-                response.raise_for_status()
-                
-                result = response.json()
-                
-                # Extract text from response
-                if "result" in result:
-                    return result["result"]
-                elif "text" in result:
-                    return result["text"]
-                elif "body" in result:
-                    body_data = json.loads(result["body"]) if isinstance(result["body"], str) else result["body"]
-                    return body_data.get("text", str(result))
-                else:
-                    logger.warning(f"Unexpected LLM response format: {result}")
-                    return str(result)
+            session = self._create_http_session(timeout=60.0)
+            response = session.post(
+                self.endpoint_url,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+                timeout=self.timeout
+            )
+            response.raise_for_status()
+            
+            result = response.json()
+            
+            # Extract text from response
+            if "result" in result:
+                return result["result"]
+            elif "text" in result:
+                return result["text"]
+            elif "body" in result:
+                body_data = json.loads(result["body"]) if isinstance(result["body"], str) else result["body"]
+                return body_data.get("text", str(result))
+            else:
+                logger.warning(f"Unexpected LLM response format: {result}")
+                return str(result)
                     
-        except httpx.HTTPError as e:
+        except requests.HTTPError as e:
             logger.error(f"HTTP error generating text: {e}")
             # Add more specific error handling
             if e.response.status_code == 404:
@@ -375,16 +382,14 @@ EXPLANATION: [brief explanation of what the query does and why specific Oracle f
             "explanation": explanation.strip() if explanation else "Generated SQL query for the given requirements."
         }
     
-    # Health check and utility methods
-    async def health_check(self) -> bool:
-        """Check if the service is healthy."""
-        try:
-            # Simple test to check if service is responsive
-            result = await self.generate_text("Test")
-            return bool(result)
-        except Exception as e:
-            logger.error(f"Health check failed: {e}")
-            return False
+    # Service status and utility methods
+    def is_configured(self) -> bool:
+        """Check if the service is properly configured (no API calls)."""
+        return bool(self.endpoint_url and self.embedding_model and self.llm_model)
+    
+    def health_check(self) -> bool:
+        """Check if the service is properly configured (no API calls to avoid charges)."""
+        return self.is_configured()
     
     def get_service_info(self) -> Dict[str, Any]:
         """Get service configuration information."""
@@ -407,22 +412,17 @@ class EnhancedBedrockLLMWrapper:
         self.model_id = model_id or bedrock_service.llm_model
         self.endpoint_service = bedrock_service  # For backward compatibility
     
-    async def generate_response(self, prompt: str, **kwargs) -> str:
+    def generate_response(self, prompt: str, **kwargs) -> str:
         """Generate text response using the enhanced Bedrock service."""
-        return await self.bedrock_service.generate_text(prompt)
+        return self.bedrock_service.generate_text(prompt)
     
-    async def complete(self, prompt: str, **kwargs) -> str:
+    def complete(self, prompt: str, **kwargs) -> str:
         """Complete method for LLM compatibility."""
-        return await self.bedrock_service.generate_text(prompt)
+        return self.bedrock_service.generate_text(prompt)
     
-    def health_check(self) -> bool:
-        """Check if the service is healthy."""
-        try:
-            import asyncio
-            return asyncio.run(self.bedrock_service.health_check())
-        except Exception as e:
-            logger.error(f"Health check error: {e}")
-            return False
+    def is_configured(self) -> bool:
+        """Check if the service is properly configured (no API calls)."""
+        return self.bedrock_service.is_configured()
     
     def get_service_info(self) -> Dict[str, Any]:
         """Get service information."""

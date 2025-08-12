@@ -82,12 +82,6 @@ class DataLoader:
                 http_auth_password=self.settings.bedrock_endpoint.http_auth_password
             )
             
-            # Test Bedrock connection
-            if not await self.bedrock_service.health_check():
-                logger.warning("⚠️  Bedrock service health check failed - continuing with reduced functionality")
-            else:
-                logger.info("✅ Enhanced Bedrock service connected")
-            
             # Initialize Vector service (LlamaIndex with OpenSearch)
             from text_to_sql_rag.services.vector_service import LlamaIndexVectorService
             self.vector_service = LlamaIndexVectorService()

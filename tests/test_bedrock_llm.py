@@ -149,46 +149,40 @@ class BedrockLLMTest:
             )
             return False
     
-    async def test_health_check(self):
-        """Test LLM provider health check."""
+    def test_configuration_check(self):
+        """Test LLM provider configuration check (no API calls)."""
         try:
-            # Since there's an asyncio event loop issue with the wrapper health check,
-            # let's do a simple test by trying to generate a small piece of text
-            try:
-                test_response = await self.llm_factory.generate_text("ping")
-                is_healthy = bool(test_response and len(test_response.strip()) > 0)
-            except Exception:
-                is_healthy = False
+            is_configured = self.llm_factory.is_configured()
             
-            if is_healthy:
+            if is_configured:
                 self.log_result(
-                    "Health Check",
+                    "Configuration Check",
                     True,
-                    "LLM provider is healthy (tested with simple text generation)"
+                    "LLM provider is properly configured"
                 )
             else:
                 self.log_result(
-                    "Health Check",
+                    "Configuration Check",
                     False,
-                    "LLM provider health check failed"
+                    "LLM provider configuration check failed"
                 )
             
-            return is_healthy
+            return is_configured
             
         except Exception as e:
             self.log_result(
-                "Health Check",
+                "Configuration Check",
                 False,
-                f"Health check error: {e}"
+                f"Configuration check error: {e}"
             )
             return False
     
-    async def test_text_generation(self):
+    def test_text_generation(self):
         """Test basic text generation."""
         try:
             test_prompt = "Generate a simple greeting message."
             
-            response = await self.llm_factory.generate_text(test_prompt)
+            response = self.llm_factory.generate_text(test_prompt)
             
             if response and len(response.strip()) > 0:
                 self.log_result(
@@ -218,7 +212,7 @@ class BedrockLLMTest:
             )
             return False
     
-    async def test_sql_generation(self):
+    def test_sql_generation(self):
         """Test SQL query generation."""
         try:
             natural_query = "Show me all users who logged in yesterday"
@@ -227,7 +221,7 @@ class BedrockLLMTest:
             Columns: user_id (NUMBER), username (VARCHAR2), email (VARCHAR2), last_login (DATE), status (VARCHAR2)
             """
             
-            result = await self.llm_factory.generate_sql_query(
+            result = self.llm_factory.generate_sql_query(
                 natural_language_query=natural_query,
                 schema_context=schema_context
             )
@@ -261,7 +255,7 @@ class BedrockLLMTest:
             )
             return False
     
-    async def test_connection_resilience(self):
+    def test_connection_resilience(self):
         """Test connection resilience with multiple requests."""
         try:
             success_count = 0
@@ -269,7 +263,7 @@ class BedrockLLMTest:
             
             for i in range(total_requests):
                 try:
-                    response = await self.llm_factory.generate_text(f"Test request {i+1}")
+                    response = self.llm_factory.generate_text(f"Test request {i+1}")
                     if response and len(response.strip()) > 0:
                         success_count += 1
                 except Exception as e:
@@ -319,19 +313,22 @@ class BedrockLLMTest:
         tests_sync = [
             self.test_import_services,
             self.test_configuration,
-            self.test_provider_initialization
+            self.test_provider_initialization,
+            self.test_configuration_check
         ]
         
-        # Async tests
-        tests_async = [
-            self.test_health_check,
+        # Sync tests (after provider initialization)
+        tests_sync_after = [
             self.test_text_generation,
             self.test_sql_generation,
             self.test_connection_resilience
         ]
         
+        # Async tests (none currently)
+        tests_async = []
+        
         passed = 0
-        total = len(tests_sync) + len(tests_async)
+        total = len(tests_sync) + len(tests_async) + len(tests_sync_after)
         
         # Run sync tests
         for test in tests_sync:
@@ -345,6 +342,14 @@ class BedrockLLMTest:
         for test in tests_async:
             try:
                 if await test():
+                    passed += 1
+            except Exception as e:
+                print(f"FAIL: {test.__name__} - Unexpected error: {e}")
+        
+        # Run sync tests after provider initialization
+        for test in tests_sync_after:
+            try:
+                if test():
                     passed += 1
             except Exception as e:
                 print(f"FAIL: {test.__name__} - Unexpected error: {e}")

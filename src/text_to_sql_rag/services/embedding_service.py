@@ -3,12 +3,12 @@ Embedding and retrieval service using Bedrock API Gateway.
 """
 
 import json
-import httpx
+import requests
 import hashlib
 from typing import List, Dict, Any, Optional, Tuple
 import logging
 from datetime import datetime
-import asyncio
+import time
 
 from ..models.view_models import ViewMetadata, ViewEmbedding
 
@@ -48,7 +48,7 @@ class EmbeddingService:
         
         return embedding
     
-    async def get_embedding(self, text: str) -> List[float]:
+    def get_embedding(self, text: str) -> List[float]:
         """Generate embedding for text using Bedrock API Gateway or mock."""
         if self.use_mock:
             return self._generate_mock_embedding(text)
@@ -60,43 +60,43 @@ class EmbeddingService:
                 "query": text
             }
             
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(
-                    self.endpoint_url,
-                    json=payload,
-                    headers={
-                        "Content-Type": "application/json"
-                    }
-                )
-                response.raise_for_status()
+            response = requests.post(
+                self.endpoint_url,
+                json=payload,
+                headers={
+                    "Content-Type": "application/json"
+                },
+                timeout=30.0
+            )
+            response.raise_for_status()
+            
+            result = response.json()
+            
+            # Handle different response formats
+            if "embedding" in result:
+                embedding = result["embedding"]
+            elif "body" in result:
+                body_data = json.loads(result["body"]) if isinstance(result["body"], str) else result["body"]
+                embedding = body_data.get("embedding", [])
+            else:
+                logger.error(f"Unexpected response format: {result}")
+                raise ValueError("Could not extract embedding from response")
+            
+            # Detect embedding dimension on first call
+            if self.embedding_dimension is None:
+                self.embedding_dimension = len(embedding)
+                logger.info(f"Detected embedding dimension: {self.embedding_dimension}")
+            
+            return embedding
                 
-                result = response.json()
-                
-                # Handle different response formats
-                if "embedding" in result:
-                    embedding = result["embedding"]
-                elif "body" in result:
-                    body_data = json.loads(result["body"]) if isinstance(result["body"], str) else result["body"]
-                    embedding = body_data.get("embedding", [])
-                else:
-                    logger.error(f"Unexpected response format: {result}")
-                    raise ValueError("Could not extract embedding from response")
-                
-                # Detect embedding dimension on first call
-                if self.embedding_dimension is None:
-                    self.embedding_dimension = len(embedding)
-                    logger.info(f"Detected embedding dimension: {self.embedding_dimension}")
-                
-                return embedding
-                
-        except httpx.HTTPError as e:
+        except requests.HTTPError as e:
             logger.error(f"HTTP error generating embedding: {e}")
             raise
         except Exception as e:
             logger.error(f"Error generating embedding: {e}")
             raise
     
-    async def get_embeddings_batch(self, texts: List[str], batch_size: int = 5) -> List[List[float]]:
+    def get_embeddings_batch(self, texts: List[str], batch_size: int = 5) -> List[List[float]]:
         """Generate embeddings for multiple texts in batches."""
         embeddings = []
         
@@ -104,23 +104,21 @@ class EmbeddingService:
             batch = texts[i:i + batch_size]
             batch_embeddings = []
             
-            # Process batch concurrently
-            tasks = [self.get_embedding(text) for text in batch]
-            batch_results = await asyncio.gather(*tasks, return_exceptions=True)
-            
-            for j, result in enumerate(batch_results):
-                if isinstance(result, Exception):
-                    logger.error(f"Error embedding text {i+j}: {result}")
+            # Process batch sequentially
+            for j, text in enumerate(batch):
+                try:
+                    result = self.get_embedding(text)
+                    batch_embeddings.append(result)
+                except Exception as e:
+                    logger.error(f"Error embedding text {i+j}: {e}")
                     # Use zero vector as fallback
                     batch_embeddings.append([0.0] * (self.embedding_dimension or 1536))
-                else:
-                    batch_embeddings.append(result)
             
             embeddings.extend(batch_embeddings)
             
             # Small delay between batches to avoid rate limiting
             if i + batch_size < len(texts):
-                await asyncio.sleep(0.1)
+                time.sleep(0.1)
         
         return embeddings
     

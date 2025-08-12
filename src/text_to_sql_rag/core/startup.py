@@ -60,16 +60,16 @@ class ApplicationStartup:
             # Don't return False - let the app continue with limited functionality
             self.vector_service = None
         
-        # Check LLM provider health (critical for SQL generation)
+        # Check LLM provider configuration (critical for SQL generation)
         try:
-            logger.info(f"Checking LLM provider health ({settings.llm_provider.provider})")
-            llm_healthy = llm_factory.health_check()
-            if not llm_healthy:
-                logger.warning(f"LLM provider ({settings.llm_provider.provider}) health check failed")
+            logger.info(f"Checking LLM provider configuration ({settings.llm_provider.provider})")
+            llm_configured = llm_factory.is_configured()
+            if not llm_configured:
+                logger.warning(f"LLM provider ({settings.llm_provider.provider}) configuration check failed")
                 logger.warning("SQL generation functionality may be limited")
             else:
                 provider_info = llm_factory.get_provider_info()
-                logger.info(f"LLM Provider: {provider_info['provider']} - Health: OK", provider_info=provider_info)
+                logger.info(f"LLM Provider: {provider_info['provider']} - Configuration: OK", provider_info=provider_info)
                 services_initialized += 1
         except Exception as e:
             logger.error("Failed to initialize LLM provider", error=str(e))

@@ -134,25 +134,25 @@ class LLMProviderFactory:
         else:
             return {"provider": "unknown"}
     
-    def health_check(self) -> bool:
-        """Check health of current LLM provider."""
+    def is_configured(self) -> bool:
+        """Check if current LLM provider is properly configured (no API calls)."""
         try:
             if self._current_provider is None:
                 return False
             
-            # Both services should have a health_check method
-            if hasattr(self._current_provider, 'health_check'):
-                return self._current_provider.health_check()
+            # Check if provider has configuration check method
+            if hasattr(self._current_provider, 'is_configured'):
+                return self._current_provider.is_configured()
             else:
-                # Basic check - try to call a simple method
+                # If no configuration check method, assume configured if provider exists
                 return True
                 
         except Exception as e:
-            logger.error("LLM provider health check failed", error=str(e))
+            logger.error("LLM provider configuration check failed", error=str(e))
             return False
     
     # Proxy methods to the current provider
-    async def generate_text(
+    def generate_text(
         self,
         prompt: str,
         conversation_id: Optional[str] = None,
@@ -164,12 +164,12 @@ class LLMProviderFactory:
         if isinstance(provider, CustomLLMService):
             return provider.generate_text(prompt, conversation_id=conversation_id, **kwargs)
         elif isinstance(provider, EnhancedBedrockLLMWrapper):
-            # Both wrappers use generate_response method
-            return await provider.generate_response(prompt, **kwargs)
+            # Both wrappers use generate_response method (now synchronous)
+            return provider.generate_response(prompt, **kwargs)
         else:
             raise RuntimeError(f"Unknown provider type: {type(provider)}")
     
-    async def generate_sql_query(
+    def generate_sql_query(
         self,
         natural_language_query: str,
         schema_context: str,
@@ -190,12 +190,12 @@ class LLMProviderFactory:
             # Enhanced wrapper supports SQL generation through the underlying service
             logger.warning("generate_sql_query not directly supported with endpoint wrapper, using generate_response")
             prompt = f"Schema: {schema_context}\nQuery: {natural_language_query}"
-            response = await provider.generate_response(prompt)
+            response = provider.generate_response(prompt)
             return {"sql": response, "explanation": "", "confidence": 0.8}
         else:
             raise RuntimeError(f"Unknown provider type: {type(provider)}")
     
-    async def continue_conversation(
+    def continue_conversation(
         self,
         message: str,
         conversation_id: str,
@@ -209,7 +209,7 @@ class LLMProviderFactory:
         elif isinstance(provider, EnhancedBedrockLLMWrapper):
             # Endpoint wrapper doesn't have conversation continuation, use generate_response
             logger.warning("Conversation continuation not supported with Bedrock endpoint, using generate_response")
-            return await provider.generate_response(message, **kwargs)
+            return provider.generate_response(message, **kwargs)
         else:
             raise RuntimeError(f"Unknown provider type: {type(provider)}")
     

@@ -3,7 +3,7 @@
 import json
 import uuid
 from typing import Dict, Any, Optional, List
-import httpx
+import requests
 import structlog
 
 from ..config.settings import settings
@@ -25,10 +25,8 @@ class CustomLLMService:
         self.max_retries = settings.custom_llm.max_retries
         
         # HTTP client for API calls
-        self.client = httpx.Client(
-            timeout=self.timeout,
-            follow_redirects=True
-        )
+        self.client = requests.Session()
+        self.client.timeout = self.timeout
         
         logger.info("Custom LLM service initialized", base_url=self.base_url, deployment_id=self.deployment_id)
     
@@ -83,8 +81,8 @@ class CustomLLMService:
             
             return generated_text
             
-        except httpx.HTTPStatusError as e:
-            logger.error("HTTP error from custom LLM API", status_code=e.response.status_code, error=str(e))
+        except requests.HTTPError as e:
+            logger.error("HTTP error from custom LLM API", error=str(e))
             raise
         except Exception as e:
             logger.error("Failed to generate text with custom LLM", error=str(e))
@@ -136,8 +134,8 @@ class CustomLLMService:
             
             return generated_text
             
-        except httpx.HTTPStatusError as e:
-            logger.error("HTTP error from custom LLM follow-up API", status_code=e.response.status_code, error=str(e))
+        except requests.HTTPError as e:
+            logger.error("HTTP error from custom LLM follow-up API", error=str(e))
             raise
         except Exception as e:
             logger.error("Failed to continue conversation with custom LLM", error=str(e))
@@ -177,8 +175,8 @@ class CustomLLMService:
             
             return messages
             
-        except httpx.HTTPStatusError as e:
-            logger.error("HTTP error from conversation API", status_code=e.response.status_code, error=str(e))
+        except requests.HTTPError as e:
+            logger.error("HTTP error from conversation API", error=str(e))
             raise
         except Exception as e:
             logger.error("Failed to get conversation messages", error=str(e))
