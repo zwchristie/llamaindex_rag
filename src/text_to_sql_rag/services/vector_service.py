@@ -26,7 +26,7 @@ import ssl
 
 from ..config.settings import settings
 from ..utils.content_processor import ContentProcessor
-from .bedrock_endpoint_service import BedrockEndpointService
+from .enhanced_bedrock_service import EnhancedBedrockService
 
 logger = structlog.get_logger(__name__)
 
@@ -183,18 +183,24 @@ class LlamaIndexVectorService:
         # Initialize content processor and bedrock services
         self.content_processor = ContentProcessor()
         
-        # Initialize Bedrock endpoint services (only endpoint approach)
-        endpoint_url = getattr(settings, 'bedrock_endpoint_url', None)
+        # Initialize Enhanced Bedrock endpoint services with SSL and auth support
+        endpoint_url = settings.bedrock_endpoint.url
         if not endpoint_url:
             raise ValueError("Bedrock endpoint URL not configured - only endpoint approach is supported")
         
-        from .bedrock_endpoint_service import BedrockEndpointService
-        endpoint_service = BedrockEndpointService(
+        endpoint_service = EnhancedBedrockService(
             endpoint_url=endpoint_url,
             embedding_model=settings.aws.embedding_model,
-            llm_model=settings.aws.llm_model
+            llm_model=settings.aws.llm_model,
+            verify_ssl=settings.bedrock_endpoint.verify_ssl,
+            ssl_cert_file=settings.bedrock_endpoint.ssl_cert_file,
+            ssl_key_file=settings.bedrock_endpoint.ssl_key_file,
+            ssl_ca_file=settings.bedrock_endpoint.ssl_ca_file,
+            http_auth_username=settings.bedrock_endpoint.http_auth_username,
+            http_auth_password=settings.bedrock_endpoint.http_auth_password
         )
         self.bedrock_endpoint_service = endpoint_service
+        logger.info("Enhanced Bedrock service initialized with SSL and auth support")
         
         # Initialize LlamaIndex components
         self._setup_llamaindex()
@@ -249,12 +255,11 @@ class LlamaIndexVectorService:
             # OpenSearch client kwargs that get passed through
             opensearch_client_kwargs = {}
             
-            # Add authentication if provided
-            if settings.opensearch.username and settings.opensearch.password:
-                opensearch_client_kwargs['http_auth'] = (
-                    settings.opensearch.username,
-                    settings.opensearch.password
-                )
+            # Add authentication if provided (prefer http_auth fields)
+            auth_tuple = settings.opensearch.get_http_auth()
+            if auth_tuple:
+                opensearch_client_kwargs['http_auth'] = auth_tuple
+                logger.info(f"OpenSearch authentication configured for user: {auth_tuple[0]}")
             
             # Configure SSL settings
             if settings.opensearch.use_ssl:
@@ -273,7 +278,7 @@ class LlamaIndexVectorService:
                 endpoint=endpoint,
                 index=self.index_name,
                 vector_size=self.vector_size,
-                has_auth=bool(settings.opensearch.username and settings.opensearch.password),
+                has_auth=bool(settings.opensearch.get_http_auth()),
                 use_ssl=settings.opensearch.use_ssl,
                 verify_certs=settings.opensearch.verify_certs,
                 client_kwargs_keys=list(client_kwargs.keys())

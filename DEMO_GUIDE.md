@@ -36,14 +36,14 @@ poetry run python demo_full_flow.py
 
 #### **Test Real Embedding API:**
 ```bash
-curl -X POST https://8v1n9dbomk.execute-api.us-east-1.amazonaws.com/testaccess \
+curl -X POST https://your-api-gateway-url.execute-api.us-east-1.amazonaws.com/prod \
   -H "Content-Type: application/json" \
   -d '{"model_id": "amazon.titan-embed-text-v2:0", "invoke_type": "embedding", "query": "syndicate participation reporting"}'
 ```
 
 #### **Test Real LLM API:**
 ```bash
-curl -X POST https://8v1n9dbomk.execute-api.us-east-1.amazonaws.com/testaccess \
+curl -X POST https://your-api-gateway-url.execute-api.us-east-1.amazonaws.com/prod \
   -H "Content-Type: application/json" \
   -d '{"model_id": "anthropic.claude-3-haiku-20240307-v1:0", "invoke_type": "llm", "query": "Generate SQL to find user engagement metrics"}'
 ```

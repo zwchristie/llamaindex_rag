@@ -185,7 +185,7 @@ Key environment variables:
 
 ```env
 # Bedrock API Gateway
-BEDROCK_ENDPOINT_URL=https://8v1n9dbomk.execute-api.us-east-1.amazonaws.com/testaccess
+BEDROCK_ENDPOINT_URL=https://your-api-gateway-url.execute-api.us-east-1.amazonaws.com/prod
 BEDROCK_LLM_MODEL=anthropic.claude-3-haiku-20240307-v1:0
 BEDROCK_EMBEDDING_MODEL=amazon.titan-embed-text-v2:0
 

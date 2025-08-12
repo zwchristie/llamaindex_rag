@@ -20,7 +20,7 @@ class ApplicationStartup:
     def __init__(self):
         self.mongodb_service: Optional[MongoDBService] = None
         self.vector_service: Optional[LlamaIndexVectorService] = None
-        self.sync_service: Optional[DocumentSyncService] = None
+        self.sync_service: Optional = None  # Legacy - no longer used
     
     async def initialize_services(self) -> bool:
         """Initialize all required services."""

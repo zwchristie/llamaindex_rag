@@ -73,11 +73,11 @@ async def demo_text_to_sql_flow():
         from text_to_sql_rag.services.view_service import ViewService
         from text_to_sql_rag.services.embedding_service import EmbeddingService, VectorService
         from text_to_sql_rag.services.hitl_service import HITLService
-        from text_to_sql_rag.services.bedrock_endpoint_service import BedrockEndpointService
+        from text_to_sql_rag.services.enhanced_bedrock_service import EnhancedBedrockService as BedrockEndpointService
         from text_to_sql_rag.services.hierarchical_context_service import HierarchicalContextService, RetrievalConfig
         
         # Get configuration
-        bedrock_endpoint = os.getenv("BEDROCK_ENDPOINT_URL", "https://8v1n9dbomk.execute-api.us-east-1.amazonaws.com/testaccess")
+        bedrock_endpoint = os.getenv("BEDROCK_ENDPOINT_URL", "https://your-api-gateway-url.execute-api.us-east-1.amazonaws.com/prod")
         embedding_model = os.getenv("BEDROCK_EMBEDDING_MODEL", "amazon.titan-embed-text-v2:0")
         llm_model = os.getenv("BEDROCK_LLM_MODEL", "anthropic.claude-3-haiku-20240307-v1:0")
         use_mock = os.getenv("USE_MOCK_EMBEDDINGS", "false").lower() == "true"

@@ -55,49 +55,6 @@ docker run -d \
 docker exec mongodb mongosh --eval "db.adminCommand('ping')"
 ```
 
-### Alternative: Using Docker Compose
-Create a `docker-compose.yml` file:
-```yaml
-version: '3.8'
-services:
-  opensearch:
-    image: opensearchproject/opensearch:latest
-    container_name: opensearch
-    environment:
-      - discovery.type=single-node
-      - OPENSEARCH_INITIAL_ADMIN_PASSWORD=YourStrongPassword123!
-      - DISABLE_SECURITY_PLUGIN=true
-    ports:
-      - "9200:9200"
-      - "9600:9600"
-    ulimits:
-      memlock:
-        soft: -1
-        hard: -1
-      nofile:
-        soft: 65536
-        hard: 65536
-    volumes:
-      - opensearch-data:/usr/share/opensearch/data
-
-  mongodb:
-    image: mongo:latest
-    container_name: mongodb
-    ports:
-      - "27017:27017"
-    volumes:
-      - mongodb-data:/data/db
-
-volumes:
-  opensearch-data:
-  mongodb-data:
-```
-
-Then run:
-```bash
-docker-compose up -d
-```
-
 ## 3. Configuration
 
 ### Environment Variables
@@ -154,6 +111,8 @@ poetry run python -m uvicorn src.text_to_sql_rag.api.main:app --host 0.0.0.0 --p
 
 # Alternative: Direct Python
 python -m uvicorn src.text_to_sql_rag.api.main:app --host 0.0.0.0 --port 8000 --reload
+
+poetry run python -m src/text_to_sql_rag/api/main.py
 ```
 
 ### Verify Application is Running

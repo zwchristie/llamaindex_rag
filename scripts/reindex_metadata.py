@@ -37,7 +37,7 @@ async def reindex_all():
         opensearch_index = os.getenv("OPENSEARCH_INDEX_NAME", "view_metadata")
         vector_field = os.getenv("OPENSEARCH_VECTOR_FIELD", "embedding")
         
-        bedrock_endpoint = os.getenv("BEDROCK_ENDPOINT_URL", "https://8v1n9dbomk.execute-api.us-east-1.amazonaws.com/testaccess")
+        bedrock_endpoint = os.getenv("BEDROCK_ENDPOINT_URL", "https://your-api-gateway-url.execute-api.us-east-1.amazonaws.com/prod")
         embedding_model = os.getenv("BEDROCK_EMBEDDING_MODEL", "amazon.titan-embed-text-v2:0")
         use_mock_embeddings = os.getenv("USE_MOCK_EMBEDDINGS", "false").lower() == "true"
         

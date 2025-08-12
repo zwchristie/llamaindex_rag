@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 # Import our configuration and services
 try:
     from text_to_sql_rag.config.settings import settings
-    from text_to_sql_rag.services.bedrock_endpoint_service import BedrockEndpointEmbeddingService
+    from text_to_sql_rag.services.enhanced_bedrock_service import EnhancedBedrockService
 except ImportError as e:
     print(f"❌ ERROR: Cannot import application modules: {e}")
     print("Make sure you're running from the project root directory")
@@ -209,7 +209,7 @@ class BedrockEmbeddingConnectionTest:
                 return False
             
             # Test the endpoint service with multiple text inputs
-            from text_to_sql_rag.services.bedrock_endpoint_service import BedrockEndpointService
+            from text_to_sql_rag.services.enhanced_bedrock_service import EnhancedBedrockService as BedrockEndpointService
             
             endpoint_service = BedrockEndpointService(endpoint_url)
             embedding_service = BedrockEndpointEmbeddingService(endpoint_service)
@@ -293,7 +293,7 @@ class BedrockEmbeddingConnectionTest:
                 return False
             
             # Test the endpoint service
-            from text_to_sql_rag.services.bedrock_endpoint_service import BedrockEndpointService
+            from text_to_sql_rag.services.enhanced_bedrock_service import EnhancedBedrockService as BedrockEndpointService
             
             endpoint_service = BedrockEndpointService(endpoint_url)
             embedding_service = BedrockEndpointEmbeddingService(endpoint_service)
@@ -374,7 +374,7 @@ class BedrockEmbeddingConnectionTest:
                 return False
             
             # Test the endpoint service
-            from text_to_sql_rag.services.bedrock_endpoint_service import BedrockEndpointService
+            from text_to_sql_rag.services.enhanced_bedrock_service import EnhancedBedrockService as BedrockEndpointService
             
             endpoint_service = BedrockEndpointService(endpoint_url)
             embedding_service = BedrockEndpointEmbeddingService(endpoint_service)
@@ -425,7 +425,7 @@ class BedrockEmbeddingConnectionTest:
                 return False
             
             # Test the endpoint service
-            from text_to_sql_rag.services.bedrock_endpoint_service import BedrockEndpointService
+            from text_to_sql_rag.services.enhanced_bedrock_service import EnhancedBedrockService as BedrockEndpointService
             
             endpoint_service = BedrockEndpointService(endpoint_url)
             embedding_service = BedrockEndpointEmbeddingService(endpoint_service)

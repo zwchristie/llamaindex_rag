@@ -18,7 +18,7 @@ sys.path.insert(0, str(project_root / "src"))
 # Import test configuration
 TEST_MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://admin:password@localhost:27017")
 TEST_OPENSEARCH_HOST = os.getenv("OPENSEARCH_HOST", "localhost")
-TEST_BEDROCK_ENDPOINT = os.getenv("BEDROCK_ENDPOINT_URL", "https://8v1n9dbomk.execute-api.us-east-1.amazonaws.com/testaccess")
+TEST_BEDROCK_ENDPOINT = os.getenv("BEDROCK_ENDPOINT_URL", "https://your-api-gateway-url.execute-api.us-east-1.amazonaws.com/prod")
 
 
 def check_service_availability():

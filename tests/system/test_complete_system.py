@@ -24,13 +24,13 @@ from text_to_sql_rag.services.view_service import ViewService
 from text_to_sql_rag.services.embedding_service import EmbeddingService, VectorService
 from text_to_sql_rag.services.hitl_service import HITLService
 from text_to_sql_rag.services.session_service import SessionService
-from text_to_sql_rag.services.bedrock_endpoint_service import BedrockEndpointService
+from text_to_sql_rag.services.enhanced_bedrock_service import EnhancedBedrockService as BedrockEndpointService
 from text_to_sql_rag.core.text_to_sql_agent import TextToSQLAgent
 
 # Test configuration
 TEST_MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://admin:password@localhost:27017")
 TEST_OPENSEARCH_HOST = os.getenv("OPENSEARCH_HOST", "localhost")
-TEST_BEDROCK_ENDPOINT = os.getenv("BEDROCK_ENDPOINT_URL", "https://8v1n9dbomk.execute-api.us-east-1.amazonaws.com/testaccess")
+TEST_BEDROCK_ENDPOINT = os.getenv("BEDROCK_ENDPOINT_URL", "https://your-api-gateway-url.execute-api.us-east-1.amazonaws.com/prod")
 
 logger = logging.getLogger(__name__)
 

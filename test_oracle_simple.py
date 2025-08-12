@@ -29,12 +29,12 @@ async def test_oracle_sql_generation():
     try:
         # Import services
         from text_to_sql_rag.services.embedding_service import EmbeddingService
-        from text_to_sql_rag.services.bedrock_endpoint_service import BedrockEndpointService
+        from text_to_sql_rag.services.enhanced_bedrock_service import EnhancedBedrockService as BedrockEndpointService
         from text_to_sql_rag.services.hierarchical_context_service import HierarchicalContextService, RetrievalConfig
         
         # Configuration
         meta_docs_path = Path(__file__).parent / "meta_documents"
-        bedrock_endpoint = os.getenv("BEDROCK_ENDPOINT_URL", "https://8v1n9dbomk.execute-api.us-east-1.amazonaws.com/testaccess")
+        bedrock_endpoint = os.getenv("BEDROCK_ENDPOINT_URL", "https://your-api-gateway-url.execute-api.us-east-1.amazonaws.com/prod")
         embedding_model = os.getenv("BEDROCK_EMBEDDING_MODEL", "amazon.titan-embed-text-v2:0")
         llm_model = os.getenv("BEDROCK_LLM_MODEL", "anthropic.claude-3-haiku-20240307-v1:0")
         

@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 # Import our configuration and services
 try:
     from text_to_sql_rag.config.settings import settings
-    from text_to_sql_rag.services.bedrock_endpoint_service import BedrockEndpointLLMWrapper
+    from text_to_sql_rag.services.enhanced_bedrock_service import EnhancedBedrockLLMWrapper as BedrockEndpointLLMWrapper
     from text_to_sql_rag.services.llm_provider_factory import llm_factory
 except ImportError as e:
     print(f"❌ ERROR: Cannot import application modules: {e}")
@@ -208,7 +208,7 @@ class BedrockLLMConnectionTest:
                 return False
             
             # Test the endpoint service with multiple prompts
-            from text_to_sql_rag.services.bedrock_endpoint_service import BedrockEndpointService
+            from text_to_sql_rag.services.enhanced_bedrock_service import EnhancedBedrockService as BedrockEndpointService
             
             endpoint_service = BedrockEndpointService(endpoint_url)
             llm_wrapper = BedrockEndpointLLMWrapper(endpoint_service)
@@ -283,7 +283,7 @@ class BedrockLLMConnectionTest:
                 return False
             
             # Test the endpoint service
-            from text_to_sql_rag.services.bedrock_endpoint_service import BedrockEndpointService
+            from text_to_sql_rag.services.enhanced_bedrock_service import EnhancedBedrockService as BedrockEndpointService
             
             endpoint_service = BedrockEndpointService(endpoint_url)
             llm_wrapper = BedrockEndpointLLMWrapper(endpoint_service)

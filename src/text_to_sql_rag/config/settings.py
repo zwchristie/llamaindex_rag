@@ -33,6 +33,20 @@ class OpenSearchSettings(BaseSettings):
     vector_field: str = Field(default="vector", env="OPENSEARCH_VECTOR_FIELD")
     vector_size: int = Field(default=1024, env="OPENSEARCH_VECTOR_SIZE")
     
+    # HTTP Auth support for additional authentication
+    http_auth_username: Optional[str] = Field(default=None, env="OPENSEARCH_HTTP_AUTH_USERNAME")
+    http_auth_password: Optional[str] = Field(default=None, env="OPENSEARCH_HTTP_AUTH_PASSWORD")
+    
+    def get_http_auth(self) -> Optional[tuple]:
+        """Get HTTP auth tuple if configured."""
+        # Use http_auth fields if available, otherwise fall back to username/password
+        username = self.http_auth_username or self.username
+        password = self.http_auth_password or self.password
+        
+        if username and password:
+            return (username, password)
+        return None
+    
     class Config:
         env_prefix = "OPENSEARCH_"
 
@@ -139,6 +153,21 @@ class MongoDBSettings(BaseSettings):
         env_prefix = "MONGODB_"
 
 
+class BedrockEndpointSettings(BaseSettings):
+    """Bedrock HTTP endpoint configuration with SSL and auth options."""
+    
+    url: Optional[str] = Field(default=None, env="BEDROCK_ENDPOINT_URL")
+    verify_ssl: bool = Field(default=True, env="BEDROCK_ENDPOINT_VERIFY_SSL")
+    ssl_cert_file: Optional[str] = Field(default=None, env="BEDROCK_SSL_CERT_FILE")
+    ssl_key_file: Optional[str] = Field(default=None, env="BEDROCK_SSL_KEY_FILE")
+    ssl_ca_file: Optional[str] = Field(default=None, env="BEDROCK_SSL_CA_FILE")
+    http_auth_username: Optional[str] = Field(default=None, env="BEDROCK_HTTP_AUTH_USERNAME")
+    http_auth_password: Optional[str] = Field(default=None, env="BEDROCK_HTTP_AUTH_PASSWORD")
+    
+    class Config:
+        env_prefix = "BEDROCK_"
+
+
 class Settings:
     """Global application settings."""
     
@@ -151,10 +180,11 @@ class Settings:
         self.security = SecuritySettings()
         self.mongodb = MongoDBSettings()
         self.llm_provider = LLMProviderSettings()
+        self.bedrock_endpoint = BedrockEndpointSettings()
         
-        # Bedrock endpoint URL (for HTTP-based Bedrock access)
-        self.bedrock_endpoint_url = os.getenv("BEDROCK_ENDPOINT_URL")
-        self.bedrock_endpoint_verify_ssl = os.getenv("BEDROCK_ENDPOINT_VERIFY_SSL", "true").lower() == "true"
+        # Legacy support (backward compatibility)
+        self.bedrock_endpoint_url = self.bedrock_endpoint.url
+        self.bedrock_endpoint_verify_ssl = self.bedrock_endpoint.verify_ssl
         
         # Only load custom LLM settings if needed
         if self._should_load_custom_llm():

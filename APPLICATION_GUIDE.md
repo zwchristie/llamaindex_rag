@@ -60,7 +60,7 @@ Create/verify your `.env` file:
 
 ```env
 # Bedrock API Configuration
-BEDROCK_ENDPOINT_URL=https://8v1n9dbomk.execute-api.us-east-1.amazonaws.com/testaccess
+BEDROCK_ENDPOINT_URL=https://your-api-gateway-url.execute-api.us-east-1.amazonaws.com/prod
 BEDROCK_LLM_MODEL=anthropic.claude-3-haiku-20240307-v1:0
 BEDROCK_EMBEDDING_MODEL=amazon.titan-embed-text-v2:0
 USE_MOCK_EMBEDDINGS=false
@@ -487,7 +487,7 @@ poetry run python tests/performance/benchmark.py
 #### **502 Bedrock Endpoint Errors**
 ```bash
 # Test endpoint directly
-curl -X POST https://8v1n9dbomk.execute-api.us-east-1.amazonaws.com/testaccess \
+curl -X POST https://your-api-gateway-url.execute-api.us-east-1.amazonaws.com/prod \
   -H "Content-Type: application/json" \
   -d '{"model_id": "amazon.titan-embed-text-v2:0", "invoke_type": "embedding", "query": "test"}'
 

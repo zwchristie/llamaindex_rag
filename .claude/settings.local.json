@@ -12,7 +12,8 @@
       "Bash(poetry lock:*)",
       "Bash(docker compose:*)",
       "Bash(docker logs:*)",
-      "Bash(mv:*)"
+      "Bash(mv:*)",
+      "Bash(rm:*)"
     ],
     "deny": []
   }

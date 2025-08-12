@@ -38,7 +38,7 @@ class DataLoader:
         self.opensearch_port = int(os.getenv("OPENSEARCH_PORT", "9200"))
         
         # Bedrock configuration
-        self.bedrock_endpoint = os.getenv("BEDROCK_ENDPOINT_URL", "https://8v1n9dbomk.execute-api.us-east-1.amazonaws.com/testaccess")
+        self.bedrock_endpoint = os.getenv("BEDROCK_ENDPOINT_URL", "https://your-api-gateway-url.execute-api.us-east-1.amazonaws.com/prod")
         self.embedding_model = os.getenv("BEDROCK_EMBEDDING_MODEL", "amazon.titan-embed-text-v2:0")
         self.use_mock = os.getenv("USE_MOCK_EMBEDDINGS", "false").lower() == "true"
         

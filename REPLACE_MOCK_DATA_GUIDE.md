@@ -450,7 +450,7 @@ for json_file in Path('meta_documents/views').glob('*.json'):
 ### **Embeddings Not Generating:**
 ```bash
 # Test Bedrock connection
-curl -X POST https://8v1n9dbomk.execute-api.us-east-1.amazonaws.com/testaccess \
+curl -X POST https://your-api-gateway-url.execute-api.us-east-1.amazonaws.com/prod \
   -H "Content-Type: application/json" \
   -d '{"model_id": "amazon.titan-embed-text-v2:0", "invoke_type": "embedding", "query": "test"}'
 ```

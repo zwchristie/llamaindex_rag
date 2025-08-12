@@ -22,7 +22,7 @@ poetry run python scripts/load_sample_data.py
 ### **3. Test the System**
 ```bash
 # Quick health check (~30 seconds)
-poetry run python tests/test_rag_pipeline.py
+poetry run python demo_full_flow.py
 ```
 **Expected:** All tests pass ✅
 
@@ -102,7 +102,7 @@ poetry run python scripts/load_sample_data.py
 ### **If Bedrock API Errors:**
 ```bash
 # Test endpoint directly
-curl -X POST https://8v1n9dbomk.execute-api.us-east-1.amazonaws.com/testaccess \
+curl -X POST https://your-api-gateway-url.execute-api.us-east-1.amazonaws.com/prod \
   -H "Content-Type: application/json" \
   -d '{"model_id": "amazon.titan-embed-text-v2:0", "invoke_type": "embedding", "query": "test"}'
 ```
