@@ -165,7 +165,8 @@ class BedrockEndpointSettings(BaseSettings):
     http_auth_password: Optional[str] = Field(default=None, env="BEDROCK_HTTP_AUTH_PASSWORD")
     
     class Config:
-        env_prefix = "BEDROCK_"
+        # Don't use env_prefix since we're explicitly setting env names above
+        pass
 
 
 class Settings:

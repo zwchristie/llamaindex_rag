@@ -106,7 +106,8 @@ async def reindex_all():
         logger.info("=" * 60)
         
         # Cleanup
-        mongodb_service.close()
+        if hasattr(mongodb_service, 'client') and mongodb_service.client:
+            mongodb_service.client.close()
         
         return reindexed_count > 0
         

@@ -45,6 +45,14 @@ class DataLoader:
     async def initialize(self):
         """Initialize services using actual application configuration."""
         try:
+            # Debug: Print configuration values
+            logger.info(f"DEBUG: BEDROCK_ENDPOINT_URL = '{self.settings.bedrock_endpoint.url}'")
+            logger.info(f"DEBUG: BEDROCK_VERIFY_SSL = {self.settings.bedrock_endpoint.verify_ssl}")
+            logger.info(f"DEBUG: OPENSEARCH_HOST = {self.settings.opensearch.host}")
+            logger.info(f"DEBUG: OPENSEARCH_USE_SSL = {self.settings.opensearch.use_ssl}")
+            logger.info(f"DEBUG: OPENSEARCH_VERIFY_CERTS = {self.settings.opensearch.verify_certs}")
+            logger.info(f"DEBUG: OPENSEARCH_AUTH = {bool(self.settings.opensearch.get_http_auth())}")
+            
             # Initialize MongoDB service
             from text_to_sql_rag.services.mongodb_service import MongoDBService
             self.mongodb_service = MongoDBService()
@@ -57,7 +65,8 @@ class DataLoader:
             
             # Initialize Bedrock service with enhanced configuration
             if not self.settings.bedrock_endpoint.url:
-                logger.error("❌ BEDROCK_ENDPOINT_URL not configured")
+                logger.error("❌ BEDROCK_ENDPOINT_URL not configured in .env file")
+                logger.error("Please set BEDROCK_ENDPOINT_URL=https://your-endpoint-url.com in your .env file")
                 return False
                 
             from text_to_sql_rag.services.enhanced_bedrock_service import EnhancedBedrockService
@@ -393,8 +402,9 @@ class DataLoader:
     async def cleanup(self):
         """Cleanup connections."""
         try:
-            if self.mongodb_service:
-                self.mongodb_service.close()
+            if self.mongodb_service and hasattr(self.mongodb_service, 'client'):
+                if self.mongodb_service.client:
+                    self.mongodb_service.client.close()
             logger.info("✅ Cleanup completed")
         except Exception as e:
             logger.error(f"❌ Cleanup error: {e}")
