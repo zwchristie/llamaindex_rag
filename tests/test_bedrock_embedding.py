@@ -28,7 +28,7 @@ class BedrockEmbeddingTest:
     
     def log_result(self, test_name: str, success: bool, message: str, details: dict = None):
         """Log test result."""
-        status = "✅ PASS" if success else "❌ FAIL"
+        status = "PASS" if success else "FAIL"
         result = {
             "test": test_name,
             "success": success,
@@ -44,10 +44,26 @@ class BedrockEmbeddingTest:
     def test_import_services(self):
         """Test importing actual application services."""
         try:
-            from text_to_sql_rag.config.settings import settings
+            import os
+            # Set required environment variables if not already set
+            if not os.getenv('BEDROCK_ENDPOINT_URL'):
+                os.environ['BEDROCK_ENDPOINT_URL'] = 'https://8v1n9dbomk.execute-api.us-east-1.amazonaws.com/testaccess'
+            if not os.getenv('AWS_LLM_MODEL'):
+                os.environ['AWS_LLM_MODEL'] = 'anthropic.claude-3-haiku-20240307-v1:0'
+            if not os.getenv('AWS_EMBEDDING_MODEL'):
+                os.environ['AWS_EMBEDDING_MODEL'] = 'amazon.titan-embed-text-v2:0'
+            if not os.getenv('LLM_PROVIDER'):
+                os.environ['LLM_PROVIDER'] = 'bedrock_endpoint'
+            
+            # Import settings and patch the global settings instance
+            from text_to_sql_rag.config import settings as settings_module
             from text_to_sql_rag.services.enhanced_bedrock_service import EnhancedBedrockService
             
-            self.settings = settings
+            # Patch the global settings to use environment variables
+            if not settings_module.settings.bedrock_endpoint.url and os.getenv('BEDROCK_ENDPOINT_URL'):
+                settings_module.settings.bedrock_endpoint.url = os.getenv('BEDROCK_ENDPOINT_URL')
+            
+            self.settings = settings_module.settings
             
             self.log_result(
                 "Import Services",
@@ -138,13 +154,18 @@ class BedrockEmbeddingTest:
     async def test_health_check(self):
         """Test Bedrock service health check."""
         try:
-            is_healthy = await self.bedrock_service.health_check()
+            # Do a simple test by trying to generate an embedding
+            try:
+                test_embedding = await self.bedrock_service.get_embedding("ping")
+                is_healthy = bool(test_embedding and len(test_embedding) > 0)
+            except Exception:
+                is_healthy = False
             
             if is_healthy:
                 self.log_result(
                     "Health Check",
                     True,
-                    "Bedrock service is healthy"
+                    "Bedrock service is healthy (tested with simple embedding generation)"
                 )
             else:
                 self.log_result(
@@ -372,7 +393,7 @@ class BedrockEmbeddingTest:
     
     async def run_all_tests(self):
         """Run all Bedrock embedding tests."""
-        print("🧪 Starting Bedrock Embedding Tests")
+        print("Starting Bedrock Embedding Tests")
         print("=" * 50)
         
         # Sync tests first
@@ -401,7 +422,7 @@ class BedrockEmbeddingTest:
                 if test():
                     passed += 1
             except Exception as e:
-                print(f"❌ FAIL: {test.__name__} - Unexpected error: {e}")
+                print(f"FAIL: {test.__name__} - Unexpected error: {e}")
         
         # Run async tests
         for test in tests_async:
@@ -409,22 +430,22 @@ class BedrockEmbeddingTest:
                 if await test():
                     passed += 1
             except Exception as e:
-                print(f"❌ FAIL: {test.__name__} - Unexpected error: {e}")
+                print(f"FAIL: {test.__name__} - Unexpected error: {e}")
         
         print("\n" + "=" * 50)
-        print(f"📊 Test Results: {passed}/{total} tests passed")
+        print(f"Test Results: {passed}/{total} tests passed")
         
         if passed == total:
-            print("🎉 All Bedrock embedding tests passed!")
+            print("All Bedrock embedding tests passed!")
         else:
-            print(f"⚠️  {total - passed} test(s) failed")
+            print(f"{total - passed} test(s) failed")
         
         return passed == total
 
 
 async def main():
     """Main function to run Bedrock embedding tests."""
-    print("🧪 Bedrock Embedding Test Suite")
+    print("Bedrock Embedding Test Suite")
     print("This tests the actual Bedrock embedding functionality using application services")
     print()
     

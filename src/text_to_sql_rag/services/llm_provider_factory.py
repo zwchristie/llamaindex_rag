@@ -87,7 +87,7 @@ class LLMProviderFactory:
             self._custom_service = CustomLLMService()
         return self._custom_service
     
-    def get_current_provider(self) -> Union[BedrockEndpointLLMWrapper, CustomLLMService]:
+    def get_current_provider(self) -> Union[EnhancedBedrockLLMWrapper, CustomLLMService]:
         """Get the current LLM provider."""
         if self._current_provider is None:
             raise RuntimeError("No LLM provider initialized")

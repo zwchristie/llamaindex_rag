@@ -44,7 +44,7 @@ class OpenSearchConnectionTest:
     
     def log_result(self, test_name: str, success: bool, message: str, details: Optional[Dict] = None):
         """Log test result."""
-        status = "✅ PASS" if success else "❌ FAIL"
+        status = "PASS" if success else "FAIL"
         result = {
             "test": test_name,
             "success": success,
@@ -83,6 +83,7 @@ class OpenSearchConnectionTest:
                 )
                 return False
             
+            verify_certs = settings.opensearch.verify_certs
             protocol = "https" if use_ssl else "http"
             endpoint = f"{protocol}://{host}:{port}"
             
@@ -513,7 +514,7 @@ class OpenSearchConnectionTest:
     
     def run_all_tests(self):
         """Run all OpenSearch tests."""
-        print("🔍 Starting OpenSearch Connection Tests")
+        print("Starting OpenSearch Connection Tests")
         print("=" * 50)
         
         # Test sequence
@@ -534,15 +535,15 @@ class OpenSearchConnectionTest:
                 if test():
                     passed += 1
             except Exception as e:
-                print(f"❌ FAIL: {test.__name__} - Unexpected error: {str(e)}")
+                print(f"FAIL: {test.__name__} - Unexpected error: {str(e)}")
         
         print("\n" + "=" * 50)
-        print(f"📊 Test Results: {passed}/{total} tests passed")
+        print(f"Test Results: {passed}/{total} tests passed")
         
         if passed == total:
-            print("🎉 All OpenSearch tests passed!")
+            print("All OpenSearch tests passed!")
         else:
-            print(f"⚠️  {total - passed} test(s) failed")
+            print(f"{total - passed} test(s) failed")
         
         # Always run cleanup
         self.cleanup()
@@ -553,7 +554,7 @@ class OpenSearchConnectionTest:
 def main():
     """Main function to run OpenSearch connection tests."""
     
-    print("🧪 OpenSearch Connection Test Suite")
+    print("OpenSearch Connection Test Suite")
     print("This script tests OpenSearch connectivity and vector operations")
     print()
     
@@ -568,7 +569,7 @@ def main():
     
     # Print configuration help
     print("\n" + "=" * 50)
-    print("📝 Configuration Notes:")
+    print("Configuration Notes:")
     print(f"   OpenSearch Host: {settings.opensearch.host}")
     print(f"   OpenSearch Port: {settings.opensearch.port}")
     print(f"   Use SSL: {settings.opensearch.use_ssl}")

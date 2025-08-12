@@ -26,7 +26,7 @@ class MongoDBConnectionTest:
     
     def log_result(self, test_name: str, success: bool, message: str, details: dict = None):
         """Log test result."""
-        status = "✅ PASS" if success else "❌ FAIL"
+        status = "PASS" if success else "FAIL"
         result = {
             "test": test_name,
             "success": success,
@@ -174,29 +174,30 @@ class MongoDBConnectionTest:
     def test_document_operations(self):
         """Test basic document operations (CRUD)."""
         try:
-            # Test document creation
-            test_doc = {
-                "document_type": "test",
-                "test_id": "mongodb_connection_test",
-                "name": "Connection Test Document",
-                "description": "Test document for MongoDB connection validation",
-                "created_at": datetime.utcnow(),
-                "test_data": {"key": "value", "number": 42}
-            }
+            # Test document creation using MongoDB service interface
+            test_file_path = "/test/mongodb_connection_test.txt"
+            test_content = "Test document for MongoDB connection validation"
             
-            # Insert document
-            doc_id = self.mongodb_service.store_document(test_doc)
+            # Upsert document (insert/update)
+            upsert_success = self.mongodb_service.upsert_document(
+                file_path=test_file_path,
+                content=test_content,
+                document_type="test",
+                catalog="connection_test",
+                schema_name="test_schema",
+                metadata={"test": True, "created_by": "connection_test"}
+            )
             
-            if not doc_id:
+            if not upsert_success:
                 self.log_result(
                     "Document Operations",
                     False,
-                    "Failed to insert test document"
+                    "Failed to upsert test document"
                 )
                 return False
             
             # Retrieve document
-            retrieved_doc = self.mongodb_service.get_document_by_id(doc_id)
+            retrieved_doc = self.mongodb_service.get_document_by_path(test_file_path)
             
             if not retrieved_doc:
                 self.log_result(
@@ -206,9 +207,16 @@ class MongoDBConnectionTest:
                 )
                 return False
             
-            # Update document
-            update_data = {"updated_at": datetime.utcnow(), "test_updated": True}
-            update_success = self.mongodb_service.update_document(doc_id, update_data)
+            # Update document with new content
+            updated_content = test_content + " - UPDATED"
+            update_success = self.mongodb_service.upsert_document(
+                file_path=test_file_path,
+                content=updated_content,
+                document_type="test",
+                catalog="connection_test",
+                schema_name="test_schema",
+                metadata={"test": True, "updated": True, "created_by": "connection_test"}
+            )
             
             if not update_success:
                 self.log_result(
@@ -219,8 +227,8 @@ class MongoDBConnectionTest:
                 return False
             
             # Verify update
-            updated_doc = self.mongodb_service.get_document_by_id(doc_id)
-            if not updated_doc or not updated_doc.get("test_updated"):
+            updated_doc = self.mongodb_service.get_document_by_path(test_file_path)
+            if not updated_doc or "UPDATED" not in updated_doc.get("content", ""):
                 self.log_result(
                     "Document Operations",
                     False,
@@ -229,7 +237,7 @@ class MongoDBConnectionTest:
                 return False
             
             # Delete document
-            delete_success = self.mongodb_service.delete_document(doc_id)
+            delete_success = self.mongodb_service.delete_document(test_file_path)
             
             if not delete_success:
                 self.log_result(
@@ -240,7 +248,7 @@ class MongoDBConnectionTest:
                 return False
             
             # Verify deletion
-            deleted_doc = self.mongodb_service.get_document_by_id(doc_id)
+            deleted_doc = self.mongodb_service.get_document_by_path(test_file_path)
             if deleted_doc:
                 self.log_result(
                     "Document Operations",
@@ -255,7 +263,7 @@ class MongoDBConnectionTest:
                 "All CRUD operations completed successfully",
                 {
                     "operations": "CREATE, READ, UPDATE, DELETE",
-                    "test_doc_id": str(doc_id)
+                    "test_file_path": test_file_path
                 }
             )
             return True
@@ -304,29 +312,29 @@ class MongoDBConnectionTest:
     def test_query_operations(self):
         """Test query operations."""
         try:
-            # Insert test documents
-            test_docs = [
-                {
-                    "document_type": "test_query",
-                    "name": f"Test Document {i}",
-                    "category": "query_test",
-                    "value": i * 10,
-                    "created_at": datetime.utcnow()
-                }
-                for i in range(3)
-            ]
+            # Insert test documents using upsert_document
+            test_file_paths = []
+            for i in range(3):
+                file_path = f"/test/query_test_{i}.txt"
+                content = f"Test document {i} for query operations"
+                
+                success = self.mongodb_service.upsert_document(
+                    file_path=file_path,
+                    content=content,
+                    document_type="test_query",
+                    catalog="query_test",
+                    schema_name="test_schema",
+                    metadata={"name": f"Test Document {i}", "value": i * 10}
+                )
+                
+                if success:
+                    test_file_paths.append(file_path)
             
-            inserted_ids = []
-            for doc in test_docs:
-                doc_id = self.mongodb_service.store_document(doc)
-                if doc_id:
-                    inserted_ids.append(doc_id)
-            
-            if len(inserted_ids) != 3:
+            if len(test_file_paths) != 3:
                 self.log_result(
                     "Query Operations",
                     False,
-                    f"Failed to insert all test documents: {len(inserted_ids)}/3"
+                    f"Failed to insert all test documents: {len(test_file_paths)}/3"
                 )
                 return False
             
@@ -341,13 +349,13 @@ class MongoDBConnectionTest:
                 )
                 return False
             
-            # Test complex query
-            complex_query = {"category": "query_test", "value": {"$gte": 10}}
+            # Test complex query using direct collection access
+            complex_query = {"catalog": "query_test", "metadata.value": {"$gte": 10}}
             complex_results = list(self.mongodb_service.documents_collection.find(complex_query))
             
             # Cleanup test documents
-            for doc_id in inserted_ids:
-                self.mongodb_service.delete_document(doc_id)
+            for file_path in test_file_paths:
+                self.mongodb_service.delete_document(file_path)
             
             self.log_result(
                 "Query Operations",
@@ -363,10 +371,10 @@ class MongoDBConnectionTest:
             
         except Exception as e:
             # Cleanup on error
-            if 'inserted_ids' in locals():
-                for doc_id in inserted_ids:
+            if 'test_file_paths' in locals():
+                for file_path in test_file_paths:
                     try:
-                        self.mongodb_service.delete_document(doc_id)
+                        self.mongodb_service.delete_document(file_path)
                     except:
                         pass
             
@@ -379,7 +387,7 @@ class MongoDBConnectionTest:
     
     def run_all_tests(self):
         """Run all MongoDB tests."""
-        print("🧪 Starting MongoDB Connection Tests")
+        print("Starting MongoDB Connection Tests")
         print("=" * 50)
         
         tests = [
@@ -401,18 +409,18 @@ class MongoDBConnectionTest:
                 if test():
                     passed += 1
             except Exception as e:
-                print(f"❌ FAIL: {test.__name__} - Unexpected error: {e}")
+                print(f"FAIL: {test.__name__} - Unexpected error: {e}")
         
         print("\n" + "=" * 50)
-        print(f"📊 Test Results: {passed}/{total} tests passed")
+        print(f"Test Results: {passed}/{total} tests passed")
         
         if passed == total:
-            print("🎉 All MongoDB tests passed!")
+            print("All MongoDB tests passed!")
         else:
-            print(f"⚠️  {total - passed} test(s) failed")
+            print(f"{total - passed} test(s) failed")
         
         print("\n" + "=" * 50)
-        print("📝 Configuration Notes:")
+        print("Configuration Notes:")
         print(f"   MongoDB URL: {self.settings.mongodb.url.split('@')[1] if '@' in self.settings.mongodb.url else self.settings.mongodb.url}")
         print(f"   Database: {self.settings.mongodb.database}")
         print()
@@ -425,7 +433,7 @@ class MongoDBConnectionTest:
 
 def main():
     """Main function to run MongoDB connection tests."""
-    print("🧪 MongoDB Connection Test Suite")
+    print("MongoDB Connection Test Suite")
     print("This tests the actual MongoDB functionality using application services")
     print()
     
