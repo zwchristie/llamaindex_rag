@@ -1,24 +1,14 @@
 """
-Script to reindex all view metadata in OpenSearch.
+Script to reindex all view metadata in OpenSearch using actual application services.
 """
 
 import asyncio
-import os
 import sys
 from pathlib import Path
 import logging
-from opensearchpy import AsyncOpenSearch
-import motor.motor_asyncio
-from dotenv import load_dotenv
-
-# Load .env file
-load_dotenv()
 
 # Add src to path  
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
-from text_to_sql_rag.services.view_service import ViewService
-from text_to_sql_rag.services.embedding_service import EmbeddingService, VectorService
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -26,82 +16,113 @@ logger = logging.getLogger(__name__)
 
 
 async def reindex_all():
-    """Reindex all view metadata in OpenSearch."""
+    """Reindex all view metadata in OpenSearch using actual application services."""
     try:
-        # Get configuration from environment
-        mongodb_url = os.getenv("MONGODB_URL", "mongodb://admin:password@localhost:27017")
-        database_name = os.getenv("MONGODB_DATABASE", "text_to_sql_rag")
+        # Import and initialize actual application services
+        from text_to_sql_rag.services.mongodb_service import MongoDBService
+        from text_to_sql_rag.services.vector_service import LlamaIndexVectorService
+        from text_to_sql_rag.config.settings import settings
         
-        opensearch_host = os.getenv("OPENSEARCH_HOST", "localhost")
-        opensearch_port = int(os.getenv("OPENSEARCH_PORT", "9200"))
-        opensearch_index = os.getenv("OPENSEARCH_INDEX_NAME", "view_metadata")
-        vector_field = os.getenv("OPENSEARCH_VECTOR_FIELD", "embedding")
+        logger.info("🔄 Initializing application services...")
         
-        bedrock_endpoint = os.getenv("BEDROCK_ENDPOINT_URL", "https://your-api-gateway-url.execute-api.us-east-1.amazonaws.com/prod")
-        embedding_model = os.getenv("BEDROCK_EMBEDDING_MODEL", "amazon.titan-embed-text-v2:0")
-        use_mock_embeddings = os.getenv("USE_MOCK_EMBEDDINGS", "false").lower() == "true"
+        # Initialize MongoDB service
+        mongodb_service = MongoDBService()
+        if not mongodb_service.is_connected():
+            logger.error("❌ MongoDB service not connected")
+            return False
         
-        logger.info(f"USE_MOCK_EMBEDDINGS environment variable: {os.getenv('USE_MOCK_EMBEDDINGS')}")
-        logger.info(f"Using mock embeddings: {use_mock_embeddings}")
+        logger.info("✅ MongoDB service connected")
         
-        # Connect to MongoDB
-        client = motor.motor_asyncio.AsyncIOMotorClient(mongodb_url)
-        db = client[database_name]
-        view_service = ViewService(db)
+        # Initialize Vector service  
+        vector_service = LlamaIndexVectorService()
+        if not vector_service.health_check():
+            logger.error("❌ Vector service health check failed")
+            return False
+            
+        logger.info("✅ Vector service initialized")
         
-        logger.info(f"Connected to MongoDB: {database_name}")
+        # Get all documents from MongoDB
+        logger.info("🔄 Retrieving documents from MongoDB...")
+        documents = list(mongodb_service.get_all_documents())
         
-        # Connect to OpenSearch
-        opensearch_client = AsyncOpenSearch(
-            hosts=[{"host": opensearch_host, "port": opensearch_port}],
-            http_auth=None,
-            use_ssl=False,
-            verify_certs=False,
-            ssl_assert_hostname=False,
-            ssl_show_warn=False,
-        )
+        if not documents:
+            logger.warning("No documents found in MongoDB")
+            return True
         
-        logger.info(f"Connected to OpenSearch: {opensearch_host}:{opensearch_port}")
+        logger.info(f"Found {len(documents)} documents to reindex")
         
-        # Initialize services
-        embedding_service = EmbeddingService(bedrock_endpoint, embedding_model, use_mock=use_mock_embeddings)
-        vector_service = VectorService(opensearch_client, opensearch_index, vector_field)
+        # Get index stats before reindexing
+        try:
+            before_stats = vector_service.get_index_stats()
+            logger.info(f"Index stats before reindexing: {before_stats}")
+        except Exception as e:
+            logger.warning(f"Could not get index stats: {e}")
         
-        # Get all views from MongoDB
-        all_views = await view_service.get_all_views()
-        logger.info(f"Found {len(all_views)} views to reindex")
+        # Reindex all documents
+        logger.info("🔄 Starting reindexing process...")
+        reindexed_count = 0
         
-        if not all_views:
-            logger.warning("No views found in MongoDB. Run seed_mock_data.py first.")
-            return
+        for doc in documents:
+            try:
+                document_id = doc.get("view_name") or doc.get("report_name") or doc.get("lookup_name") or str(doc["_id"])
+                content = doc.get("content", "")
+                
+                if not content:
+                    logger.warning(f"No content for document {document_id}")
+                    continue
+                
+                # Use the vector service to add/update the document
+                success = vector_service.add_document(
+                    document_id=document_id,
+                    content=content,
+                    metadata=doc.get("metadata", {}),
+                    document_type=doc.get("document_type", "unknown")
+                )
+                
+                if success:
+                    reindexed_count += 1
+                    if reindexed_count % 10 == 0:
+                        logger.info(f"Reindexed {reindexed_count}/{len(documents)} documents...")
+                else:
+                    logger.error(f"Failed to reindex document: {document_id}")
+                    
+            except Exception as e:
+                logger.error(f"Error reindexing document: {e}")
         
-        # Reindex all views
-        await vector_service.reindex_all_views(all_views, embedding_service)
+        # Get index stats after reindexing
+        try:
+            after_stats = vector_service.get_index_stats()
+            logger.info(f"Index stats after reindexing: {after_stats}")
+        except Exception as e:
+            logger.warning(f"Could not get index stats: {e}")
         
-        # Get index stats
-        stats = await vector_service.get_index_stats()
-        logger.info("Reindexing completed!")
-        logger.info(f"Indexed documents: {stats.get('document_count', 0)}")
-        logger.info(f"Index size: {stats.get('store_size_mb', 0)} MB")
+        logger.info("=" * 60)
+        logger.info("🎉 REINDEXING COMPLETED SUCCESSFULLY!")
+        logger.info("=" * 60)
+        logger.info(f"📊 SUMMARY:")
+        logger.info(f"   • Total Documents: {len(documents)}")
+        logger.info(f"   • Successfully Reindexed: {reindexed_count}")
+        logger.info(f"   • Failed: {len(documents) - reindexed_count}")
+        logger.info("=" * 60)
         
-        # Test search functionality
-        logger.info("Testing search functionality...")
-        test_query = "syndicate participation"
-        test_embedding = await embedding_service.get_embedding(test_query)
+        # Cleanup
+        mongodb_service.close()
         
-        results = await vector_service.search_similar_views(test_embedding, k=3)
-        logger.info(f"Test search for '{test_query}' returned {len(results)} results:")
-        for i, (view, score) in enumerate(results[:3], 1):
-            logger.info(f"  {i}. {view.view_name} (score: {score:.3f})")
-        
-        # Close connections
-        client.close()
-        await opensearch_client.close()
+        return reindexed_count > 0
         
     except Exception as e:
-        logger.error(f"Error during reindexing: {e}")
-        raise
+        logger.error(f"❌ Reindexing failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+async def main():
+    """Main function."""
+    success = await reindex_all()
+    return success
 
 
 if __name__ == "__main__":
-    asyncio.run(reindex_all())
+    success = asyncio.run(main())
+    sys.exit(0 if success else 1)

@@ -1,608 +1,461 @@
 #!/usr/bin/env python3
 """
 Load sample metadata files into MongoDB and create vector embeddings in OpenSearch.
+Uses the actual application services to ensure consistent configuration.
 """
 
 import asyncio
 import json
-import os
 import sys
 from pathlib import Path
 import logging
 from datetime import datetime
+from typing import List, Dict, Any
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
-from dotenv import load_dotenv
-import motor.motor_asyncio
-from opensearchpy import AsyncOpenSearch
-
-# Load environment variables
-load_dotenv()
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
 
+
 class DataLoader:
-    """Load sample data into the system."""
+    """Load sample data using actual application services."""
     
     def __init__(self):
-        # Database connections
-        self.mongodb_url = os.getenv("MONGODB_URL", "mongodb://admin:password@localhost:27017")
-        self.database_name = os.getenv("MONGODB_DATABASE", "text_to_sql_rag")
+        # Import application services and settings
+        from text_to_sql_rag.config.settings import settings
+        from text_to_sql_rag.services.mongodb_service import MongoDBService
+        from text_to_sql_rag.services.vector_service import LlamaIndexVectorService
+        from text_to_sql_rag.services.enhanced_bedrock_service import EnhancedBedrockService
         
-        # OpenSearch configuration  
-        self.opensearch_host = os.getenv("OPENSEARCH_HOST", "localhost")
-        self.opensearch_port = int(os.getenv("OPENSEARCH_PORT", "9200"))
+        self.settings = settings
         
-        # Bedrock configuration
-        self.bedrock_endpoint = os.getenv("BEDROCK_ENDPOINT_URL", "https://your-api-gateway-url.execute-api.us-east-1.amazonaws.com/prod")
-        self.embedding_model = os.getenv("BEDROCK_EMBEDDING_MODEL", "amazon.titan-embed-text-v2:0")
-        self.use_mock = os.getenv("USE_MOCK_EMBEDDINGS", "false").lower() == "true"
-        
-        # Service instances
-        self.mongo_client = None
-        self.db = None
-        self.opensearch_client = None
-        self.embedding_service = None
+        # Initialize actual application services
+        self.mongodb_service = None
         self.vector_service = None
+        self.bedrock_service = None
         
         # Data paths
         self.meta_docs_path = Path(__file__).parent.parent / "meta_documents"
+        
+        logger.info("Data loader initialized with actual application services")
     
     async def initialize(self):
-        """Initialize database connections and services."""
+        """Initialize services using actual application configuration."""
         try:
-            # MongoDB connection
-            self.mongo_client = motor.motor_asyncio.AsyncIOMotorClient(self.mongodb_url)
-            self.db = self.mongo_client[self.database_name]
-            await self.mongo_client.server_info()
-            logger.info("✅ MongoDB connected")
+            # Initialize MongoDB service
+            from text_to_sql_rag.services.mongodb_service import MongoDBService
+            self.mongodb_service = MongoDBService()
             
-            # OpenSearch connection
-            self.opensearch_client = AsyncOpenSearch(
-                hosts=[{"host": self.opensearch_host, "port": self.opensearch_port}],
-                http_auth=None, use_ssl=False, verify_certs=False
-            )
-            cluster_info = await self.opensearch_client.info()
-            logger.info(f"✅ OpenSearch connected: {cluster_info['version']['number']}")
+            if not self.mongodb_service.is_connected():
+                logger.error("❌ MongoDB service not connected")
+                return False
             
-            # Import and initialize services
-            from text_to_sql_rag.services.embedding_service import EmbeddingService, VectorService
+            logger.info("✅ MongoDB service connected")
             
-            self.embedding_service = EmbeddingService(
-                endpoint_url=self.bedrock_endpoint,
-                embedding_model=self.embedding_model,
-                use_mock=self.use_mock
-            )
-            self.vector_service = VectorService(self.opensearch_client, "view_metadata", "embedding")
-            
-            logger.info("✅ All services initialized")
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ Failed to initialize: {e}")
-            return False
-    
-    async def ensure_opensearch_index(self):
-        """Create OpenSearch index if it doesn't exist."""
-        try:
-            index_name = "view_metadata"
-            
-            # Check if index exists
-            if await self.opensearch_client.indices.exists(index_name):
-                logger.info(f"📊 Index '{index_name}' already exists")
-                return True
-            
-            # Create index with proper mapping
-            vector_size = 1536 if self.use_mock else 1024
-            
-            # First create index with k-NN settings
-            index_settings = {
-                "settings": {
-                    "index": {
-                        "knn": True,
-                        "knn.algo_param.ef_search": 100
-                    }
-                },
-                "mappings": {
-                    "properties": {
-                        "view_name": {"type": "keyword"},
-                        "schema": {"type": "keyword"}, 
-                        "description": {"type": "text"},
-                        "business_context": {"type": "text"},
-                        "full_text": {"type": "text"},
-                        "embedding": {
-                            "type": "knn_vector",
-                            "dimension": vector_size,
-                            "method": {
-                                "name": "hnsw",
-                                "space_type": "cosinesimil"
-                            }
-                        },
-                        "_uploaded_at": {"type": "date"},
-                        "_source_file": {"type": "keyword"}
-                    }
-                }
-            }
-            
-            await self.opensearch_client.indices.create(index_name, body=index_settings)
-            logger.info(f"✅ Created OpenSearch index '{index_name}' with {vector_size}-dimensional vectors")
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ Failed to create OpenSearch index: {e}")
-            return False
-    
-    async def clear_existing_data(self):
-        """Clear existing data from MongoDB and OpenSearch."""
-        try:
-            # Clear MongoDB collections
-            collections = ['view_metadata', 'hitl_requests', 'session_states']
-            for collection_name in collections:
-                result = await self.db[collection_name].delete_many({})
-                logger.info(f"🗑️  Cleared {result.deleted_count} documents from {collection_name}")
-            
-            # Clear OpenSearch index
-            try:
-                await self.opensearch_client.indices.delete("view_metadata")
-                logger.info("🗑️  Deleted OpenSearch index")
-            except:
-                logger.info("📊 OpenSearch index didn't exist")
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ Failed to clear existing data: {e}")
-            return False
-    
-    async def load_business_domains(self):
-        """Load business domains from meta_documents/business_domains.json."""
-        try:
-            business_domains_file = self.meta_docs_path / "business_domains.json"
-            
-            if not business_domains_file.exists():
-                logger.warning(f"Business domains file not found: {business_domains_file}")
-                return 0
-            
-            with open(business_domains_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            
-            domains = data.get('business_domains', [])
-            if not domains:
-                logger.warning("No business domains found in file")
-                return 0
-            
-            # Store each domain as a separate document
-            loaded_count = 0
-            for domain in domains:
-                domain['_uploaded_at'] = datetime.utcnow()
-                domain['_source_file'] = 'business_domains.json'
-                domain['_document_type'] = 'business_domain'
+            # Initialize Bedrock service with enhanced configuration
+            if not self.settings.bedrock_endpoint.url:
+                logger.error("❌ BEDROCK_ENDPOINT_URL not configured")
+                return False
                 
-                result = await self.db.view_metadata.insert_one(domain)
-                if result.inserted_id:
-                    loaded_count += 1
-                    logger.info(f"Loaded business domain: {domain.get('domain_name', 'Unknown')}")
+            from text_to_sql_rag.services.enhanced_bedrock_service import EnhancedBedrockService
+            self.bedrock_service = EnhancedBedrockService(
+                endpoint_url=self.settings.bedrock_endpoint.url,
+                embedding_model=self.settings.aws.embedding_model,
+                llm_model=self.settings.aws.llm_model,
+                verify_ssl=self.settings.bedrock_endpoint.verify_ssl,
+                ssl_cert_file=self.settings.bedrock_endpoint.ssl_cert_file,
+                ssl_key_file=self.settings.bedrock_endpoint.ssl_key_file,
+                ssl_ca_file=self.settings.bedrock_endpoint.ssl_ca_file,
+                http_auth_username=self.settings.bedrock_endpoint.http_auth_username,
+                http_auth_password=self.settings.bedrock_endpoint.http_auth_password
+            )
             
-            logger.info(f"Loaded {loaded_count} business domain documents")
-            return loaded_count
+            # Test Bedrock connection
+            if not await self.bedrock_service.health_check():
+                logger.warning("⚠️  Bedrock service health check failed - continuing with reduced functionality")
+            else:
+                logger.info("✅ Enhanced Bedrock service connected")
+            
+            # Initialize Vector service (LlamaIndex with OpenSearch)
+            from text_to_sql_rag.services.vector_service import LlamaIndexVectorService
+            self.vector_service = LlamaIndexVectorService()
+            
+            if not self.vector_service.health_check():
+                logger.error("❌ Vector service health check failed")
+                return False
+                
+            logger.info("✅ Vector service initialized")
+            
+            logger.info("✅ All application services initialized successfully")
+            return True
             
         except Exception as e:
-            logger.error(f"Failed to load business domains: {e}")
-            return 0
+            logger.error(f"❌ Failed to initialize services: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
     
-    async def load_view_metadata(self):
-        """Load view metadata files from meta_documents/views/."""
-        return await self._load_documents_from_directory("views", "view_metadata")
-    
-    async def load_report_metadata(self):
-        """Load report metadata files from meta_documents/reports/."""
-        return await self._load_documents_from_directory("reports", "report_metadata")
-    
-    async def load_lookup_metadata(self):
-        """Load lookup metadata files from meta_documents/lookups/."""
-        return await self._load_documents_from_directory("lookups", "lookup_metadata")
-    
-    async def _load_documents_from_directory(self, directory_name: str, document_type: str):
-        """Load documents from a specific directory."""
+    async def load_business_domains(self) -> int:
+        """Load business domains into MongoDB."""
         try:
-            dir_path = self.meta_docs_path / directory_name
-            
-            if not dir_path.exists():
-                logger.warning(f"Directory not found: {dir_path}")
+            domains_file = self.meta_docs_path / "business_domains.json"
+            if not domains_file.exists():
+                logger.warning(f"Business domains file not found: {domains_file}")
                 return 0
             
-            json_files = list(dir_path.glob("*.json"))
-            if not json_files:
-                logger.warning(f"No JSON files found in {dir_path}")
-                return 0
+            with open(domains_file, 'r') as f:
+                domains = json.load(f)
             
-            logger.info(f"Found {len(json_files)} {document_type} files")
+            # Clear existing domains
+            self.mongodb_service.documents_collection.delete_many({"document_type": "business_domain"})
             
-            loaded_count = 0
-            for json_file in json_files:
-                try:
-                    # Skip README files
-                    if json_file.name.lower().startswith('readme'):
-                        continue
-                        
-                    # Load JSON data
-                    with open(json_file, 'r', encoding='utf-8') as f:
-                        doc_data = json.load(f)
-                    
-                    # Add metadata
-                    doc_data['_uploaded_at'] = datetime.utcnow()
-                    doc_data['_source_file'] = json_file.name
-                    doc_data['_document_type'] = document_type
-                    
-                    # Ensure identifier field based on document type
-                    if document_type == 'view_metadata' and 'view_name' not in doc_data:
-                        doc_data['view_name'] = json_file.stem.upper()
-                    elif document_type == 'report_metadata' and 'report_name' not in doc_data:
-                        doc_data['report_name'] = json_file.stem.replace('_', ' ').title()
-                    elif document_type == 'lookup_metadata' and 'lookup_name' not in doc_data:
-                        doc_data['lookup_name'] = doc_data.get('name', json_file.stem.replace('_', ' ').title())
-                    
-                    # Store in MongoDB
-                    result = await self.db.view_metadata.insert_one(doc_data)
-                    
-                    if result.inserted_id:
-                        loaded_count += 1
-                        # Log appropriate identifier
-                        identifier = (doc_data.get('view_name') or 
-                                    doc_data.get('report_name') or 
-                                    doc_data.get('lookup_name') or 
-                                    doc_data.get('name', json_file.stem))
-                        logger.info(f"Loaded: {identifier}")
-                    
-                except Exception as e:
-                    logger.error(f"Error loading {json_file.name}: {e}")
+            inserted_count = 0
+            for domain in domains:
+                domain_doc = {
+                    "document_type": "business_domain",
+                    "domain_id": domain["domain_id"],
+                    "name": domain["name"],
+                    "description": domain["description"],
+                    "keywords": domain["keywords"],
+                    "related_views": domain.get("related_views", []),
+                    "metadata": domain,
+                    "created_at": datetime.utcnow(),
+                    "updated_at": datetime.utcnow()
+                }
+                
+                result = self.mongodb_service.documents_collection.insert_one(domain_doc)
+                if result.inserted_id:
+                    inserted_count += 1
             
-            logger.info(f"Loaded {loaded_count} {document_type} documents")
-            return loaded_count
+            logger.info(f"✅ Loaded {inserted_count} business domains")
+            return inserted_count
             
         except Exception as e:
-            logger.error(f"Failed to load {document_type}: {e}")
+            logger.error(f"❌ Failed to load business domains: {e}")
             return 0
     
-    async def generate_embeddings_and_index(self):
-        """Generate embeddings for all loaded documents and index in OpenSearch."""
+    async def load_view_metadata(self) -> int:
+        """Load view metadata into MongoDB."""
+        try:
+            views_dir = self.meta_docs_path / "views"
+            if not views_dir.exists():
+                logger.warning(f"Views directory not found: {views_dir}")
+                return 0
+            
+            # Clear existing views
+            self.mongodb_service.documents_collection.delete_many({"document_type": "view"})
+            
+            inserted_count = 0
+            view_files = list(views_dir.glob("*.json"))
+            
+            for view_file in view_files:
+                try:
+                    with open(view_file, 'r') as f:
+                        view_data = json.load(f)
+                    
+                    view_doc = {
+                        "document_type": "view",
+                        "view_name": view_data["view_name"],
+                        "schema_name": view_data.get("schema_name", ""),
+                        "description": view_data.get("description", ""),
+                        "business_domains": view_data.get("business_domains", []),
+                        "columns": view_data.get("columns", []),
+                        "sample_queries": view_data.get("sample_queries", []),
+                        "metadata": view_data,
+                        "content": self._generate_view_content(view_data),
+                        "created_at": datetime.utcnow(),
+                        "updated_at": datetime.utcnow()
+                    }
+                    
+                    result = self.mongodb_service.documents_collection.insert_one(view_doc)
+                    if result.inserted_id:
+                        inserted_count += 1
+                        
+                except Exception as e:
+                    logger.error(f"❌ Failed to load view {view_file}: {e}")
+            
+            logger.info(f"✅ Loaded {inserted_count} view metadata documents")
+            return inserted_count
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to load view metadata: {e}")
+            return 0
+    
+    async def load_reports(self) -> int:
+        """Load report metadata into MongoDB."""
+        try:
+            reports_dir = self.meta_docs_path / "reports"
+            if not reports_dir.exists():
+                logger.warning(f"Reports directory not found: {reports_dir}")
+                return 0
+            
+            # Clear existing reports
+            self.mongodb_service.documents_collection.delete_many({"document_type": "report"})
+            
+            inserted_count = 0
+            report_files = list(reports_dir.glob("*.json"))
+            
+            for report_file in report_files:
+                try:
+                    with open(report_file, 'r') as f:
+                        report_data = json.load(f)
+                    
+                    report_doc = {
+                        "document_type": "report",
+                        "report_name": report_data["report_name"],
+                        "description": report_data.get("description", ""),
+                        "business_domains": report_data.get("business_domains", []),
+                        "sql_examples": report_data.get("sql_examples", []),
+                        "metadata": report_data,
+                        "content": self._generate_report_content(report_data),
+                        "created_at": datetime.utcnow(),
+                        "updated_at": datetime.utcnow()
+                    }
+                    
+                    result = self.mongodb_service.documents_collection.insert_one(report_doc)
+                    if result.inserted_id:
+                        inserted_count += 1
+                        
+                except Exception as e:
+                    logger.error(f"❌ Failed to load report {report_file}: {e}")
+            
+            logger.info(f"✅ Loaded {inserted_count} report documents")
+            return inserted_count
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to load reports: {e}")
+            return 0
+    
+    async def load_lookups(self) -> int:
+        """Load lookup metadata into MongoDB."""
+        try:
+            lookups_dir = self.meta_docs_path / "lookups"
+            if not lookups_dir.exists():
+                logger.warning(f"Lookups directory not found: {lookups_dir}")
+                return 0
+            
+            # Clear existing lookups
+            self.mongodb_service.documents_collection.delete_many({"document_type": "lookup"})
+            
+            inserted_count = 0
+            lookup_files = list(lookups_dir.glob("*.json"))
+            
+            for lookup_file in lookup_files:
+                try:
+                    with open(lookup_file, 'r') as f:
+                        lookup_data = json.load(f)
+                    
+                    lookup_doc = {
+                        "document_type": "lookup",
+                        "lookup_name": lookup_data["lookup_name"],
+                        "lookup_id": lookup_data.get("lookup_id"),
+                        "description": lookup_data.get("description", ""),
+                        "values": lookup_data.get("values", []),
+                        "metadata": lookup_data,
+                        "content": self._generate_lookup_content(lookup_data),
+                        "created_at": datetime.utcnow(),
+                        "updated_at": datetime.utcnow()
+                    }
+                    
+                    result = self.mongodb_service.documents_collection.insert_one(lookup_doc)
+                    if result.inserted_id:
+                        inserted_count += 1
+                        
+                except Exception as e:
+                    logger.error(f"❌ Failed to load lookup {lookup_file}: {e}")
+            
+            logger.info(f"✅ Loaded {inserted_count} lookup documents")
+            return inserted_count
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to load lookups: {e}")
+            return 0
+    
+    async def create_embeddings(self) -> int:
+        """Create embeddings for all documents using the vector service."""
         try:
             # Get all documents from MongoDB
-            cursor = self.db.view_metadata.find({})
-            documents = []
-            async for doc in cursor:
-                documents.append(doc)
+            documents = list(self.mongodb_service.get_all_documents())
             
             if not documents:
-                logger.warning("⚠️  No documents found to embed")
+                logger.warning("No documents found in MongoDB for embedding")
                 return 0
             
-            logger.info(f"🔄 Generating embeddings for {len(documents)} documents...")
+            logger.info(f"Creating embeddings for {len(documents)} documents...")
             
             embedded_count = 0
+            
+            # Use the actual vector service to add documents
             for doc in documents:
                 try:
-                    # Import all metadata models
-                    from text_to_sql_rag.models.view_models import ViewMetadata, ReportMetadata, LookupMetadata, LookupValue
+                    document_id = doc.get("view_name") or doc.get("report_name") or doc.get("lookup_name") or str(doc["_id"])
+                    content = doc.get("content", "")
                     
-                    # Generate full text based on document type
-                    document_type = doc.get('_document_type', 'view_metadata')
-                    identifier = (doc.get('view_name') or doc.get('report_name') or 
-                                doc.get('lookup_name') or doc.get('domain_name') or 
-                                doc.get('name', 'unknown'))
-                    logger.info(f"Processing {document_type}: {identifier}")
-                    
-                    if document_type == 'view_metadata':
-                        # Convert columns to proper format
-                        columns = []
-                        for col in doc.get('columns', []):
-                            if isinstance(col, dict):
-                                columns.append({
-                                    'name': col.get('name', ''),
-                                    'type': col.get('type', ''),
-                                    'notNull': col.get('notNull', False),
-                                    'description': col.get('description', '')
-                                })
-                        
-                        metadata_obj = ViewMetadata(
-                            view_name=doc.get('view_name', ''),
-                            view_type=doc.get('view_type', 'CORE'),
-                            schema_name=doc.get('schema', 'default'),
-                            description=doc.get('description', ''),
-                            use_cases=doc.get('business_context', ''),
-                            columns=columns,
-                            sample_sql=doc.get('sample_queries', [{}])[0] if doc.get('sample_queries') else None
-                        )
-                    
-                    elif document_type == 'report_metadata':
-                        # Simplified approach - create text directly
-                        report_name = doc.get('report_name', doc.get('view_name', ''))
-                        view_name = doc.get('view_name', '')
-                        report_desc = doc.get('report_description', doc.get('description', ''))
-                        data_returned = doc.get('data_returned', '')
-                        use_cases = doc.get('use_cases', '')
-                        example_sql = doc.get('example_sql', '')
-                        
-                        # Create full text manually
-                        parts = [
-                            f"Report: {report_name}",
-                            f"Type: STANDARD",
-                        ]
-                        
-                        if view_name:
-                            parts.append(f"View: {view_name}")
-                        if report_desc:
-                            parts.append(f"Description: {report_desc}")
-                        if use_cases:
-                            parts.append(f"Use Cases: {use_cases}")
-                        if data_returned:
-                            parts.append(f"Data Returned: {data_returned}")
-                        if example_sql:
-                            parts.append(f"Example SQL: {example_sql}")
-                        
-                        full_text = "\n".join(parts)
-                        metadata_obj = None  # No metadata object for simplified approach
-                    
-                    elif document_type == 'lookup_metadata':
-                        # Simplified approach - create text directly
-                        lookup_name = doc.get('lookup_name', doc.get('name', ''))
-                        lookup_desc = doc.get('description', '')
-                        use_cases = doc.get('use_cases', '')
-                        values = doc.get('values', [])
-                        
-                        # Create full text manually
-                        parts = [
-                            f"Lookup: {lookup_name}",
-                            f"Type: REFERENCE",
-                        ]
-                        
-                        if lookup_desc:
-                            parts.append(f"Description: {lookup_desc}")
-                        if use_cases:
-                            parts.append(f"Use Cases: {use_cases}")
-                        
-                        # Add values summary
-                        if values:
-                            value_summary = []
-                            for value in values[:10]:  # Limit to first 10 for space
-                                if isinstance(value, dict):
-                                    value_text = f"{value.get('code', '')} ({value.get('name', '')})"
-                                    if value.get('description'):
-                                        value_text += f": {value.get('description')}"
-                                    value_summary.append(value_text)
-                            
-                            parts.append(f"Values: {'; '.join(value_summary)}")
-                            
-                            if len(values) > 10:
-                                parts.append(f"... and {len(values) - 10} more values")
-                        
-                        full_text = "\n".join(parts)
-                        metadata_obj = None  # No metadata object for simplified approach
-                    
-                    elif document_type == 'business_domain':
-                        # Handle business domains
-                        domain_name = doc.get('domain_name', '')
-                        domain_desc = doc.get('description', '')
-                        keywords = doc.get('keywords', [])
-                        core_views = doc.get('core_views', [])
-                        supporting_views = doc.get('supporting_views', [])
-                        
-                        # Create full text manually
-                        parts = [
-                            f"Business Domain: {domain_name}",
-                            f"ID: {doc.get('domain_id', 'N/A')}",
-                        ]
-                        
-                        if domain_desc:
-                            parts.append(f"Description: {domain_desc}")
-                        if keywords:
-                            parts.append(f"Keywords: {', '.join(keywords)}")
-                        if core_views:
-                            parts.append(f"Core Views: {', '.join(core_views)}")
-                        if supporting_views:
-                            parts.append(f"Supporting Views: {', '.join(supporting_views)}")
-                        
-                        full_text = "\n".join(parts)
-                        metadata_obj = None  # No metadata object for simplified approach
-                    
-                    else:
-                        logger.warning(f"Unknown document type: {document_type}")
+                    if not content:
+                        logger.warning(f"No content for document {document_id}")
                         continue
                     
-                    # Generate full text for embedding
-                    if metadata_obj:
-                        full_text = metadata_obj.generate_full_text()
-                    # For simplified approach (reports/lookups), full_text is already created above
-                    
-                    # Generate embedding
-                    embedding = await self.embedding_service.get_embedding(full_text)
-                    
-                    if not embedding:
-                        logger.warning(f"Failed to generate embedding for {identifier}")
-                        continue
-                    
-                    # Index in OpenSearch - unified structure for all document types
-                    opensearch_doc = {
-                        "document_type": document_type,
-                        "identifier": identifier,
-                        "full_text": full_text,
-                        "embedding": embedding,
-                        "_uploaded_at": doc.get('_uploaded_at'),
-                        "_source_file": doc.get('_source_file')
-                    }
-                    
-                    # Add type-specific fields
-                    if document_type == 'view_metadata' and metadata_obj:
-                        opensearch_doc.update({
-                            "view_name": metadata_obj.view_name,
-                            "schema": metadata_obj.schema_name,
-                            "description": metadata_obj.description,
-                            "use_cases": metadata_obj.use_cases
-                        })
-                    elif document_type == 'report_metadata':
-                        opensearch_doc.update({
-                            "report_name": doc.get('report_name', doc.get('view_name', '')),
-                            "view_name": doc.get('view_name', ''),
-                            "description": doc.get('report_description', doc.get('description', '')),
-                            "use_cases": doc.get('use_cases', '')
-                        })
-                    elif document_type == 'lookup_metadata':
-                        opensearch_doc.update({
-                            "lookup_name": doc.get('lookup_name', doc.get('name', '')),
-                            "description": doc.get('description', ''),
-                            "use_cases": doc.get('use_cases', ''),
-                            "values_count": len(doc.get('values', []))
-                        })
-                    elif document_type == 'business_domain':
-                        opensearch_doc.update({
-                            "domain_name": doc.get('domain_name', ''),
-                            "domain_id": doc.get('domain_id'),
-                            "description": doc.get('description', ''),
-                            "keywords": doc.get('keywords', []),
-                            "core_views": doc.get('core_views', []),
-                            "supporting_views": doc.get('supporting_views', [])
-                        })
-                    
-                    await self.opensearch_client.index(
-                        index="view_metadata",
-                        id=str(doc['_id']),
-                        body=opensearch_doc
+                    # Use the vector service to add the document
+                    success = self.vector_service.add_document(
+                        document_id=document_id,
+                        content=content,
+                        metadata=doc.get("metadata", {}),
+                        document_type=doc.get("document_type", "unknown")
                     )
                     
-                    embedded_count += 1
-                    logger.info(f"Embedded and indexed: {identifier} ({len(embedding)}-dim)")
-                    
+                    if success:
+                        embedded_count += 1
+                        if embedded_count % 10 == 0:
+                            logger.info(f"Embedded {embedded_count}/{len(documents)} documents...")
+                    else:
+                        logger.error(f"Failed to embed document: {document_id}")
+                        
                 except Exception as e:
-                    logger.error(f"Error embedding document {identifier}: {e}")
+                    logger.error(f"Error embedding document: {e}")
             
-            # Refresh index
-            await self.opensearch_client.indices.refresh("view_metadata")
-            
-            logger.info(f"✅ Generated and indexed {embedded_count} embeddings")
+            logger.info(f"✅ Created embeddings for {embedded_count} documents")
             return embedded_count
             
         except Exception as e:
-            logger.error(f"❌ Failed to generate embeddings: {e}")
+            logger.error(f"❌ Failed to create embeddings: {e}")
             return 0
     
-    async def verify_data_load(self):
-        """Verify that data was loaded correctly."""
-        try:
-            logger.info("🔍 Verifying data load...")
-            
-            # Check MongoDB
-            mongo_count = await self.db.view_metadata.count_documents({})
-            logger.info(f"📊 MongoDB documents: {mongo_count}")
-            
-            # Check OpenSearch
-            try:
-                opensearch_count = await self.opensearch_client.count(index="view_metadata")
-                logger.info(f"🔍 OpenSearch documents: {opensearch_count['count']}")
-                
-                # Test a sample search using generic method
-                if opensearch_count['count'] > 0:
-                    test_embedding = await self.embedding_service.get_embedding("user metrics")
-                    search_result = await self.vector_service.search_similar_documents(test_embedding, k=1)
-                    
-                    if search_result:
-                        doc, score = search_result[0]
-                        identifier = (doc.get('view_name') or doc.get('report_name') or 
-                                    doc.get('lookup_name') or doc.get('domain_name') or 'Unknown')
-                        logger.info(f"✅ Test search successful: {identifier} (similarity: {score:.3f})")
-                    else:
-                        logger.warning("⚠️  Test search returned no results")
-                        
-            except Exception as e:
-                logger.error(f"❌ OpenSearch verification failed: {e}")
-            
-            return mongo_count > 0
-            
-        except Exception as e:
-            logger.error(f"❌ Failed to verify data load: {e}")
-            return False
+    def _generate_view_content(self, view_data: Dict[str, Any]) -> str:
+        """Generate searchable content from view metadata."""
+        content_parts = []
+        
+        content_parts.append(f"View: {view_data.get('view_name', '')}")
+        content_parts.append(f"Description: {view_data.get('description', '')}")
+        
+        if view_data.get('business_domains'):
+            content_parts.append(f"Business Domains: {', '.join(map(str, view_data['business_domains']))}")
+        
+        if view_data.get('columns'):
+            columns_text = []
+            for col in view_data['columns']:
+                col_desc = f"{col.get('name', '')} ({col.get('data_type', '')})"
+                if col.get('description'):
+                    col_desc += f" - {col['description']}"
+                columns_text.append(col_desc)
+            content_parts.append(f"Columns: {'; '.join(columns_text)}")
+        
+        if view_data.get('sample_queries'):
+            content_parts.append("Sample Queries:")
+            for query in view_data['sample_queries']:
+                content_parts.append(f"- {query.get('description', '')}: {query.get('sql', '')}")
+        
+        return '\n'.join(content_parts)
+    
+    def _generate_report_content(self, report_data: Dict[str, Any]) -> str:
+        """Generate searchable content from report metadata."""
+        content_parts = []
+        
+        content_parts.append(f"Report: {report_data.get('report_name', '')}")
+        content_parts.append(f"Description: {report_data.get('description', '')}")
+        
+        if report_data.get('business_domains'):
+            content_parts.append(f"Business Domains: {', '.join(map(str, report_data['business_domains']))}")
+        
+        if report_data.get('sql_examples'):
+            content_parts.append("SQL Examples:")
+            for example in report_data['sql_examples']:
+                content_parts.append(f"- {example.get('description', '')}: {example.get('sql', '')}")
+        
+        return '\n'.join(content_parts)
+    
+    def _generate_lookup_content(self, lookup_data: Dict[str, Any]) -> str:
+        """Generate searchable content from lookup metadata."""
+        content_parts = []
+        
+        content_parts.append(f"Lookup: {lookup_data.get('lookup_name', '')}")
+        content_parts.append(f"Description: {lookup_data.get('description', '')}")
+        
+        if lookup_data.get('lookup_id'):
+            content_parts.append(f"Lookup ID: {lookup_data['lookup_id']}")
+        
+        if lookup_data.get('values'):
+            values_text = []
+            for value in lookup_data['values']:
+                if isinstance(value, dict):
+                    value_desc = f"{value.get('key', '')}: {value.get('value', '')}"
+                    if value.get('description'):
+                        value_desc += f" - {value['description']}"
+                    values_text.append(value_desc)
+                else:
+                    values_text.append(str(value))
+            content_parts.append(f"Values: {'; '.join(values_text)}")
+        
+        return '\n'.join(content_parts)
     
     async def cleanup(self):
-        """Clean up connections."""
+        """Cleanup connections."""
         try:
-            if self.mongo_client:
-                self.mongo_client.close()
-            if self.opensearch_client:
-                await self.opensearch_client.close()
-            logger.info("🔚 Cleaned up connections")
-        except:
-            pass
+            if self.mongodb_service:
+                self.mongodb_service.close()
+            logger.info("✅ Cleanup completed")
+        except Exception as e:
+            logger.error(f"❌ Cleanup error: {e}")
+
 
 async def main():
-    """Main data loading process."""
-    print("SAMPLE DATA LOADER")
-    print("="*50)
-    
+    """Main function to load all sample data."""
     loader = DataLoader()
     
     try:
-        # Initialize
+        # Initialize services
+        logger.info("🔄 Initializing services...")
         if not await loader.initialize():
-            print("Failed to initialize loader")
+            logger.error("❌ Failed to initialize services")
             return False
         
-        # Clear existing data (optional - comment out to append)
-        print("\nClearing existing data...")
-        await loader.clear_existing_data()
+        # Load data in sequence
+        logger.info("🔄 Loading business domains...")
+        domains_count = await loader.load_business_domains()
         
-        # Ensure OpenSearch index exists
-        print("\nSetting up OpenSearch index...")
-        if not await loader.ensure_opensearch_index():
-            print("Failed to setup OpenSearch index - you may need to create it manually")
-            print("Try running: curl -X PUT 'localhost:9200/view_metadata' with proper mapping")
-            print("Continuing anyway - index may already exist...")
-            # Don't fail here, index might already exist
+        logger.info("🔄 Loading view metadata...")
+        views_count = await loader.load_view_metadata()
         
-        # Load all metadata types (hierarchical order: domains first)
-        print("\nLoading metadata files...")
-        domain_count = await loader.load_business_domains()
-        view_count = await loader.load_view_metadata()
-        report_count = await loader.load_report_metadata()
-        lookup_count = await loader.load_lookup_metadata()
+        logger.info("🔄 Loading reports...")
+        reports_count = await loader.load_reports()
         
-        total_loaded = domain_count + view_count + report_count + lookup_count
+        logger.info("🔄 Loading lookups...")
+        lookups_count = await loader.load_lookups()
         
-        if total_loaded == 0:
-            print("No data loaded")
+        total_docs = domains_count + views_count + reports_count + lookups_count
+        
+        if total_docs > 0:
+            logger.info("🔄 Creating embeddings...")
+            embeddings_count = await loader.create_embeddings()
+            
+            logger.info("=" * 60)
+            logger.info("🎉 DATA LOADING COMPLETED SUCCESSFULLY!")
+            logger.info("=" * 60)
+            logger.info(f"📊 SUMMARY:")
+            logger.info(f"   • Business Domains: {domains_count}")
+            logger.info(f"   • Views: {views_count}")
+            logger.info(f"   • Reports: {reports_count}")
+            logger.info(f"   • Lookups: {lookups_count}")
+            logger.info(f"   • Total Documents: {total_docs}")
+            logger.info(f"   • Embeddings Created: {embeddings_count}")
+            logger.info("=" * 60)
+        else:
+            logger.error("❌ No documents were loaded!")
             return False
-        
-        print(f"Total loaded: {total_loaded} documents (Domains: {domain_count}, Views: {view_count}, Reports: {report_count}, Lookups: {lookup_count})")
-        
-        # Generate embeddings and index
-        print("\nGenerating embeddings and indexing...")
-        embedded_count = await loader.generate_embeddings_and_index()
-        
-        if embedded_count == 0:
-            print("No embeddings generated")
-            return False
-        
-        # Verify data load
-        print("\nVerifying data load...")
-        if not await loader.verify_data_load():
-            print("Data verification failed")
-            return False
-        
-        print("\nDATA LOADING COMPLETED SUCCESSFULLY!")
-        print("="*50)
-        print(f"Documents loaded: {total_loaded}")
-        print(f"Embeddings created: {embedded_count}")
-        print("\nYou can now:")
-        print("• Run 'poetry run python chat_interface.py' for interactive chat")
-        print("• Run 'poetry run python tests/test_rag_pipeline.py' to test the system")
-        print("• Visit http://localhost:5601 to view data in OpenSearch Dashboard")
         
         return True
         
+    except Exception as e:
+        logger.error(f"❌ Data loading failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+    
     finally:
         await loader.cleanup()
+
 
 if __name__ == "__main__":
     success = asyncio.run(main())
