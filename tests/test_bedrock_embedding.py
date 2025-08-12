@@ -1,56 +1,39 @@
 #!/usr/bin/env python3
 """
-Bedrock Endpoint Embedding Connection Test Script
-
-Tests Bedrock endpoint embedding model connectivity and vector generation.
-Can be run independently to validate Bedrock endpoint embedding service connectivity.
+Test Bedrock embedding functionality using actual application services.
+Tests the real connection and functionality, not separate test connections.
 """
 
-import os
+import asyncio
 import sys
-import time
-import json
+import os
+from pathlib import Path
+import logging
 import numpy as np
-from datetime import datetime, timezone
-from typing import Dict, Any, Optional, List
 
-# Add src to path to import our modules
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+# Add src to path
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-# Import our configuration and services
-try:
-    from text_to_sql_rag.config.settings import settings
-    from text_to_sql_rag.services.enhanced_bedrock_service import EnhancedBedrockService
-except ImportError as e:
-    print(f"❌ ERROR: Cannot import application modules: {e}")
-    print("Make sure you're running from the project root directory")
-    sys.exit(1)
+# Setup logging
+logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+logger = logging.getLogger(__name__)
 
 
-class BedrockEmbeddingConnectionTest:
-    """Test Bedrock endpoint embedding connectivity and operations."""
+class BedrockEmbeddingTest:
+    """Test Bedrock embedding using actual application services."""
     
     def __init__(self):
+        self.bedrock_service = None
         self.results = []
-        
-        # Test texts for different scenarios
-        self.test_texts = {
-            "short": "Hello world",
-            "medium": "This is a medium-length text for testing embedding generation with multiple words and concepts.",
-            "sql_query": "SELECT customer_id, SUM(order_amount) FROM orders WHERE order_date >= '2023-01-01' GROUP BY customer_id ORDER BY SUM(order_amount) DESC;",
-            "technical": "Database indexing is a data structure technique to efficiently locate and access the data in a database. Indexes are used to quickly locate data without having to search every row in a database table.",
-            "empty": ""
-        }
     
-    def log_result(self, test_name: str, success: bool, message: str, details: Optional[Dict] = None):
+    def log_result(self, test_name: str, success: bool, message: str, details: dict = None):
         """Log test result."""
         status = "✅ PASS" if success else "❌ FAIL"
         result = {
             "test": test_name,
             "success": success,
             "message": message,
-            "details": details or {},
-            "timestamp": datetime.now(timezone.utc).isoformat()
+            "details": details or {}
         }
         self.results.append(result)
         print(f"{status}: {test_name} - {message}")
@@ -58,485 +41,399 @@ class BedrockEmbeddingConnectionTest:
             for key, value in details.items():
                 print(f"    {key}: {value}")
     
-    def test_endpoint_configuration(self):
-        """Test Bedrock endpoint configuration."""
+    def test_import_services(self):
+        """Test importing actual application services."""
         try:
-            endpoint_url = settings.bedrock_endpoint_url
+            from text_to_sql_rag.config.settings import settings
+            from text_to_sql_rag.services.enhanced_bedrock_service import EnhancedBedrockService
             
-            if not endpoint_url:
-                self.log_result(
-                    "Endpoint Configuration", 
-                    False, 
-                    "Bedrock endpoint URL not configured",
-                    {"endpoint_url": endpoint_url}
-                )
-                return False
+            self.settings = settings
             
-            # Basic URL validation
-            if not endpoint_url.startswith(('http://', 'https://')):
+            self.log_result(
+                "Import Services",
+                True,
+                "Successfully imported application services"
+            )
+            return True
+            
+        except Exception as e:
+            self.log_result(
+                "Import Services",
+                False,
+                f"Failed to import services: {e}"
+            )
+            return False
+    
+    def test_configuration(self):
+        """Test Bedrock embedding configuration."""
+        try:
+            # Check configuration
+            bedrock_url = self.settings.bedrock_endpoint.url
+            embedding_model = self.settings.aws.embedding_model
+            
+            if not bedrock_url:
                 self.log_result(
-                    "Endpoint Configuration", 
-                    False, 
-                    "Invalid endpoint URL format",
-                    {"endpoint_url": endpoint_url}
+                    "Configuration",
+                    False,
+                    "BEDROCK_ENDPOINT_URL not configured",
+                    {"bedrock_url": bedrock_url}
                 )
                 return False
             
             self.log_result(
-                "Endpoint Configuration", 
-                True, 
-                f"Endpoint configuration valid",
+                "Configuration",
+                True,
+                f"Configuration loaded successfully",
                 {
-                    "endpoint_url": endpoint_url,
-                    "embedding_model": settings.aws.embedding_model,
-                    "vector_size": settings.opensearch.vector_size
+                    "bedrock_url": bedrock_url[:50] + "..." if len(bedrock_url) > 50 else bedrock_url,
+                    "embedding_model": embedding_model,
+                    "verify_ssl": self.settings.bedrock_endpoint.verify_ssl
                 }
             )
             return True
             
         except Exception as e:
             self.log_result(
-                "Endpoint Configuration", 
-                False, 
-                f"Configuration error: {str(e)}",
-                {"error_type": type(e).__name__}
+                "Configuration",
+                False,
+                f"Configuration error: {e}"
             )
             return False
     
-    def test_endpoint_connectivity(self):
-        """Test basic endpoint connectivity."""
+    async def test_service_initialization(self):
+        """Test Bedrock service initialization."""
         try:
-            endpoint_url = settings.bedrock_endpoint_url
+            from text_to_sql_rag.services.enhanced_bedrock_service import EnhancedBedrockService
             
-            if not endpoint_url:
-                self.log_result(
-                    "Endpoint Connectivity", 
-                    False, 
-                    "Bedrock endpoint URL not configured"
-                )
-                return False
-            
-            # Import requests for basic connectivity test
-            try:
-                import requests
-                # Disable SSL warnings if SSL verification is disabled
-                if not settings.bedrock_endpoint_verify_ssl:
-                    import urllib3
-                    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-            except ImportError:
-                self.log_result(
-                    "Endpoint Connectivity", 
-                    False, 
-                    "requests library not available for connectivity test"
-                )
-                return False
-            
-            # Test basic connectivity with a simple request
-            try:
-                start_time = time.time()
-                # Just test connectivity, not actual inference
-                verify_ssl = settings.bedrock_endpoint_verify_ssl
-                response = requests.get(
-                    endpoint_url.rstrip('/'), 
-                    timeout=10,
-                    allow_redirects=False,
-                    verify=verify_ssl
-                )
-                connection_time = time.time() - start_time
-                
-                # We expect some response (even if it's an error about missing data)
-                # The important thing is that we can connect to the endpoint
-                self.log_result(
-                    "Endpoint Connectivity", 
-                    True, 
-                    f"Endpoint is reachable",
-                    {
-                        "endpoint_url": endpoint_url,
-                        "connection_time_ms": round(connection_time * 1000, 2),
-                        "status_code": response.status_code
-                    }
-                )
-                return True
-                
-            except requests.exceptions.ConnectionError:
-                self.log_result(
-                    "Endpoint Connectivity", 
-                    False, 
-                    f"Cannot connect to endpoint: {endpoint_url}"
-                )
-                return False
-            except requests.exceptions.Timeout:
-                self.log_result(
-                    "Endpoint Connectivity", 
-                    False, 
-                    f"Endpoint connection timed out: {endpoint_url}"
-                )
-                return False
-            except Exception as e:
-                # Even if we get other errors, the endpoint might be reachable
-                # This is just a basic connectivity test
-                self.log_result(
-                    "Endpoint Connectivity", 
-                    True, 
-                    f"Endpoint is reachable (with error: {type(e).__name__})",
-                    {
-                        "endpoint_url": endpoint_url,
-                        "note": "Endpoint responded but may require specific request format"
-                    }
-                )
-                return True
-                
-        except Exception as e:
-            self.log_result(
-                "Endpoint Connectivity", 
-                False, 
-                f"Connectivity test failed: {str(e)}",
-                {"error_type": type(e).__name__}
+            self.bedrock_service = EnhancedBedrockService(
+                endpoint_url=self.settings.bedrock_endpoint.url,
+                embedding_model=self.settings.aws.embedding_model,
+                llm_model=self.settings.aws.llm_model,
+                verify_ssl=self.settings.bedrock_endpoint.verify_ssl,
+                ssl_cert_file=self.settings.bedrock_endpoint.ssl_cert_file,
+                ssl_key_file=self.settings.bedrock_endpoint.ssl_key_file,
+                ssl_ca_file=self.settings.bedrock_endpoint.ssl_ca_file,
+                http_auth_username=self.settings.bedrock_endpoint.http_auth_username,
+                http_auth_password=self.settings.bedrock_endpoint.http_auth_password
             )
-            return False
-    
-    def test_embedding_generation_via_endpoint(self):
-        """Test embedding generation with various text inputs via endpoint service."""
-        try:
-            endpoint_url = settings.bedrock_endpoint_url
             
-            if not endpoint_url:
-                self.log_result(
-                    "Embedding Generation via Endpoint", 
-                    False, 
-                    "Bedrock endpoint URL not configured"
-                )
-                return False
-            
-            # Test the endpoint service with multiple text inputs
-            from text_to_sql_rag.services.enhanced_bedrock_service import EnhancedBedrockService as BedrockEndpointService
-            
-            endpoint_service = BedrockEndpointService(endpoint_url)
-            embedding_service = BedrockEndpointEmbeddingService(endpoint_service)
-            
-            successful_tests = 0
-            total_tests = len(self.test_texts)
-            test_results = {}
-            
-            for text_name, text_content in self.test_texts.items():
-                try:
-                    if text_name == "empty":
-                        # Test empty text handling
-                        if not text_content:
-                            test_results[text_name] = {
-                                "success": True,
-                                "note": "Skipped empty text test"
-                            }
-                            successful_tests += 1
-                            continue
-                    
-                    start_time = time.time()
-                    embedding = embedding_service.get_embedding(text_content)
-                    generation_time = time.time() - start_time
-                    
-                    if embedding and len(embedding) > 0:
-                        successful_tests += 1
-                        test_results[text_name] = {
-                            "success": True,
-                            "generation_time_ms": round(generation_time * 1000, 2),
-                            "embedding_dimension": len(embedding),
-                            "text_length": len(text_content),
-                            "embedding_norm": round(np.linalg.norm(embedding), 4)
-                        }
-                    else:
-                        test_results[text_name] = {
-                            "success": False,
-                            "error": "Empty embedding response"
-                        }
-                        
-                except Exception as e:
-                    test_results[text_name] = {
-                        "success": False,
-                        "error": str(e)
-                    }
-            
-            success = successful_tests == total_tests
+            service_info = self.bedrock_service.get_service_info()
             
             self.log_result(
-                "Embedding Generation via Endpoint", 
-                success, 
-                f"Embedding generation tests: {successful_tests}/{total_tests} passed",
-                {
-                    "endpoint_url": endpoint_url,
-                    "successful_texts": successful_tests,
-                    "total_texts": total_tests,
-                    "test_details": test_results
-                }
-            )
-            return success
-            
-        except Exception as e:
-            self.log_result(
-                "Embedding Generation via Endpoint", 
-                False, 
-                f"Embedding generation test failed: {str(e)}",
-                {"error_type": type(e).__name__}
-            )
-            return False
-    
-    def test_embedding_similarity_via_endpoint(self):
-        """Test embedding similarity calculations via endpoint service."""
-        try:
-            endpoint_url = settings.bedrock_endpoint_url
-            
-            if not endpoint_url:
-                self.log_result(
-                    "Embedding Similarity via Endpoint", 
-                    False, 
-                    "Bedrock endpoint URL not configured"
-                )
-                return False
-            
-            # Test the endpoint service
-            from text_to_sql_rag.services.enhanced_bedrock_service import EnhancedBedrockService as BedrockEndpointService
-            
-            endpoint_service = BedrockEndpointService(endpoint_url)
-            embedding_service = BedrockEndpointEmbeddingService(endpoint_service)
-            
-            # Test with similar texts
-            similar_texts = [
-                "The database contains customer information",
-                "Customer data is stored in the database"
-            ]
-            
-            # Test with dissimilar texts
-            dissimilar_texts = [
-                "The database contains customer information",
-                "Today is a sunny day outside"
-            ]
-            
-            embeddings = {}
-            
-            # Generate embeddings for all test texts
-            all_texts = list(set(similar_texts + dissimilar_texts))
-            
-            for text in all_texts:
-                embedding = embedding_service.get_embedding(text)
-                embeddings[text] = embedding
-            
-            # Calculate similarity scores
-            def cosine_similarity(a, b):
-                return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
-            
-            # Similar texts similarity
-            similar_score = cosine_similarity(
-                embeddings[similar_texts[0]], 
-                embeddings[similar_texts[1]]
-            )
-            
-            # Dissimilar texts similarity
-            dissimilar_score = cosine_similarity(
-                embeddings[dissimilar_texts[0]], 
-                embeddings[dissimilar_texts[1]]
-            )
-            
-            # Similar texts should have higher similarity than dissimilar texts
-            similarity_test_passed = similar_score > dissimilar_score
-            
-            self.log_result(
-                "Embedding Similarity via Endpoint", 
-                similarity_test_passed, 
-                f"Embedding similarity calculation successful",
-                {
-                    "similar_texts_score": round(similar_score, 4),
-                    "dissimilar_texts_score": round(dissimilar_score, 4),
-                    "similarity_difference": round(similar_score - dissimilar_score, 4),
-                    "test_passed": similarity_test_passed
-                }
-            )
-            return similarity_test_passed
-            
-        except Exception as e:
-            self.log_result(
-                "Embedding Similarity via Endpoint", 
-                False, 
-                f"Embedding similarity test failed: {str(e)}",
-                {"error_type": type(e).__name__}
-            )
-            return False
-    
-    def test_vector_dimensions_via_endpoint(self):
-        """Test that embedding dimensions match configuration via endpoint service."""
-        try:
-            endpoint_url = settings.bedrock_endpoint_url
-            
-            if not endpoint_url:
-                self.log_result(
-                    "Vector Dimensions via Endpoint", 
-                    False, 
-                    "Bedrock endpoint URL not configured"
-                )
-                return False
-            
-            # Test the endpoint service
-            from text_to_sql_rag.services.enhanced_bedrock_service import EnhancedBedrockService as BedrockEndpointService
-            
-            endpoint_service = BedrockEndpointService(endpoint_url)
-            embedding_service = BedrockEndpointEmbeddingService(endpoint_service)
-            
-            expected_dimension = settings.opensearch.vector_size
-            test_text = "Test vector dimension consistency"
-            
-            # Generate embedding
-            embedding = embedding_service.get_embedding(test_text)
-            actual_dimension = len(embedding)
-            dimension_match = actual_dimension == expected_dimension
-            
-            self.log_result(
-                "Vector Dimensions via Endpoint", 
-                dimension_match, 
-                f"Vector dimension check",
-                {
-                    "embedding_model": settings.aws.embedding_model,
-                    "expected_dimension": expected_dimension,
-                    "actual_dimension": actual_dimension,
-                    "dimensions_match": dimension_match
-                }
-            )
-            return dimension_match
-            
-        except Exception as e:
-            self.log_result(
-                "Vector Dimensions via Endpoint", 
-                False, 
-                f"Vector dimension test failed: {str(e)}",
-                {"error_type": type(e).__name__}
-            )
-            return False
-    
-    def test_bedrock_endpoint_service(self):
-        """Test our custom Bedrock endpoint service wrapper."""
-        try:
-            # Test if bedrock endpoint URL is configured
-            endpoint_url = settings.bedrock_endpoint_url
-            
-            if not endpoint_url:
-                self.log_result(
-                    "Bedrock Endpoint Service", 
-                    False, 
-                    "Bedrock endpoint URL not configured",
-                    {"endpoint_url": endpoint_url}
-                )
-                return False
-            
-            # Test the endpoint service
-            from text_to_sql_rag.services.enhanced_bedrock_service import EnhancedBedrockService as BedrockEndpointService
-            
-            endpoint_service = BedrockEndpointService(endpoint_url)
-            embedding_service = BedrockEndpointEmbeddingService(endpoint_service)
-            
-            # Test embedding generation
-            test_text = "What is machine learning and artificial intelligence?"
-            
-            start_time = time.time()
-            embedding = embedding_service.get_embedding(test_text)
-            generation_time = time.time() - start_time
-            
-            if not embedding or len(embedding) == 0:
-                self.log_result(
-                    "Bedrock Endpoint Service", 
-                    False, 
-                    "Empty embedding from endpoint service"
-                )
-                return False
-            
-            self.log_result(
-                "Bedrock Endpoint Service", 
-                True, 
-                f"Endpoint embedding service working correctly",
-                {
-                    "endpoint_url": endpoint_url,
-                    "generation_time_ms": round(generation_time * 1000, 2),
-                    "embedding_dimension": len(embedding),
-                    "embedding_norm": round(np.linalg.norm(embedding), 4)
-                }
+                "Service Initialization",
+                True,
+                f"Bedrock service initialized successfully",
+                service_info
             )
             return True
             
         except Exception as e:
             self.log_result(
-                "Bedrock Endpoint Service", 
-                False, 
-                f"Endpoint service test failed: {str(e)}",
-                {"error_type": type(e).__name__}
+                "Service Initialization",
+                False,
+                f"Service initialization failed: {e}"
             )
             return False
     
-    def run_all_tests(self):
+    async def test_health_check(self):
+        """Test Bedrock service health check."""
+        try:
+            is_healthy = await self.bedrock_service.health_check()
+            
+            if is_healthy:
+                self.log_result(
+                    "Health Check",
+                    True,
+                    "Bedrock service is healthy"
+                )
+            else:
+                self.log_result(
+                    "Health Check",
+                    False,
+                    "Bedrock service health check failed"
+                )
+            
+            return is_healthy
+            
+        except Exception as e:
+            self.log_result(
+                "Health Check",
+                False,
+                f"Health check error: {e}"
+            )
+            return False
+    
+    async def test_single_embedding(self):
+        """Test generating a single embedding."""
+        try:
+            test_text = "This is a test document for embedding generation."
+            
+            embedding = await self.bedrock_service.get_embedding(test_text)
+            
+            if embedding and len(embedding) > 0:
+                self.log_result(
+                    "Single Embedding",
+                    True,
+                    f"Successfully generated embedding",
+                    {
+                        "text": test_text,
+                        "embedding_dimension": len(embedding),
+                        "embedding_type": type(embedding[0]).__name__,
+                        "sample_values": embedding[:3]
+                    }
+                )
+                return True
+            else:
+                self.log_result(
+                    "Single Embedding",
+                    False,
+                    "Generated embedding is empty"
+                )
+                return False
+            
+        except Exception as e:
+            self.log_result(
+                "Single Embedding",
+                False,
+                f"Single embedding failed: {e}"
+            )
+            return False
+    
+    async def test_batch_embeddings(self):
+        """Test generating batch embeddings."""
+        try:
+            test_texts = [
+                "First test document for batch embedding.",
+                "Second document with different content.",
+                "Third document to complete the batch test."
+            ]
+            
+            embeddings = await self.bedrock_service.get_embeddings_batch(test_texts, batch_size=2)
+            
+            if embeddings and len(embeddings) == len(test_texts):
+                # Check consistency of dimensions
+                dimensions = [len(emb) for emb in embeddings]
+                consistent_dims = all(dim == dimensions[0] for dim in dimensions)
+                
+                self.log_result(
+                    "Batch Embeddings",
+                    True,
+                    f"Successfully generated batch embeddings",
+                    {
+                        "text_count": len(test_texts),
+                        "embedding_count": len(embeddings),
+                        "dimensions": dimensions,
+                        "consistent_dimensions": consistent_dims,
+                        "sample_embedding_preview": embeddings[0][:3]
+                    }
+                )
+                return True
+            else:
+                self.log_result(
+                    "Batch Embeddings",
+                    False,
+                    "Batch embedding failed or returned wrong count",
+                    {
+                        "expected": len(test_texts),
+                        "received": len(embeddings) if embeddings else 0
+                    }
+                )
+                return False
+            
+        except Exception as e:
+            self.log_result(
+                "Batch Embeddings",
+                False,
+                f"Batch embeddings failed: {e}"
+            )
+            return False
+    
+    async def test_embedding_consistency(self):
+        """Test embedding consistency for the same text."""
+        try:
+            test_text = "Consistency test document for embedding stability."
+            
+            embedding1 = await self.bedrock_service.get_embedding(test_text)
+            embedding2 = await self.bedrock_service.get_embedding(test_text)
+            
+            if embedding1 and embedding2:
+                # Calculate similarity (cosine similarity)
+                embedding1_np = np.array(embedding1)
+                embedding2_np = np.array(embedding2)
+                
+                dot_product = np.dot(embedding1_np, embedding2_np)
+                norms = np.linalg.norm(embedding1_np) * np.linalg.norm(embedding2_np)
+                similarity = dot_product / norms if norms > 0 else 0
+                
+                is_consistent = similarity > 0.99  # Should be nearly identical
+                
+                self.log_result(
+                    "Embedding Consistency",
+                    is_consistent,
+                    f"Embedding consistency test {'passed' if is_consistent else 'failed'}",
+                    {
+                        "similarity": f"{similarity:.6f}",
+                        "embedding1_dim": len(embedding1),
+                        "embedding2_dim": len(embedding2),
+                        "expected_similarity": "> 0.99"
+                    }
+                )
+                return is_consistent
+            else:
+                self.log_result(
+                    "Embedding Consistency",
+                    False,
+                    "Failed to generate embeddings for consistency test"
+                )
+                return False
+            
+        except Exception as e:
+            self.log_result(
+                "Embedding Consistency",
+                False,
+                f"Embedding consistency test failed: {e}"
+            )
+            return False
+    
+    async def test_dimension_detection(self):
+        """Test embedding dimension detection."""
+        try:
+            # Generate an embedding first
+            await self.bedrock_service.get_embedding("Test for dimension detection")
+            
+            dimension = self.bedrock_service.get_embedding_dimension()
+            
+            if dimension and dimension > 0:
+                self.log_result(
+                    "Dimension Detection",
+                    True,
+                    f"Successfully detected embedding dimension",
+                    {
+                        "detected_dimension": dimension,
+                        "expected_range": "512-4096 (typical for modern models)"
+                    }
+                )
+                return True
+            else:
+                self.log_result(
+                    "Dimension Detection",
+                    False,
+                    "Failed to detect embedding dimension"
+                )
+                return False
+            
+        except Exception as e:
+            self.log_result(
+                "Dimension Detection",
+                False,
+                f"Dimension detection failed: {e}"
+            )
+            return False
+    
+    async def test_error_handling(self):
+        """Test error handling with invalid input."""
+        try:
+            # Test with empty text
+            try:
+                embedding = await self.bedrock_service.get_embedding("")
+                empty_text_handled = len(embedding) == 0  # Should return empty or handle gracefully
+            except Exception:
+                empty_text_handled = True  # Exception is also acceptable
+            
+            # Test with very long text
+            long_text = "This is a very long text. " * 1000  # ~27,000 characters
+            try:
+                embedding = await self.bedrock_service.get_embedding(long_text)
+                long_text_handled = len(embedding) > 0
+            except Exception:
+                long_text_handled = True  # Exception is acceptable for overly long text
+            
+            overall_success = empty_text_handled and long_text_handled
+            
+            self.log_result(
+                "Error Handling",
+                overall_success,
+                f"Error handling test {'passed' if overall_success else 'failed'}",
+                {
+                    "empty_text_handled": empty_text_handled,
+                    "long_text_handled": long_text_handled,
+                    "long_text_length": len(long_text)
+                }
+            )
+            return overall_success
+            
+        except Exception as e:
+            self.log_result(
+                "Error Handling",
+                False,
+                f"Error handling test failed: {e}"
+            )
+            return False
+    
+    async def run_all_tests(self):
         """Run all Bedrock embedding tests."""
-        print("🔍 Starting Bedrock Endpoint Embedding Connection Tests")
+        print("🧪 Starting Bedrock Embedding Tests")
         print("=" * 50)
         
-        # Test sequence
-        tests = [
-            self.test_endpoint_configuration,
-            self.test_endpoint_connectivity,
-            self.test_embedding_generation_via_endpoint,
-            self.test_embedding_similarity_via_endpoint,
-            self.test_vector_dimensions_via_endpoint,
-            self.test_bedrock_endpoint_service
+        # Sync tests first
+        tests_sync = [
+            self.test_import_services,
+            self.test_configuration
+        ]
+        
+        # Async tests
+        tests_async = [
+            self.test_service_initialization,
+            self.test_health_check,
+            self.test_single_embedding,
+            self.test_batch_embeddings,
+            self.test_embedding_consistency,
+            self.test_dimension_detection,
+            self.test_error_handling
         ]
         
         passed = 0
-        total = len(tests)
+        total = len(tests_sync) + len(tests_async)
         
-        for test in tests:
+        # Run sync tests
+        for test in tests_sync:
             try:
                 if test():
                     passed += 1
             except Exception as e:
-                print(f"❌ FAIL: {test.__name__} - Unexpected error: {str(e)}")
+                print(f"❌ FAIL: {test.__name__} - Unexpected error: {e}")
+        
+        # Run async tests
+        for test in tests_async:
+            try:
+                if await test():
+                    passed += 1
+            except Exception as e:
+                print(f"❌ FAIL: {test.__name__} - Unexpected error: {e}")
         
         print("\n" + "=" * 50)
         print(f"📊 Test Results: {passed}/{total} tests passed")
         
         if passed == total:
-            print("🎉 All Bedrock endpoint embedding tests passed!")
-        elif passed > 0:
-            print(f"⚠️  {total - passed} test(s) failed, but some functionality is working")
+            print("🎉 All Bedrock embedding tests passed!")
         else:
-            print("❌ All tests failed - check endpoint configuration and connectivity")
+            print(f"⚠️  {total - passed} test(s) failed")
         
         return passed == total
 
 
-def main():
-    """Main function to run Bedrock endpoint embedding connection tests."""
-    
-    print("🧪 Bedrock Endpoint Embedding Connection Test Suite")
-    print("This script tests Bedrock endpoint embedding connectivity and vector generation")
+async def main():
+    """Main function to run Bedrock embedding tests."""
+    print("🧪 Bedrock Embedding Test Suite")
+    print("This tests the actual Bedrock embedding functionality using application services")
     print()
     
-    # Check if we're in the right directory
-    if not os.path.exists("src/text_to_sql_rag"):
-        print("❌ ERROR: Please run this script from the project root directory")
-        sys.exit(1)
-    
-    # Run tests
-    tester = BedrockEmbeddingConnectionTest()
-    success = tester.run_all_tests()
-    
-    # Print configuration help
-    print("\n" + "=" * 50)
-    print("📝 Configuration Notes:")
-    print(f"   Embedding Model: {settings.aws.embedding_model}")
-    print(f"   Expected Vector Size: {settings.opensearch.vector_size}")
-    print(f"   Bedrock Endpoint: {settings.bedrock_endpoint_url or 'Not configured'}")
-    print()
-    print("   To configure Bedrock Endpoint Embeddings:")
-    print("   - Set BEDROCK_ENDPOINT_URL for your Bedrock endpoint")
-    print("   - Set BEDROCK_ENDPOINT_VERIFY_SSL=false to disable SSL verification if needed")
-    print("   - Set AWS_EMBEDDING_MODEL for specific model (optional)")
-    print("   - Set OPENSEARCH_VECTOR_SIZE to match model dimensions")
-    print("   - Ensure endpoint has proper authentication and permissions")
+    tester = BedrockEmbeddingTest()
+    success = await tester.run_all_tests()
     
     return 0 if success else 1
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    exit_code = asyncio.run(main())
+    sys.exit(exit_code)

@@ -1,55 +1,38 @@
 #!/usr/bin/env python3
 """
-Bedrock Endpoint LLM Connection Test Script
-
-Tests Bedrock endpoint LLM connectivity and text generation.
-Can be run independently to validate Bedrock endpoint service connectivity.
+Test Bedrock LLM functionality using actual application services.
+Tests the real connection and functionality, not separate test connections.
 """
 
-import os
+import asyncio
 import sys
-import time
-import json
-from datetime import datetime, timezone
-from typing import Dict, Any, Optional, List
+import os
+from pathlib import Path
+import logging
 
-# Add src to path to import our modules
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+# Add src to path
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-# Import our configuration and services
-try:
-    from text_to_sql_rag.config.settings import settings
-    from text_to_sql_rag.services.enhanced_bedrock_service import EnhancedBedrockLLMWrapper as BedrockEndpointLLMWrapper
-    from text_to_sql_rag.services.llm_provider_factory import llm_factory
-except ImportError as e:
-    print(f"❌ ERROR: Cannot import application modules: {e}")
-    print("Make sure you're running from the project root directory")
-    sys.exit(1)
+# Setup logging
+logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+logger = logging.getLogger(__name__)
 
 
-class BedrockLLMConnectionTest:
-    """Test Bedrock endpoint LLM connectivity and operations."""
+class BedrockLLMTest:
+    """Test Bedrock LLM using actual application services."""
     
     def __init__(self):
+        self.llm_factory = None
         self.results = []
-        
-        # Test prompts for different scenarios
-        self.test_prompts = {
-            "simple": "What is 2 + 2?",
-            "sql": "Generate a simple SQL query to select all columns from a table named 'users'.",
-            "explanation": "Explain what a database index is and why it's useful.",
-            "complex": "You are a SQL expert. Convert this natural language query to SQL: Show me the top 5 customers by total order amount in 2023."
-        }
     
-    def log_result(self, test_name: str, success: bool, message: str, details: Optional[Dict] = None):
+    def log_result(self, test_name: str, success: bool, message: str, details: dict = None):
         """Log test result."""
         status = "✅ PASS" if success else "❌ FAIL"
         result = {
             "test": test_name,
             "success": success,
             "message": message,
-            "details": details or {},
-            "timestamp": datetime.now(timezone.utc).isoformat()
+            "details": details or {}
         }
         self.results.append(result)
         print(f"{status}: {test_name} - {message}")
@@ -57,392 +40,306 @@ class BedrockLLMConnectionTest:
             for key, value in details.items():
                 print(f"    {key}: {value}")
     
-    def test_endpoint_configuration(self):
-        """Test Bedrock endpoint configuration."""
+    def test_import_services(self):
+        """Test importing actual application services."""
         try:
-            endpoint_url = settings.bedrock_endpoint_url
+            from text_to_sql_rag.config.settings import settings
+            from text_to_sql_rag.services.llm_provider_factory import llm_factory
+            from text_to_sql_rag.services.enhanced_bedrock_service import EnhancedBedrockService
             
-            if not endpoint_url:
-                self.log_result(
-                    "Endpoint Configuration", 
-                    False, 
-                    "Bedrock endpoint URL not configured",
-                    {"endpoint_url": endpoint_url}
-                )
-                return False
+            self.llm_factory = llm_factory
             
-            # Basic URL validation
-            if not endpoint_url.startswith(('http://', 'https://')):
+            self.log_result(
+                "Import Services",
+                True,
+                "Successfully imported application services"
+            )
+            return True
+            
+        except Exception as e:
+            self.log_result(
+                "Import Services",
+                False,
+                f"Failed to import services: {e}"
+            )
+            return False
+    
+    def test_configuration(self):
+        """Test LLM provider configuration."""
+        try:
+            from text_to_sql_rag.config.settings import settings
+            
+            # Check configuration
+            bedrock_url = settings.bedrock_endpoint.url
+            provider_type = settings.llm_provider.provider
+            
+            if not bedrock_url:
                 self.log_result(
-                    "Endpoint Configuration", 
-                    False, 
-                    "Invalid endpoint URL format",
-                    {"endpoint_url": endpoint_url}
+                    "Configuration",
+                    False,
+                    "BEDROCK_ENDPOINT_URL not configured",
+                    {"bedrock_url": bedrock_url}
                 )
                 return False
             
             self.log_result(
-                "Endpoint Configuration", 
-                True, 
-                f"Endpoint configuration valid",
+                "Configuration",
+                True,
+                f"Configuration loaded successfully",
                 {
-                    "endpoint_url": endpoint_url,
-                    "llm_model": settings.aws.llm_model,
-                    "embedding_model": settings.aws.embedding_model
+                    "bedrock_url": bedrock_url[:50] + "..." if len(bedrock_url) > 50 else bedrock_url,
+                    "provider": provider_type,
+                    "verify_ssl": settings.bedrock_endpoint.verify_ssl
                 }
             )
             return True
             
         except Exception as e:
             self.log_result(
-                "Endpoint Configuration", 
-                False, 
-                f"Configuration error: {str(e)}",
-                {"error_type": type(e).__name__}
+                "Configuration",
+                False,
+                f"Configuration error: {e}"
             )
             return False
     
-    def test_endpoint_connectivity(self):
-        """Test basic endpoint connectivity."""
+    def test_provider_initialization(self):
+        """Test LLM provider initialization."""
         try:
-            endpoint_url = settings.bedrock_endpoint_url
+            provider_info = self.llm_factory.get_provider_info()
             
-            if not endpoint_url:
-                self.log_result(
-                    "Endpoint Connectivity", 
-                    False, 
-                    "Bedrock endpoint URL not configured"
-                )
-                return False
+            self.log_result(
+                "Provider Initialization",
+                True,
+                f"Provider initialized successfully",
+                provider_info
+            )
+            return True
             
-            # Import requests for basic connectivity test
-            try:
-                import requests
-                # Disable SSL warnings if SSL verification is disabled
-                if not settings.bedrock_endpoint_verify_ssl:
-                    import urllib3
-                    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-            except ImportError:
-                self.log_result(
-                    "Endpoint Connectivity", 
-                    False, 
-                    "requests library not available for connectivity test"
-                )
-                return False
-            
-            # Test basic connectivity with a simple request
-            try:
-                start_time = time.time()
-                # Just test connectivity, not actual inference
-                verify_ssl = settings.bedrock_endpoint_verify_ssl
-                response = requests.get(
-                    endpoint_url.rstrip('/'), 
-                    timeout=10,
-                    allow_redirects=False,
-                    verify=verify_ssl
-                )
-                connection_time = time.time() - start_time
-                
-                # We expect some response (even if it's an error about missing data)
-                # The important thing is that we can connect to the endpoint
-                self.log_result(
-                    "Endpoint Connectivity", 
-                    True, 
-                    f"Endpoint is reachable",
-                    {
-                        "endpoint_url": endpoint_url,
-                        "connection_time_ms": round(connection_time * 1000, 2),
-                        "status_code": response.status_code
-                    }
-                )
-                return True
-                
-            except requests.exceptions.ConnectionError:
-                self.log_result(
-                    "Endpoint Connectivity", 
-                    False, 
-                    f"Cannot connect to endpoint: {endpoint_url}"
-                )
-                return False
-            except requests.exceptions.Timeout:
-                self.log_result(
-                    "Endpoint Connectivity", 
-                    False, 
-                    f"Endpoint connection timed out: {endpoint_url}"
-                )
-                return False
-            except Exception as e:
-                # Even if we get other errors, the endpoint might be reachable
-                # This is just a basic connectivity test
-                self.log_result(
-                    "Endpoint Connectivity", 
-                    True, 
-                    f"Endpoint is reachable (with error: {type(e).__name__})",
-                    {
-                        "endpoint_url": endpoint_url,
-                        "note": "Endpoint responded but may require specific request format"
-                    }
-                )
-                return True
-                
         except Exception as e:
             self.log_result(
-                "Endpoint Connectivity", 
-                False, 
-                f"Connectivity test failed: {str(e)}",
-                {"error_type": type(e).__name__}
+                "Provider Initialization",
+                False,
+                f"Provider initialization failed: {e}"
             )
             return False
     
-    def test_text_generation_via_endpoint(self):
-        """Test text generation with various prompts via endpoint service."""
+    async def test_health_check(self):
+        """Test LLM provider health check."""
         try:
-            endpoint_url = settings.bedrock_endpoint_url
+            is_healthy = self.llm_factory.health_check()
             
-            if not endpoint_url:
+            if is_healthy:
                 self.log_result(
-                    "Text Generation via Endpoint", 
-                    False, 
-                    "Bedrock endpoint URL not configured"
+                    "Health Check",
+                    True,
+                    "LLM provider is healthy"
+                )
+            else:
+                self.log_result(
+                    "Health Check",
+                    False,
+                    "LLM provider health check failed"
+                )
+            
+            return is_healthy
+            
+        except Exception as e:
+            self.log_result(
+                "Health Check",
+                False,
+                f"Health check error: {e}"
+            )
+            return False
+    
+    async def test_text_generation(self):
+        """Test basic text generation."""
+        try:
+            test_prompt = "Generate a simple greeting message."
+            
+            response = await self.llm_factory.generate_text(test_prompt)
+            
+            if response and len(response.strip()) > 0:
+                self.log_result(
+                    "Text Generation",
+                    True,
+                    f"Successfully generated text",
+                    {
+                        "prompt": test_prompt,
+                        "response_length": len(response),
+                        "response_preview": response[:100] + "..." if len(response) > 100 else response
+                    }
+                )
+                return True
+            else:
+                self.log_result(
+                    "Text Generation",
+                    False,
+                    "Generated text is empty"
                 )
                 return False
             
-            # Test the endpoint service with multiple prompts
-            from text_to_sql_rag.services.enhanced_bedrock_service import EnhancedBedrockService as BedrockEndpointService
+        except Exception as e:
+            self.log_result(
+                "Text Generation",
+                False,
+                f"Text generation failed: {e}"
+            )
+            return False
+    
+    async def test_sql_generation(self):
+        """Test SQL query generation."""
+        try:
+            natural_query = "Show me all users who logged in yesterday"
+            schema_context = """
+            Table: users
+            Columns: user_id (NUMBER), username (VARCHAR2), email (VARCHAR2), last_login (DATE), status (VARCHAR2)
+            """
             
-            endpoint_service = BedrockEndpointService(endpoint_url)
-            llm_wrapper = BedrockEndpointLLMWrapper(endpoint_service)
+            result = await self.llm_factory.generate_sql_query(
+                natural_language_query=natural_query,
+                schema_context=schema_context
+            )
             
-            successful_tests = 0
-            total_tests = len(self.test_prompts)
-            test_results = {}
+            if result and "sql" in result:
+                self.log_result(
+                    "SQL Generation",
+                    True,
+                    f"Successfully generated SQL",
+                    {
+                        "natural_query": natural_query,
+                        "sql_preview": result["sql"][:100] + "..." if len(result["sql"]) > 100 else result["sql"],
+                        "has_explanation": bool(result.get("explanation"))
+                    }
+                )
+                return True
+            else:
+                self.log_result(
+                    "SQL Generation",
+                    False,
+                    "SQL generation returned empty result",
+                    {"result": result}
+                )
+                return False
             
-            for prompt_name, prompt_text in self.test_prompts.items():
+        except Exception as e:
+            self.log_result(
+                "SQL Generation",
+                False,
+                f"SQL generation failed: {e}"
+            )
+            return False
+    
+    async def test_connection_resilience(self):
+        """Test connection resilience with multiple requests."""
+        try:
+            success_count = 0
+            total_requests = 3
+            
+            for i in range(total_requests):
                 try:
-                    start_time = time.time()
-                    response = llm_wrapper.generate_response(prompt_text)
-                    generation_time = time.time() - start_time
-                    
+                    response = await self.llm_factory.generate_text(f"Test request {i+1}")
                     if response and len(response.strip()) > 0:
-                        successful_tests += 1
-                        test_results[prompt_name] = {
-                            "success": True,
-                            "generation_time_ms": round(generation_time * 1000, 2),
-                            "response_length": len(response),
-                            "preview": response[:50] + "..." if len(response) > 50 else response
-                        }
-                    else:
-                        test_results[prompt_name] = {
-                            "success": False,
-                            "error": "Empty response"
-                        }
-                        
+                        success_count += 1
                 except Exception as e:
-                    test_results[prompt_name] = {
-                        "success": False,
-                        "error": str(e)
+                    logger.warning(f"Request {i+1} failed: {e}")
+            
+            success_rate = success_count / total_requests
+            
+            if success_rate >= 0.8:  # 80% success rate
+                self.log_result(
+                    "Connection Resilience",
+                    True,
+                    f"Connection resilience test passed",
+                    {
+                        "success_rate": f"{success_rate:.2%}",
+                        "successful_requests": success_count,
+                        "total_requests": total_requests
                     }
-            
-            success = successful_tests == total_tests
-            
-            self.log_result(
-                "Text Generation via Endpoint", 
-                success, 
-                f"Text generation tests: {successful_tests}/{total_tests} passed",
-                {
-                    "endpoint_url": endpoint_url,
-                    "successful_prompts": successful_tests,
-                    "total_prompts": total_tests,
-                    "test_details": test_results
-                }
-            )
-            return success
-            
-        except Exception as e:
-            self.log_result(
-                "Text Generation via Endpoint", 
-                False, 
-                f"Text generation test failed: {str(e)}",
-                {"error_type": type(e).__name__}
-            )
-            return False
-
-    def test_bedrock_endpoint_service(self):
-        """Test our custom Bedrock endpoint service wrapper."""
-        try:
-            # Test if bedrock endpoint URL is configured
-            endpoint_url = settings.bedrock_endpoint_url
-            
-            if not endpoint_url:
+                )
+                return True
+            else:
                 self.log_result(
-                    "Bedrock Endpoint Service", 
-                    False, 
-                    "Bedrock endpoint URL not configured",
-                    {"endpoint_url": endpoint_url}
+                    "Connection Resilience",
+                    False,
+                    f"Connection resilience test failed",
+                    {
+                        "success_rate": f"{success_rate:.2%}",
+                        "successful_requests": success_count,
+                        "total_requests": total_requests
+                    }
                 )
                 return False
             
-            # Test the endpoint service
-            from text_to_sql_rag.services.enhanced_bedrock_service import EnhancedBedrockService as BedrockEndpointService
-            
-            endpoint_service = BedrockEndpointService(endpoint_url)
-            llm_wrapper = BedrockEndpointLLMWrapper(endpoint_service)
-            
-            # Test text generation
-            test_prompt = "What is machine learning?"
-            
-            start_time = time.time()
-            response = llm_wrapper.generate_response(test_prompt)
-            generation_time = time.time() - start_time
-            
-            if not response or len(response.strip()) == 0:
-                self.log_result(
-                    "Bedrock Endpoint Service", 
-                    False, 
-                    "Empty response from endpoint service"
-                )
-                return False
-            
-            self.log_result(
-                "Bedrock Endpoint Service", 
-                True, 
-                f"Endpoint service working correctly",
-                {
-                    "endpoint_url": endpoint_url,
-                    "generation_time_ms": round(generation_time * 1000, 2),
-                    "response_length": len(response),
-                    "response_preview": response[:100] + "..." if len(response) > 100 else response
-                }
-            )
-            return True
-            
         except Exception as e:
             self.log_result(
-                "Bedrock Endpoint Service", 
-                False, 
-                f"Endpoint service test failed: {str(e)}",
-                {"error_type": type(e).__name__}
+                "Connection Resilience",
+                False,
+                f"Connection resilience test error: {e}"
             )
             return False
     
-    def test_llm_factory_service(self):
-        """Test our LLM factory service."""
-        try:
-            # Test provider info
-            provider_info = llm_factory.get_provider_info()
-            
-            # Test health check
-            health_status = llm_factory.health_check()
-            
-            # Test text generation through factory
-            test_prompt = "Explain what SQL is in one sentence."
-            
-            start_time = time.time()
-            response = llm_factory.generate_text(test_prompt)
-            generation_time = time.time() - start_time
-            
-            if not response or len(response.strip()) == 0:
-                self.log_result(
-                    "LLM Factory Service", 
-                    False, 
-                    "Empty response from LLM factory"
-                )
-                return False
-            
-            self.log_result(
-                "LLM Factory Service", 
-                True, 
-                f"LLM factory service working correctly",
-                {
-                    "provider": provider_info.get("provider", "unknown"),
-                    "health_status": health_status,
-                    "generation_time_ms": round(generation_time * 1000, 2),
-                    "response_length": len(response),
-                    "response_preview": response[:100] + "..." if len(response) > 100 else response
-                }
-            )
-            return True
-            
-        except Exception as e:
-            self.log_result(
-                "LLM Factory Service", 
-                False, 
-                f"LLM factory test failed: {str(e)}",
-                {"error_type": type(e).__name__}
-            )
-            return False
-    
-    def run_all_tests(self):
+    async def run_all_tests(self):
         """Run all Bedrock LLM tests."""
-        print("🔍 Starting Bedrock Endpoint LLM Connection Tests")
+        print("🧪 Starting Bedrock LLM Tests")
         print("=" * 50)
         
-        # Test sequence
-        tests = [
-            self.test_endpoint_configuration,
-            self.test_endpoint_connectivity,
-            self.test_text_generation_via_endpoint,
-            self.test_bedrock_endpoint_service,
-            self.test_llm_factory_service
+        # Sync tests first
+        tests_sync = [
+            self.test_import_services,
+            self.test_configuration,
+            self.test_provider_initialization
+        ]
+        
+        # Async tests
+        tests_async = [
+            self.test_health_check,
+            self.test_text_generation,
+            self.test_sql_generation,
+            self.test_connection_resilience
         ]
         
         passed = 0
-        total = len(tests)
+        total = len(tests_sync) + len(tests_async)
         
-        for test in tests:
+        # Run sync tests
+        for test in tests_sync:
             try:
                 if test():
                     passed += 1
             except Exception as e:
-                print(f"❌ FAIL: {test.__name__} - Unexpected error: {str(e)}")
+                print(f"❌ FAIL: {test.__name__} - Unexpected error: {e}")
+        
+        # Run async tests
+        for test in tests_async:
+            try:
+                if await test():
+                    passed += 1
+            except Exception as e:
+                print(f"❌ FAIL: {test.__name__} - Unexpected error: {e}")
         
         print("\n" + "=" * 50)
         print(f"📊 Test Results: {passed}/{total} tests passed")
         
         if passed == total:
-            print("🎉 All Bedrock endpoint LLM tests passed!")
-        elif passed > 0:
-            print(f"⚠️  {total - passed} test(s) failed, but some functionality is working")
+            print("🎉 All Bedrock LLM tests passed!")
         else:
-            print("❌ All tests failed - check endpoint configuration and connectivity")
+            print(f"⚠️  {total - passed} test(s) failed")
         
         return passed == total
 
 
-def main():
-    """Main function to run Bedrock endpoint LLM connection tests."""
-    
-    print("🧪 Bedrock Endpoint LLM Connection Test Suite")
-    print("This script tests Bedrock endpoint LLM connectivity and text generation")
+async def main():
+    """Main function to run Bedrock LLM tests."""
+    print("🧪 Bedrock LLM Test Suite")
+    print("This tests the actual Bedrock LLM functionality using application services")
     print()
     
-    # Check if we're in the right directory
-    if not os.path.exists("src/text_to_sql_rag"):
-        print("❌ ERROR: Please run this script from the project root directory")
-        sys.exit(1)
-    
-    # Run tests
-    tester = BedrockLLMConnectionTest()
-    success = tester.run_all_tests()
-    
-    # Print configuration help
-    print("\n" + "=" * 50)
-    print("📝 Configuration Notes:")
-    print(f"   LLM Model: {settings.aws.llm_model}")
-    print(f"   Embedding Model: {settings.aws.embedding_model}")
-    print(f"   Bedrock Endpoint: {settings.bedrock_endpoint_url or 'Not configured'}")
-    print(f"   LLM Provider: {settings.llm_provider.provider}")
-    print()
-    print("   To configure Bedrock Endpoint:")
-    print("   - Set BEDROCK_ENDPOINT_URL for your Bedrock endpoint")
-    print("   - Set BEDROCK_ENDPOINT_VERIFY_SSL=false to disable SSL verification if needed")
-    print("   - Set AWS_LLM_MODEL for specific model (optional)")
-    print("   - Set AWS_EMBEDDING_MODEL for specific embedding model (optional)")
-    print("   - Set LLM_PROVIDER=bedrock")
-    print("   - Ensure endpoint has proper authentication and permissions")
+    tester = BedrockLLMTest()
+    success = await tester.run_all_tests()
     
     return 0 if success else 1
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    exit_code = asyncio.run(main())
+    sys.exit(exit_code)

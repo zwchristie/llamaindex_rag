@@ -1,58 +1,37 @@
 #!/usr/bin/env python3
 """
-MongoDB Connection Test Script
-
-Tests MongoDB connectivity, authentication, and basic CRUD operations.
-Can be run independently to validate MongoDB service connectivity.
+Test MongoDB connectivity using actual application services.
+Tests the real connection and functionality, not separate test connections.
 """
 
-import os
 import sys
-import time
-import hashlib
+from pathlib import Path
+import logging
 from datetime import datetime, timezone
-from typing import Dict, Any, Optional
 
-# Add src to path to import our modules
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+# Add src to path
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-try:
-    from pymongo import MongoClient
-    from pymongo.collection import Collection
-    from pymongo.database import Database
-    from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError, OperationFailure
-except ImportError:
-    print("❌ ERROR: pymongo not installed. Install with: pip install pymongo")
-    sys.exit(1)
-
-# Import our MongoDB service
-try:
-    from text_to_sql_rag.services.mongodb_service import MongoDBService
-    from text_to_sql_rag.config.settings import settings
-except ImportError as e:
-    print(f"❌ ERROR: Cannot import application modules: {e}")
-    print("Make sure you're running from the project root directory")
-    sys.exit(1)
+# Setup logging
+logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+logger = logging.getLogger(__name__)
 
 
 class MongoDBConnectionTest:
-    """Test MongoDB connectivity and operations."""
+    """Test MongoDB using actual application services."""
     
     def __init__(self):
-        self.client: Optional[MongoClient] = None
-        self.db: Optional[Database] = None
-        self.test_collection: Optional[Collection] = None
+        self.mongodb_service = None
         self.results = []
     
-    def log_result(self, test_name: str, success: bool, message: str, details: Optional[Dict] = None):
+    def log_result(self, test_name: str, success: bool, message: str, details: dict = None):
         """Log test result."""
         status = "✅ PASS" if success else "❌ FAIL"
         result = {
             "test": test_name,
             "success": success,
             "message": message,
-            "details": details or {},
-            "timestamp": datetime.now(timezone.utc).isoformat()
+            "details": details or {}
         }
         self.results.append(result)
         print(f"{status}: {test_name} - {message}")
@@ -60,36 +39,51 @@ class MongoDBConnectionTest:
             for key, value in details.items():
                 print(f"    {key}: {value}")
     
-    def test_connection_parameters(self):
-        """Test connection parameters from configuration."""
+    def test_import_services(self):
+        """Test importing actual application services."""
         try:
-            mongo_url = settings.mongodb.url
-            database_name = settings.mongodb.database
+            from text_to_sql_rag.config.settings import settings
+            from text_to_sql_rag.services.mongodb_service import MongoDBService
             
-            if not mongo_url:
-                self.log_result(
-                    "Connection Parameters", 
-                    False, 
-                    "MongoDB URL not configured",
-                    {"url": mongo_url}
-                )
-                return False
+            self.settings = settings
             
-            if not database_name:
+            self.log_result(
+                "Import Services",
+                True,
+                "Successfully imported application services"
+            )
+            return True
+            
+        except Exception as e:
+            self.log_result(
+                "Import Services",
+                False,
+                f"Failed to import services: {e}"
+            )
+            return False
+    
+    def test_configuration(self):
+        """Test MongoDB configuration."""
+        try:
+            # Check configuration
+            mongodb_url = self.settings.mongodb.url
+            database_name = self.settings.mongodb.database
+            
+            if not mongodb_url:
                 self.log_result(
-                    "Connection Parameters", 
-                    False, 
-                    "Database name not configured",
-                    {"database": database_name}
+                    "Configuration",
+                    False,
+                    "MONGODB_URL not configured",
+                    {"mongodb_url": mongodb_url}
                 )
                 return False
             
             self.log_result(
-                "Connection Parameters", 
-                True, 
+                "Configuration",
+                True,
                 f"Configuration loaded successfully",
                 {
-                    "url": mongo_url,
+                    "mongodb_url": mongodb_url.split('@')[1] if '@' in mongodb_url else mongodb_url,  # Hide credentials
                     "database": database_name
                 }
             )
@@ -97,307 +91,306 @@ class MongoDBConnectionTest:
             
         except Exception as e:
             self.log_result(
-                "Connection Parameters", 
-                False, 
-                f"Failed to load configuration: {str(e)}"
+                "Configuration",
+                False,
+                f"Configuration error: {e}"
             )
             return False
     
-    def test_basic_connection(self):
-        """Test basic MongoDB connection."""
+    def test_service_initialization(self):
+        """Test MongoDB service initialization."""
         try:
-            mongo_url = settings.mongodb.url
+            from text_to_sql_rag.services.mongodb_service import MongoDBService
             
-            # Create client with short timeout for testing
-            self.client = MongoClient(
-                mongo_url,
-                serverSelectionTimeoutMS=5000,
-                connectTimeoutMS=5000,
-                socketTimeoutMS=5000
-            )
-            
-            # Test connection with ping
-            start_time = time.time()
-            self.client.admin.command('ping')
-            connection_time = time.time() - start_time
+            self.mongodb_service = MongoDBService()
             
             self.log_result(
-                "Basic Connection", 
-                True, 
-                f"Connected successfully",
-                {
-                    "connection_time_ms": round(connection_time * 1000, 2),
-                    "server_info": str(self.client.server_info().get('version', 'unknown'))
-                }
+                "Service Initialization",
+                True,
+                f"MongoDB service initialized successfully"
             )
             return True
             
-        except ConnectionFailure as e:
-            self.log_result(
-                "Basic Connection", 
-                False, 
-                f"Connection failed: {str(e)}",
-                {"error_type": "ConnectionFailure"}
-            )
-            return False
-        except ServerSelectionTimeoutError as e:
-            self.log_result(
-                "Basic Connection", 
-                False, 
-                f"Server selection timeout: {str(e)}",
-                {"error_type": "ServerSelectionTimeoutError"}
-            )
-            return False
         except Exception as e:
             self.log_result(
-                "Basic Connection", 
-                False, 
-                f"Unexpected error: {str(e)}",
-                {"error_type": type(e).__name__}
+                "Service Initialization",
+                False,
+                f"Service initialization failed: {e}"
             )
             return False
     
-    def test_database_access(self):
-        """Test database access and permissions."""
-        if self.client is None:
-            self.log_result("Database Access", False, "No client connection available")
-            return False
-        
+    def test_connection_check(self):
+        """Test MongoDB connection status."""
         try:
-            database_name = settings.mongodb.database
-            self.db = self.client[database_name]
+            is_connected = self.mongodb_service.is_connected()
             
-            # Test database access by listing collections
-            collections = self.db.list_collection_names()
+            if is_connected:
+                self.log_result(
+                    "Connection Check",
+                    True,
+                    "MongoDB connection is active"
+                )
+            else:
+                self.log_result(
+                    "Connection Check",
+                    False,
+                    "MongoDB connection is not active"
+                )
             
-            self.log_result(
-                "Database Access", 
-                True, 
-                f"Database accessible",
-                {
-                    "database": database_name,
-                    "collection_count": len(collections),
-                    "collections": collections[:5]  # Show first 5
-                }
-            )
-            return True
+            return is_connected
             
-        except OperationFailure as e:
-            self.log_result(
-                "Database Access", 
-                False, 
-                f"Database operation failed: {str(e)}",
-                {"error_type": "OperationFailure"}
-            )
-            return False
         except Exception as e:
             self.log_result(
-                "Database Access", 
-                False, 
-                f"Unexpected error: {str(e)}",
-                {"error_type": type(e).__name__}
+                "Connection Check",
+                False,
+                f"Connection check failed: {e}"
             )
             return False
     
-    def test_collection_operations(self):
-        """Test collection creation and basic operations."""
-        if self.db is None:
-            self.log_result("Collection Operations", False, "No database connection available")
-            return False
-        
+    def test_health_check(self):
+        """Test MongoDB health check."""
         try:
-            # Use a test collection
-            test_collection_name = "connection_test_collection"
-            self.test_collection = self.db[test_collection_name]
+            health = self.mongodb_service.health_check()
             
-            # Clean up any existing test documents
-            self.test_collection.delete_many({"test_document": True})
+            is_healthy = health.get("status") == "healthy"
             
-            # Test document insertion
+            self.log_result(
+                "Health Check",
+                is_healthy,
+                f"Health check {'passed' if is_healthy else 'failed'}",
+                health
+            )
+            
+            return is_healthy
+            
+        except Exception as e:
+            self.log_result(
+                "Health Check",
+                False,
+                f"Health check error: {e}"
+            )
+            return False
+    
+    def test_document_operations(self):
+        """Test basic document operations (CRUD)."""
+        try:
+            # Test document creation
             test_doc = {
-                "test_document": True,
-                "timestamp": datetime.now(timezone.utc),
-                "test_data": "MongoDB connection test",
-                "test_id": "mongodb_test_001"
+                "document_type": "test",
+                "test_id": "mongodb_connection_test",
+                "name": "Connection Test Document",
+                "description": "Test document for MongoDB connection validation",
+                "created_at": datetime.utcnow(),
+                "test_data": {"key": "value", "number": 42}
             }
             
-            result = self.test_collection.insert_one(test_doc)
+            # Insert document
+            doc_id = self.mongodb_service.store_document(test_doc)
             
-            if not result.inserted_id:
-                self.log_result("Collection Operations", False, "Document insertion failed")
+            if not doc_id:
+                self.log_result(
+                    "Document Operations",
+                    False,
+                    "Failed to insert test document"
+                )
                 return False
             
-            # Test document retrieval
-            retrieved_doc = self.test_collection.find_one({"test_id": "mongodb_test_001"})
+            # Retrieve document
+            retrieved_doc = self.mongodb_service.get_document_by_id(doc_id)
             
             if not retrieved_doc:
-                self.log_result("Collection Operations", False, "Document retrieval failed")
-                return False
-            
-            # Test document update
-            update_result = self.test_collection.update_one(
-                {"test_id": "mongodb_test_001"},
-                {"$set": {"updated": True, "update_timestamp": datetime.now(timezone.utc)}}
-            )
-            
-            if update_result.modified_count != 1:
-                self.log_result("Collection Operations", False, "Document update failed")
-                return False
-            
-            # Test document counting
-            count = self.test_collection.count_documents({"test_document": True})
-            
-            self.log_result(
-                "Collection Operations", 
-                True, 
-                f"CRUD operations successful",
-                {
-                    "inserted_id": str(result.inserted_id),
-                    "documents_found": count,
-                    "update_count": update_result.modified_count
-                }
-            )
-            return True
-            
-        except Exception as e:
-            self.log_result(
-                "Collection Operations", 
-                False, 
-                f"Collection operations failed: {str(e)}",
-                {"error_type": type(e).__name__}
-            )
-            return False
-    
-    def test_indexes(self):
-        """Test index creation and management."""
-        if self.test_collection is None:
-            self.log_result("Index Operations", False, "No test collection available")
-            return False
-        
-        try:
-            # Create a test index
-            index_name = "test_timestamp_index"
-            self.test_collection.create_index("timestamp", name=index_name)
-            
-            # List indexes
-            indexes = list(self.test_collection.list_indexes())
-            index_names = [idx.get("name", "") for idx in indexes]
-            
-            if index_name not in index_names:
-                self.log_result("Index Operations", False, "Index creation failed")
-                return False
-            
-            self.log_result(
-                "Index Operations", 
-                True, 
-                f"Index operations successful",
-                {
-                    "indexes_created": 1,
-                    "total_indexes": len(indexes),
-                    "index_names": index_names
-                }
-            )
-            return True
-            
-        except Exception as e:
-            self.log_result(
-                "Index Operations", 
-                False, 
-                f"Index operations failed: {str(e)}",
-                {"error_type": type(e).__name__}
-            )
-            return False
-    
-    def test_mongodb_service(self):
-        """Test our custom MongoDB service."""
-        try:
-            service = MongoDBService()
-            
-            # Test connection status
-            is_connected = service.is_connected()
-            
-            if not is_connected:
                 self.log_result(
-                    "MongoDB Service", 
-                    False, 
-                    "MongoDB service reports not connected"
+                    "Document Operations",
+                    False,
+                    "Failed to retrieve test document"
                 )
                 return False
             
-            # Test health check
-            health = service.health_check()
+            # Update document
+            update_data = {"updated_at": datetime.utcnow(), "test_updated": True}
+            update_success = self.mongodb_service.update_document(doc_id, update_data)
             
-            if health.get("status") != "healthy":
+            if not update_success:
                 self.log_result(
-                    "MongoDB Service", 
-                    False, 
-                    f"MongoDB service health check failed: {health.get('status')}",
-                    {"health_details": health}
+                    "Document Operations",
+                    False,
+                    "Failed to update test document"
                 )
                 return False
             
-            # Test collection stats
-            stats = service.get_collection_stats()
+            # Verify update
+            updated_doc = self.mongodb_service.get_document_by_id(doc_id)
+            if not updated_doc or not updated_doc.get("test_updated"):
+                self.log_result(
+                    "Document Operations",
+                    False,
+                    "Document update verification failed"
+                )
+                return False
+            
+            # Delete document
+            delete_success = self.mongodb_service.delete_document(doc_id)
+            
+            if not delete_success:
+                self.log_result(
+                    "Document Operations",
+                    False,
+                    "Failed to delete test document"
+                )
+                return False
+            
+            # Verify deletion
+            deleted_doc = self.mongodb_service.get_document_by_id(doc_id)
+            if deleted_doc:
+                self.log_result(
+                    "Document Operations",
+                    False,
+                    "Document deletion verification failed"
+                )
+                return False
             
             self.log_result(
-                "MongoDB Service", 
-                True, 
-                f"MongoDB service working correctly",
+                "Document Operations",
+                True,
+                "All CRUD operations completed successfully",
                 {
-                    "connection_status": is_connected,
-                    "health_status": health.get("status"),
-                    "has_stats": "error" not in stats
+                    "operations": "CREATE, READ, UPDATE, DELETE",
+                    "test_doc_id": str(doc_id)
                 }
             )
             return True
             
         except Exception as e:
             self.log_result(
-                "MongoDB Service", 
-                False, 
-                f"MongoDB service test failed: {str(e)}",
-                {"error_type": type(e).__name__}
+                "Document Operations",
+                False,
+                f"Document operations failed: {e}"
             )
             return False
     
-    def cleanup(self):
-        """Clean up test data and connections."""
+    def test_collection_stats(self):
+        """Test collection statistics retrieval."""
         try:
-            if self.test_collection is not None:
-                # Remove test documents
-                self.test_collection.delete_many({"test_document": True})
-                
-                # Drop test indexes
-                try:
-                    self.test_collection.drop_index("test_timestamp_index")
-                except:
-                    pass  # Index might not exist
+            stats = self.mongodb_service.get_collection_stats()
             
-            if self.client is not None:
-                self.client.close()
-                
-            self.log_result("Cleanup", True, "Test cleanup completed successfully")
+            if "error" in stats:
+                self.log_result(
+                    "Collection Stats",
+                    False,
+                    f"Failed to get collection stats: {stats['error']}"
+                )
+                return False
+            
+            self.log_result(
+                "Collection Stats",
+                True,
+                "Successfully retrieved collection statistics",
+                {
+                    "document_count": stats.get("count", "N/A"),
+                    "avg_obj_size": stats.get("avgObjSize", "N/A"),
+                    "storage_size": stats.get("storageSize", "N/A")
+                }
+            )
+            return True
             
         except Exception as e:
             self.log_result(
-                "Cleanup", 
-                False, 
-                f"Cleanup failed: {str(e)}"
+                "Collection Stats",
+                False,
+                f"Collection stats failed: {e}"
             )
+            return False
+    
+    def test_query_operations(self):
+        """Test query operations."""
+        try:
+            # Insert test documents
+            test_docs = [
+                {
+                    "document_type": "test_query",
+                    "name": f"Test Document {i}",
+                    "category": "query_test",
+                    "value": i * 10,
+                    "created_at": datetime.utcnow()
+                }
+                for i in range(3)
+            ]
+            
+            inserted_ids = []
+            for doc in test_docs:
+                doc_id = self.mongodb_service.store_document(doc)
+                if doc_id:
+                    inserted_ids.append(doc_id)
+            
+            if len(inserted_ids) != 3:
+                self.log_result(
+                    "Query Operations",
+                    False,
+                    f"Failed to insert all test documents: {len(inserted_ids)}/3"
+                )
+                return False
+            
+            # Test query by document type
+            query_results = list(self.mongodb_service.get_documents_by_type("test_query"))
+            
+            if len(query_results) < 3:
+                self.log_result(
+                    "Query Operations",
+                    False,
+                    f"Query returned insufficient results: {len(query_results)}"
+                )
+                return False
+            
+            # Test complex query
+            complex_query = {"category": "query_test", "value": {"$gte": 10}}
+            complex_results = list(self.mongodb_service.documents_collection.find(complex_query))
+            
+            # Cleanup test documents
+            for doc_id in inserted_ids:
+                self.mongodb_service.delete_document(doc_id)
+            
+            self.log_result(
+                "Query Operations",
+                True,
+                "Query operations completed successfully",
+                {
+                    "simple_query_results": len(query_results),
+                    "complex_query_results": len(complex_results),
+                    "cleanup_completed": True
+                }
+            )
+            return True
+            
+        except Exception as e:
+            # Cleanup on error
+            if 'inserted_ids' in locals():
+                for doc_id in inserted_ids:
+                    try:
+                        self.mongodb_service.delete_document(doc_id)
+                    except:
+                        pass
+            
+            self.log_result(
+                "Query Operations",
+                False,
+                f"Query operations failed: {e}"
+            )
+            return False
     
     def run_all_tests(self):
         """Run all MongoDB tests."""
-        print("🔍 Starting MongoDB Connection Tests")
+        print("🧪 Starting MongoDB Connection Tests")
         print("=" * 50)
         
-        # Test sequence
         tests = [
-            self.test_connection_parameters,
-            self.test_basic_connection,
-            self.test_database_access,
-            self.test_collection_operations,
-            self.test_indexes,
-            self.test_mongodb_service
+            self.test_import_services,
+            self.test_configuration,
+            self.test_service_initialization,
+            self.test_connection_check,
+            self.test_health_check,
+            self.test_document_operations,
+            self.test_collection_stats,
+            self.test_query_operations
         ]
         
         passed = 0
@@ -408,7 +401,7 @@ class MongoDBConnectionTest:
                 if test():
                     passed += 1
             except Exception as e:
-                print(f"❌ FAIL: {test.__name__} - Unexpected error: {str(e)}")
+                print(f"❌ FAIL: {test.__name__} - Unexpected error: {e}")
         
         print("\n" + "=" * 50)
         print(f"📊 Test Results: {passed}/{total} tests passed")
@@ -418,41 +411,30 @@ class MongoDBConnectionTest:
         else:
             print(f"⚠️  {total - passed} test(s) failed")
         
-        # Always run cleanup
-        self.cleanup()
+        print("\n" + "=" * 50)
+        print("📝 Configuration Notes:")
+        print(f"   MongoDB URL: {self.settings.mongodb.url.split('@')[1] if '@' in self.settings.mongodb.url else self.settings.mongodb.url}")
+        print(f"   Database: {self.settings.mongodb.database}")
+        print()
+        print("   To configure MongoDB connection:")
+        print("   - Set MONGODB_URL environment variable")
+        print("   - Set MONGODB_DATABASE environment variable")
         
         return passed == total
 
 
 def main():
     """Main function to run MongoDB connection tests."""
-    
     print("🧪 MongoDB Connection Test Suite")
-    print("This script tests MongoDB connectivity and basic operations")
+    print("This tests the actual MongoDB functionality using application services")
     print()
     
-    # Check if we're in the right directory
-    if not os.path.exists("src/text_to_sql_rag"):
-        print("❌ ERROR: Please run this script from the project root directory")
-        sys.exit(1)
-    
-    # Run tests
     tester = MongoDBConnectionTest()
     success = tester.run_all_tests()
-    
-    # Print configuration help
-    print("\n" + "=" * 50)
-    print("📝 Configuration Notes:")
-    print(f"   MongoDB URL: {settings.mongodb.url}")
-    print(f"   Database: {settings.mongodb.database}")
-    print()
-    print("   To configure MongoDB connection:")
-    print("   - Set MONGODB_URL environment variable")
-    print("   - Set MONGODB_DATABASE environment variable")
-    print("   - Or update src/text_to_sql_rag/config/settings.py")
     
     return 0 if success else 1
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    exit_code = main()
+    sys.exit(exit_code)

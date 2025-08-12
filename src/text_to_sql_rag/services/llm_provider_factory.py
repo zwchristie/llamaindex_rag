@@ -169,7 +169,7 @@ class LLMProviderFactory:
         else:
             raise RuntimeError(f"Unknown provider type: {type(provider)}")
     
-    def generate_sql_query(
+    async def generate_sql_query(
         self,
         natural_language_query: str,
         schema_context: str,
@@ -195,7 +195,7 @@ class LLMProviderFactory:
         else:
             raise RuntimeError(f"Unknown provider type: {type(provider)}")
     
-    def continue_conversation(
+    async def continue_conversation(
         self,
         message: str,
         conversation_id: str,
